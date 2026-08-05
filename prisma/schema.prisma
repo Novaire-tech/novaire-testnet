@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id             String         @id
+  positions      Position[]
+  activities     Activity[]
+  yieldClaims    YieldClaim[]
+  rollovers      Rollover[]
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+}
+
+model Epoch {
+  id               String       @id
+  maturityLedger   Int
+  underlyingAsset  String
+  syAsset          String
+  ptAsset          String
+  ytAsset          String
+  state            String       @default("active") // active, settled, archived
+  positions        Position[]
+  activities       Activity[]
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+}
+
+model Position {
+  id             String     @id @default(uuid())
+  userId         String
+  epochId        String
+  ptBalance      String     @default("0")
+  ytBalance      String     @default("0")
+  vaultShares    String     @default("0")
+  user           User       @relation(fields: [userId], references: [id])
+  epoch          Epoch      @relation(fields: [epochId], references: [id])
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([userId, epochId])
+}
+
+model Activity {
+  id             String     @id
+  type           String     // deposit, withdraw, swap, claim, mint, burn
+  userId         String
+  epochId        String?
+  amount         String
+  timestamp      DateTime   @default(now())
+  txHash         String
+  user           User       @relation(fields: [userId], references: [id])
+  epoch          Epoch?     @relation(fields: [epochId], references: [id])
+}
+
+model YieldClaim {
+  id             String     @id @default(uuid())
+  userId         String
+  epochId        String
+  amount         String
+  timestamp      DateTime   @default(now())
+  txHash         String
+  user           User       @relation(fields: [userId], references: [id])
+}
+
+model Rollover {
+  id             String     @id @default(uuid())
+  userId         String
+  epochId        String
+  ptAmount       String
+  status         String     // registered, executed
+  timestamp      DateTime   @default(now())
+  user           User       @relation(fields: [userId], references: [id])
+}
+
+model TvlSnapshot {
+  id             String     @id @default(uuid())
+  timestamp      DateTime   @default(now())
+  totalValue     String
+  ptSupply       String
+  ytSupply       String
+}
+
+model Trade {
+  id             String     @id
+  epochId        String
+  buyer          String
+  amountIn       String
+  amountOut      String
+  impliedRate    String
+  timestamp      DateTime   @default(now())
+  txHash         String
+}
+
+model SyncState {
+  id             String     @id @default("singleton")
+  lastLedger     Int        @default(0)
+  updatedAt      DateTime   @updatedAt
+}
+
+model ProtocolHistory {
+  id             String   @id @default(uuid())
+  timestamp      DateTime @default(now())
+  ptPrice        Float
+  ytPrice        Float
+  tvl            Float
+  fixedApy       Float
+  tradingVolume  Float    @default(0)
+  eventType      String?  // e.g., "swap_u_pt", "deposit", etc.
+  txHash         String?
+}
