@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Novaire - Autonomous Fixed Income Protocol</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:ital,wght@1,400;1,600;1,700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --black: #050505;
+      --charcoal: #111111;
+      --white: #F5F5F5;
+      --silver: #D5D8DE;
+      --blue: #6BA8FF;
+      --green: #4ADE80;
+      --border: rgba(213, 216, 222, 0.12);
+      --card-hover: rgba(107, 168, 255, 0.04);
+    }
+    
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--black);
+      color: var(--silver);
+      line-height: 1.7;
+      font-size: 15px;
+      overflow-x: hidden;
+    }
+    
+    a {
+      text-decoration: none;
+      color: inherit;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    
+    button {
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      transition: all 0.2s ease;
+    }
+
+    .playfair {
+      font-family: 'Playfair Display', serif;
+      font-style: italic;
+    }
+
+    /* Layout Utilities */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 40px;
+    }
+
+    /* Scroll Reveal */
+    .reveal {
+      opacity: 0;
+      transform: translateY(24px);
+      transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    }
+    .reveal.active {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Section 1 - Navbar */
+    .navbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      z-index: 100;
+      background: rgba(5, 5, 5, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      transition: border-bottom 0.2s ease;
+      border-bottom: 1px solid transparent;
+    }
+    .navbar.scrolled {
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--white);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+    }
+    .nav-links {
+      display: flex;
+      gap: 32px;
+      align-items: center;
+    }
+    .nav-link {
+      color: var(--silver);
+      font-size: 14px;
+      font-weight: 500;
+      position: relative;
+    }
+    .nav-link:hover, .nav-link.active-link {
+      color: var(--white);
+    }
+    .dropdown {
+      position: relative;
+    }
+    .dropdown-content {
+      display: none;
+      position: absolute;
+      top: 100%;
+      left: -16px;
+      background: var(--charcoal);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      min-width: 180px;
+      margin-top: 16px;
+    }
+    .dropdown:hover .dropdown-content {
+      display: block;
+    }
+    .dropdown-item {
+      display: block;
+      padding: 10px 16px;
+      color: var(--silver);
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .dropdown-item:hover {
+      color: var(--white);
+      background: rgba(255, 255, 255, 0.04);
+    }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--white);
+      padding: 10px 20px;
+      font-size: 13px;
+      border-radius: 4px;
+    }
+    .btn-outline:hover {
+      border-color: var(--blue);
+      color: var(--blue);
+      box-shadow: 0 0 16px rgba(107, 168, 255, 0.15);
+    }
+
+    /* Section 2 - Hero */
+    .hero {
+      position: relative;
+      height: 100vh;
+      min-height: 700px;
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      background: var(--black);
+    }
+    .hero-content {
+      display: flex;
+      width: 100%;
+      align-items: center;
+      position: relative;
+      z-index: 10;
+    }
+    .hero-left {
+      width: 55%;
+    }
+    .hero-right {
+      width: 45%;
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      height: 90%;
+      display: flex;
+      justify-content: flex-end;
+      align-items: flex-end;
+    }
+    .label {
+      color: var(--green);
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 28px;
+      display: inline-block;
+    }
+    .hero-heading {
+      font-size: 56px;
+      font-weight: 700;
+      line-height: 1.05;
+      color: var(--white);
+    }
+    .hero-subtext {
+      color: var(--silver);
+      font-size: 15px;
+      line-height: 1.7;
+      max-width: 340px;
+      margin-top: 24px;
+    }
+    .hero-buttons {
+      margin-top: 40px;
+      display: flex;
+      gap: 16px;
+    }
+    .btn-primary {
+      background: var(--white);
+      color: var(--black);
+      padding: 14px 28px;
+      font-weight: 600;
+      font-size: 14px;
+      border-radius: 2px;
+      border: none;
+    }
+    .btn-primary:hover {
+      background: var(--blue);
+    }
+    .btn-text {
+      background: transparent;
+      color: var(--silver);
+      padding: 14px 28px;
+      font-size: 14px;
+      border: none;
+      font-weight: 500;
+    }
+    .btn-text:hover {
+      color: var(--white);
+    }
+    .hero-img-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      justify-content: flex-end;
+      align-items: flex-end;
+    }
+    .hero-img {
+      width: 100%;
+      max-width: 700px;
+      height: auto;
+      object-fit: contain;
+      position: relative;
+      z-index: 2;
+      animation: float 8s ease-in-out infinite;
+
+    }
+    .hero-glow {
+      position: absolute;
+      width: 500px;
+      height: 500px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(107, 168, 255, 0.06) 0%, transparent 70%);
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1;
+    }
+    .constellation {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 3;
+      pointer-events: none;
+    }
+    .dot {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      background: var(--silver);
+      border-radius: 50%;
+      opacity: 0.4;
+      animation: pulse 4s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.4; }
+      50% { opacity: 0.15; }
+      100% { opacity: 0.4; }
+    }
+
+    /* Section 3 - Stats Bar */
+    .stats-section {
+      background: var(--charcoal);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 32px 0;
+    }
+    .stats-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .stat-item {
+      flex: 1;
+      text-align: center;
+    }
+    .stat-divider {
+      width: 1px;
+      height: 32px;
+      background: var(--border);
+    }
+    .stat-number {
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--white);
+    }
+    .stat-label {
+      font-size: 12px;
+      color: var(--silver);
+      margin-top: 4px;
+    }
+
+    /* Section 4 - Multiple ways to earn */
+    .ways-section {
+      padding: 120px 0;
+      background: var(--black);
+    }
+    .section-label {
+      color: var(--silver);
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+      display: block;
+    }
+    .section-heading {
+      font-size: 40px;
+      font-weight: 600;
+      color: var(--white);
+      margin-bottom: 64px;
+      line-height: 1.2;
+    }
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+    }
+    .card {
+      background: var(--charcoal);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 40px 32px;
+      transition: border-color 0.3s, background 0.3s, transform 0.3s;
+    }
+    .card:hover {
+      border-color: rgba(107, 168, 255, 0.3);
+      background: var(--card-hover);
+      transform: translateY(-2px);
+    }
+    .card-icon {
+      width: 40px;
+      height: 40px;
+      color: var(--silver);
+      margin-bottom: 24px;
+    }
+    .card-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--white);
+    }
+    .card-body {
+      color: var(--silver);
+      font-size: 14px;
+      line-height: 1.7;
+      margin-top: 12px;
+    }
+    .card-link {
+      color: var(--silver);
+      font-size: 13px;
+      margin-top: 32px;
+      display: inline-block;
+    }
+    .card-link:hover {
+      color: var(--blue);
+    }
+
+    /* Section 5 - How it works */
+    .how-section {
+      padding: 120px 0;
+      background: var(--charcoal);
+    }
+    .how-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 80px;
+    }
+    .steps-container {
+      display: flex;
+      justify-content: space-between;
+      position: relative;
+    }
+    .steps-line {
+      position: absolute;
+      top: 16px;
+      left: 10%;
+      right: 10%;
+      height: 1px;
+      border-top: 1px dashed var(--border);
+      z-index: 1;
+    }
+    .step {
+      flex: 1;
+      position: relative;
+      z-index: 2;
+      padding: 0 16px;
+    }
+    .step-icon {
+      width: 32px;
+      height: 32px;
+      color: var(--silver);
+      background: var(--charcoal);
+    }
+    .step-num {
+      font-size: 11px;
+      color: var(--silver);
+      margin-top: 20px;
+    }
+    .step-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--white);
+      margin-top: 6px;
+    }
+    .step-desc {
+      font-size: 12px;
+      color: var(--silver);
+      line-height: 1.6;
+      margin-top: 8px;
+    }
+
+    /* Section 6 - Ecosystem */
+    .ecosystem-section {
+      padding: 120px 0;
+      background: var(--black);
+    }
+    .eco-header {
+      display: flex;
+      align-items: center;
+    }
+    .eco-left {
+      flex: 1;
+    }
+    .eco-right {
+      flex: 1;
+      font-size: 16px;
+      color: var(--silver);
+      line-height: 1.7;
+      max-width: 400px;
+    }
+    .partners {
+      margin-top: 64px;
+      background: var(--charcoal);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 32px 48px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 24px;
+    }
+    .partner {
+      color: var(--silver);
+      font-size: 16px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .partner:hover {
+      color: var(--white);
+    }
+
+    /* Section 7 - Built on Stellar */
+    .stellar-section {
+      padding: 120px 0;
+      background: var(--charcoal);
+      position: relative;
+      overflow: hidden;
+    }
+    .stellar-arc {
+      position: absolute;
+      bottom: -400px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 800px;
+      height: 800px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      opacity: 0.4;
+      pointer-events: none;
+    }
+    .stellar-content {
+      display: flex;
+      align-items: center;
+      position: relative;
+      z-index: 10;
+    }
+    .stellar-left {
+      width: 45%;
+    }
+    .stellar-heading {
+      font-size: 48px;
+      font-weight: 700;
+      line-height: 1.1;
+      color: var(--white);
+      margin-bottom: 24px;
+    }
+    .stellar-right {
+      width: 55%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+    .branding-line {
+      font-size: 24px;
+      font-weight: 600;
+      color: var(--white);
+      display: flex;
+      align-items: center;
+      gap: 24px;
+    }
+    .branding-cross {
+      color: var(--silver);
+      font-weight: 400;
+    }
+
+    /* Footer */
+    .footer {
+      background: var(--black);
+      border-top: 1px solid var(--border);
+      padding: 80px 0 40px;
+    }
+    .footer-top {
+      display: grid;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
+      gap: 40px;
+    }
+    .footer-logo {
+      color: var(--white);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .footer-desc {
+      color: var(--silver);
+      font-size: 13px;
+      margin-top: 12px;
+      max-width: 200px;
+      line-height: 1.6;
+    }
+    .social-icons {
+      margin-top: 20px;
+      display: flex;
+      gap: 16px;
+    }
+    .social-icon {
+      width: 18px;
+      height: 18px;
+      color: var(--silver);
+    }
+    .social-icon:hover {
+      color: var(--white);
+    }
+    .footer-col-label {
+      font-size: 11px;
+      color: var(--silver);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+    .footer-link {
+      display: block;
+      color: var(--silver);
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    .footer-link:hover {
+      color: var(--white);
+    }
+    .footer-bottom {
+      margin-top: 60px;
+      border-top: 1px solid var(--border);
+      padding-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--silver);
+    }
+    .footer-bottom-links a {
+      margin-left: 24px;
+    }
+    .footer-bottom-links a:hover {
+      color: var(--white);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .hero-left, .stellar-left, .eco-left { width: 100%; }
+      .hero-right, .stellar-right { display: none; }
+      .hero-heading { font-size: 40px; }
+      .cards-grid { grid-template-columns: 1fr; }
+      .steps-container { flex-direction: column; gap: 40px; }
+      .steps-line { display: none; }
+      .how-header { flex-direction: column; align-items: flex-start; gap: 24px; }
+      .eco-header { flex-direction: column; align-items: flex-start; gap: 24px; }
+      .partners { flex-direction: column; gap: 24px; align-items: flex-start; }
+      .footer-top { grid-template-columns: 1fr; }
+      .stellar-content { flex-direction: column; gap: 40px; }
+      .nav-links { display: none; }
+      .stats-row { flex-wrap: wrap; gap: 32px; }
+      .stat-item { flex: 1 1 40%; }
+      .stat-divider { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navbar -->
+  <nav class="navbar" id="navbar">
+    <div class="nav-container">
+      <div class="logo">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M4.93 19.07L19.07 4.93"/></svg>
+        NOVAIRE
+      </div>
+      <div class="nav-links">
+        <div class="dropdown">
+          <a class="nav-link" href="#products">Products ▾</a>
+          <div class="dropdown-content">
+            <a href="#" class="dropdown-item">Yield Vaults</a>
+            <a href="#" class="dropdown-item">PT / YT Tokens</a>
+            <a href="#" class="dropdown-item">Strategies</a>
+            <a href="#" class="dropdown-item">Smart Accounts</a>
+          </div>
+        </div>
+        <a class="nav-link" href="#how-it-works">How it works</a>
+        <a class="nav-link" href="#ecosystem">Ecosystem</a>
+        <a class="nav-link" href="#">Docs</a>
+        <a class="nav-link" href="#">About</a>
+      </div>
+      <a href="#" class="btn-outline">Launch App ↗</a>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <section class="hero" id="products">
+    <div class="container hero-content">
+      <div class="hero-left reveal">
+        <span class="label">+ AUTONOMOUS FIXED INCOME PROTOCOL</span>
+        <h1 class="hero-heading">
+          Fixed yield.<br>
+          On-chain.<br>
+          <span class="playfair">Automated.</span>
+        </h1>
+        <p class="hero-subtext">
+          Novaire is the fixed income layer on Stellar. Lock, earn, and automate yield with intelligent strategies and on-chain execution.
+        </p>
+        <div class="hero-buttons">
+          <button class="btn-primary">Launch App ↗</button>
+          <button class="btn-text">Explore ecosystem →</button>
+        </div>
+      </div>
+      <div class="hero-right reveal">
+        <div class="hero-img-container" id="constellation-container">
+          <div class="hero-glow"></div>
+          <img src="/images/statue.png" alt="Novaire" class="hero-img">
+          <!-- Constellation dots generated via JS -->
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stats Section -->
+  <section class="stats-section">
+    <div class="container stats-row reveal" id="stats">
+      <div class="stat-item">
+        <div class="stat-number" data-target="24.8" data-prefix="$" data-suffix="M+">$0M+</div>
+        <div class="stat-label">Total Value Locked</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <div class="stat-number" data-target="12.4" data-suffix="%">0%</div>
+        <div class="stat-label">Avg. Fixed APY</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <div class="stat-number" data-target="7">0</div>
+        <div class="stat-label">Active Strategies</div>
+      </div>
+      <div class="stat-divider"></div>
+      <div class="stat-item">
+        <div class="stat-number" data-target="3842" data-format="comma">0</div>
+        <div class="stat-label">Users</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Multiple ways to earn -->
+  <section class="ways-section">
+    <div class="container">
+      <span class="section-label reveal">ONE PROTOCOL</span>
+      <h2 class="section-heading reveal">
+        Multiple ways<br>
+        <span class="playfair">to earn.</span>
+      </h2>
+      <div class="cards-grid">
+        <div class="card reveal">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="4" y="4" width="16" height="16" rx="2" />
+              <circle cx="12" cy="12" r="3" />
+              <path d="M12 9v6M9 12h6" />
+            </svg>
+          </div>
+          <div class="card-title">Lock Fixed Yield</div>
+          <div class="card-body">Receive PT tokens and know your return upfront.</div>
+          <a href="#" class="card-link">Learn more ↗</a>
+        </div>
+        <div class="card reveal">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M3 12h4l3-8 4 16 3-8h4" />
+            </svg>
+          </div>
+          <div class="card-title">Earn Variable Yield</div>
+          <div class="card-body">Hold YT tokens and capture the upside of future yield.</div>
+          <a href="#" class="card-link">Learn more ↗</a>
+        </div>
+        <div class="card reveal">
+          <div class="card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M12 2l8 14H4z" />
+              <circle cx="12" cy="12" r="2" />
+            </svg>
+          </div>
+          <div class="card-title">Automate Everything</div>
+          <div class="card-body">Smart Accounts execute, rollover, and compound so you don't have to.</div>
+          <a href="#" class="card-link">Learn more ↗</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section class="how-section" id="how-it-works">
+    <div class="container">
+      <div class="how-header reveal">
+        <div>
+          <span class="section-label">HOW IT WORKS</span>
+          <h2 class="section-heading" style="margin-bottom:0;">
+            Simple by design.<br>
+            <span class="playfair">Powerful by default.</span>
+          </h2>
+        </div>
+        <a href="#" class="btn-outline">View documentation ↗</a>
+      </div>
+      <div class="steps-container reveal">
+        <div class="steps-line"></div>
+        
+        <div class="step">
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+            </svg>
+          </div>
+          <div class="step-num">01</div>
+          <div class="step-title">Deposit</div>
+          <div class="step-desc">Deposit assets into our Yield Vaults.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+          </div>
+          <div class="step-num">02</div>
+          <div class="step-title">Tokenize</div>
+          <div class="step-desc">Assets are tokenized into PT and YT.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline><polyline points="17 6 23 6 23 12"></polyline>
+            </svg>
+          </div>
+          <div class="step-num">03</div>
+          <div class="step-title">Earn</div>
+          <div class="step-desc">Earn fixed or variable yield on-chain.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+          </div>
+          <div class="step-num">04</div>
+          <div class="step-title">Automate</div>
+          <div class="step-desc">Smart Accounts handle execution and rollover.</div>
+        </div>
+
+        <div class="step">
+          <div class="step-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"></path><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"></path><path d="M18 12h.01"></path>
+            </svg>
+          </div>
+          <div class="step-num">05</div>
+          <div class="step-title">Redeem</div>
+          <div class="step-desc">Redeem at maturity or exit anytime.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Ecosystem Section -->
+  <section class="ecosystem-section" id="ecosystem">
+    <div class="container">
+      <div class="eco-header reveal">
+        <div class="eco-left">
+          <span class="section-label">BUILT FOR THE ECOSYSTEM</span>
+          <h2 class="section-heading" style="margin-bottom:0;">
+            Composability.<br>
+            Liquidity.<br>
+            <span class="playfair">Growth.</span>
+          </h2>
+        </div>
+        <div class="eco-right">
+          Novaire is designed to be the fixed income primitive for the entire Stellar ecosystem.
+        </div>
+      </div>
+      <div class="partners reveal">
+        <div class="partner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M4.93 19.07L19.07 4.93"/></svg>
+          Kelp
+        </div>
+        <div class="partner">Blend</div>
+        <div class="partner">Aquarius</div>
+        <div class="partner">LeverFi</div>
+        <div class="partner">Sustent</div>
+        <div class="partner" style="font-weight:400; font-size:14px;">and more</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Built on Stellar Soroban Section -->
+  <section class="stellar-section">
+    <div class="stellar-arc"></div>
+    <div class="container stellar-content">
+      <div class="stellar-left reveal">
+        <h2 class="stellar-heading">
+          Built on<br>
+          Stellar<br>
+          <span class="playfair">Soroban</span>
+        </h2>
+        <p class="hero-subtext" style="margin-bottom:32px;">
+          Secure. Scalable. Decentralized.<br>Powering the future of on-chain fixed income.
+        </p>
+        <a href="#" class="btn-outline">Explore Soroban ↗</a>
+      </div>
+      <div class="stellar-right reveal">
+        <div class="branding-line">
+          <span style="display:flex;align-items:center;gap:8px;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M4.93 19.07L19.07 4.93"/></svg>
+            NOVAIRE
+          </span>
+          <span class="branding-cross">×</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M8 12c4 0 6-2 6-6M10 18c0-4 2-6 6-6" />
+            </svg>
+            Stellar
+          </span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-top">
+        <div class="footer-col reveal">
+          <div class="footer-logo">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M4.93 19.07L19.07 4.93"/></svg>
+            NOVAIRE
+          </div>
+          <div class="footer-desc">
+            The autonomous fixed income layer on Stellar.
+          </div>
+          <div class="social-icons">
+            <a href="#" class="social-icon">
+              <!-- Twitter/X -->
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M4 4l16 16M4 20l16-16"/>
+              </svg>
+            </a>
+            <a href="#" class="social-icon">
+              <!-- GitHub -->
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path>
+              </svg>
+            </a>
+            <a href="#" class="social-icon">
+              <!-- Discord -->
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M8 12a1 1 0 1 0 2 0 1 1 0 0 0-2 0zm8 0a1 1 0 1 0 2 0 1 1 0 0 0-2 0zM5.5 16s.5 2 2 3c1.5 1 3 1 4.5 1 1.5 0 3 0 4.5-1 1.5-1 2-3 2-3s1-5-1-7c-1-1-3-1-3-1l-1 1c2 .5 3 2 3 2s-1.5-1-3.5-1-4 .5-4 .5 1.5-1.5 3-2l-1-1s-2 0-3 1c-2 2-1 7-1 7z"></path>
+              </svg>
+            </a>
+            <a href="#" class="social-icon">
+              <!-- Telegram -->
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+              </svg>
+            </a>
+          </div>
+        </div>
+        <div class="footer-col reveal">
+          <div class="footer-col-label">PRODUCTS</div>
+          <a href="#" class="footer-link">Yield Vaults</a>
+          <a href="#" class="footer-link">PT / YT Tokens</a>
+          <a href="#" class="footer-link">Strategies</a>
+          <a href="#" class="footer-link">Smart Accounts</a>
+        </div>
+        <div class="footer-col reveal">
+          <div class="footer-col-label">RESOURCES</div>
+          <a href="#" class="footer-link">Documentation</a>
+          <a href="#" class="footer-link">Blog</a>
+          <a href="#" class="footer-link">Developers</a>
+          <a href="#" class="footer-link">Security</a>
+        </div>
+        <div class="footer-col reveal">
+          <div class="footer-col-label">COMPANY</div>
+          <a href="#" class="footer-link">About</a>
+          <a href="#" class="footer-link">Careers</a>
+          <a href="#" class="footer-link">Contact</a>
+        </div>
+      </div>
+      <div class="footer-bottom reveal">
+        <div>© 2025 Novaire Labs. All rights reserved.</div>
+        <div class="footer-bottom-links">
+          <a href="#">Privacy Policy</a>
+          <a href="#">Terms of Service</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      // 1. Navbar Scroll State
+      const navbar = document.getElementById("navbar");
+      window.addEventListener("scroll", () => {
+        if (window.scrollY > 50) {
+          navbar.classList.add("scrolled");
+        } else {
+          navbar.classList.remove("scrolled");
+        }
+      });
+
+      // 2. Scroll Reveal & Active Nav Link
+      const revealElements = document.querySelectorAll(".reveal");
+      const navLinks = document.querySelectorAll(".nav-link[href^='#']");
+      const sections = document.querySelectorAll("section[id]");
+
+      const observerOptions = {
+        threshold: 0.15,
+        rootMargin: "0px 0px -50px 0px"
+      };
+
+      const scrollObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            // Apply delay stagger logic based on index if multiple reveal elements exist
+            entry.target.classList.add("active");
+            
+            // Handle active nav link logic
+            if (entry.target.tagName.toLowerCase() === "section" && entry.target.id) {
+              navLinks.forEach(link => {
+                link.classList.remove("active-link");
+                if (link.getAttribute("href") === `#${entry.target.id}`) {
+                  link.classList.add("active-link");
+                }
+              });
+            }
+          }
+        });
+      }, observerOptions);
+
+      revealElements.forEach((el, index) => {
+        el.style.transitionDelay = `${(index % 5) * 100}ms`;
+        scrollObserver.observe(el);
+      });
+      
+      sections.forEach(sec => {
+        scrollObserver.observe(sec);
+      });
+
+      // 3. Hero Constellation Animation
+      const container = document.getElementById("constellation-container");
+      const numDots = 8;
+      const positions = [
+        { top: '20%', left: '10%' },
+        { top: '15%', left: '40%' },
+        { top: '30%', left: '70%' },
+        { top: '60%', left: '85%' },
+        { top: '80%', left: '60%' },
+        { top: '85%', left: '20%' },
+        { top: '55%', left: '5%' },
+        { top: '45%', left: '35%' },
+      ];
+
+      // Draw SVG lines first
+      const svgNamespace = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNamespace, "svg");
+      svg.classList.add("constellation");
+      
+      // Basic lines connecting random dots to create constellation effect
+      const connections = [[0,1], [1,2], [2,3], [3,4], [4,5], [5,6], [6,7], [7,1], [7,4]];
+      connections.forEach(conn => {
+        const line = document.createElementNS(svgNamespace, "line");
+        line.setAttribute("x1", positions[conn[0]].left);
+        line.setAttribute("y1", positions[conn[0]].top);
+        line.setAttribute("x2", positions[conn[1]].left);
+        line.setAttribute("y2", positions[conn[1]].top);
+        line.setAttribute("stroke", "var(--silver)");
+        line.setAttribute("stroke-width", "0.5");
+        line.setAttribute("opacity", "0.15");
+        svg.appendChild(line);
+      });
+      container.appendChild(svg);
+
+      // Add dots
+      positions.forEach((pos, index) => {
+        const dot = document.createElement("div");
+        dot.className = "dot";
+        dot.style.top = pos.top;
+        dot.style.left = pos.left;
+        dot.style.animationDelay = `${index * 0.5}s`;
+        container.appendChild(dot);
+      });
+
+      // 4. Stats Counter Animation
+      const statsSection = document.getElementById("stats");
+      const statNumbers = document.querySelectorAll(".stat-number");
+      let counted = false;
+
+      const statsObserver = new IntersectionObserver((entries) => {
+        if (entries[0].isIntersecting && !counted) {
+          counted = true;
+          statNumbers.forEach(stat => {
+            const target = parseFloat(stat.getAttribute("data-target"));
+            const prefix = stat.getAttribute("data-prefix") || "";
+            const suffix = stat.getAttribute("data-suffix") || "";
+            const isComma = stat.getAttribute("data-format") === "comma";
+            const duration = 1500;
+            const startTime = performance.now();
+
+            const updateCount = (currentTime) => {
+              const elapsed = currentTime - startTime;
+              const progress = Math.min(elapsed / duration, 1);
+              // Ease out quad
+              const easeProgress = progress * (2 - progress);
+              
+              let currentVal = target * easeProgress;
+              
+              if (isComma) {
+                currentVal = Math.floor(currentVal).toLocaleString();
+              } else if (target % 1 !== 0) {
+                currentVal = currentVal.toFixed(1);
+              } else {
+                currentVal = Math.floor(currentVal);
+              }
+              
+              stat.textContent = prefix + currentVal + suffix;
+              
+              if (progress < 1) {
+                requestAnimationFrame(updateCount);
+              } else {
+                // Ensure exact final target
+                const finalVal = isComma ? target.toLocaleString() : target;
+                stat.textContent = prefix + finalVal + suffix;
+              }
+            };
+            requestAnimationFrame(updateCount);
+          });
+        }
+      });
+      statsObserver.observe(statsSection);
+    });
+  </script>
+</body>
+</html>

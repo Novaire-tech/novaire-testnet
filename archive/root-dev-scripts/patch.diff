@@ -1,0 +1,161 @@
+diff --git a/contracts/intent_engine/src/lib.rs b/contracts/intent_engine/src/lib.rs
+index 208a960..bbbbbbb 100644
+--- a/contracts/intent_engine/src/lib.rs
++++ b/contracts/intent_engine/src/lib.rs
+@@ -49,6 +49,7 @@ pub enum NovaireIntentError {
+     AlreadyInitialized = 6,
+     StorageMissing = 7,
+     InvariantViolated = 8,
++    InvalidPercentage = 9,
+ }
+ 
+ #[contracttype]
+@@ -161,6 +162,7 @@ impl IntentEngine {
+         usdc_amount: i128,
+         min_implied_rate: i128,
+         _maturity_ledger: u32,
++        yt_sale_percentage: u32,
+     ) -> Result<IntentRecord, NovaireIntentError> {
+         user.require_auth();
+ 
+@@ -172,6 +174,10 @@ impl IntentEngine {
+             return Err(NovaireIntentError::ZeroAmount);
+         }
+ 
++        if yt_sale_percentage > 100 {
++            return Err(NovaireIntentError::InvalidPercentage);
++        }
++
+         let marketplace_addr = storage::get_address(&env, DataKey::Marketplace)?;
+         let marketplace_client = MarketplaceClient::new(&env, &marketplace_addr);
+ 
+@@ -238,25 +244,38 @@ impl IntentEngine {
+ 
+         // 4: Swap YT
+         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
+-        env.authorize_as_current_contract(soroban_sdk::vec![
+-            &env,
+-            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+-                soroban_sdk::auth::SubContractInvocation {
+-                    context: soroban_sdk::auth::ContractContext {
+-                        contract: yt_token_addr.clone(),
+-                        fn_name: soroban_sdk::Symbol::new(&env, "transfer"),
+-                        args: soroban_sdk::vec![
+-                            &env,
+-                            intent_engine_addr.clone().into_val(&env),
+-                            marketplace_addr.clone().into_val(&env),
+-                            yt_amount.into_val(&env),
+-                        ],
+-                    },
+-                    sub_invocations: soroban_sdk::vec![&env],
+-                }
+-            )
+-        ]);
+-        let underlying_from_yt = marketplace_client.swap_yt_for_underlying(&intent_engine_addr, &yt_amount, &1);
++        let yt_token_client = YtTokenClient::new(&env, &yt_token_addr);
++        
++        let yt_to_sell = (yt_amount * (yt_sale_percentage as i128)) / 100;
++        let yt_to_keep = yt_amount - yt_to_sell;
++        
++        let mut underlying_from_yt = 0;
++        
++        if yt_to_sell > 0 {
++            env.authorize_as_current_contract(soroban_sdk::vec![
++                &env,
++                soroban_sdk::auth::InvokerContractAuthEntry::Contract(
++                    soroban_sdk::auth::SubContractInvocation {
++                        context: soroban_sdk::auth::ContractContext {
++                            contract: yt_token_addr.clone(),
++                            fn_name: soroban_sdk::Symbol::new(&env, "transfer"),
++                            args: soroban_sdk::vec![
++                                &env,
++                                intent_engine_addr.clone().into_val(&env),
++                                marketplace_addr.clone().into_val(&env),
++                                yt_to_sell.into_val(&env),
++                            ],
++                        },
++                        sub_invocations: soroban_sdk::vec![&env],
++                    }
++                )
++            ]);
++            underlying_from_yt = marketplace_client.swap_yt_for_underlying(&intent_engine_addr, &yt_to_sell, &1);
++        }
++        
++        if yt_to_keep > 0 {
++            yt_token_client.transfer(&intent_engine_addr, &user, &yt_to_keep);
++        }
+ 
+         // 5: Transfer PT
+         let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
+@@ -264,12 +283,14 @@ impl IntentEngine {
+         pt_client.transfer(&intent_engine_addr, &user, &pt_amount);
+ 
+         // 6: Transfer Underlying back
+-        underlying_client.transfer(&intent_engine_addr, &user, &underlying_from_yt);
++        if underlying_from_yt > 0 {
++            underlying_client.transfer(&intent_engine_addr, &user, &underlying_from_yt);
++        }
+ 
+         let record = IntentRecord {
+             deposited_amount: usdc_amount,
+             pt_held: pt_amount,
+-            yt_sold: yt_amount,
++            yt_sold: yt_to_sell,
+             implied_rate_at_entry: current_twap,
+             maturity_ledger: _maturity_ledger,
+             created_ledger: env.ledger().sequence(),
+@@ -398,7 +419,7 @@ mod tests {
+         let vault_contract_id = env.register(Vault, ());
+         let vault_client = RealVaultClient::new(&env, &vault_contract_id);
+         
+-        sy_client.initialize(&admin, &underlying_token, &vault_contract_id, &1_000_000_000);
++        sy_client.initialize(&admin, &underlying_token, &vault_contract_id);
+         vault_client.initialize(&admin, &sy_contract_id, &underlying_token);
+ 
+         let pt_contract_id = env.register(PtToken, ());
+@@ -449,16 +470,16 @@ mod tests {
+         vault_client.deposit(&lp_provider, &2_000_000);
+         let sy_bal = vault_client.balance_of(&lp_provider);
+         tokenizer_client.mint_pt_yt(&lp_provider, &sy_bal);
+-        market_client.add_liquidity(&lp_provider, &1_000_000, &1_000_000); // 1M PT, 1M U
++        market_client.add_liquidity(&lp_provider, &1_000_000, &900_000); // 1M PT, 0.9M U
+ 
+         let intent_engine_contract_id = env.register(IntentEngine, ());
+         let intent_engine_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+         
+@@ -458,7 +479,7 @@ mod tests {
+ 
+         let current_twap = intent_engine.get_current_best_rate();
+         
+-        let record = intent_engine.execute_fixed_yield_intent(&user, &10_000, &current_twap, &1000);
++        let record = intent_engine.execute_fixed_yield_intent(&user, &10_000, &current_twap, &1000, &100);
+         
+         assert_eq!(record.deposited_amount, 10_000);
+         assert_eq!(pt_client.balance(&user), record.pt_held); // Received PT
+@@ -490,7 +511,7 @@ mod tests {
+         token_admin.mint(&user, &10_000);
+ 
+         let imp_rate = 2_000_000_000; // Impossible rate
+-        intent_engine.execute_fixed_yield_intent(&user, &10_000, &imp_rate, &1000);
++        intent_engine.execute_fixed_yield_intent(&user, &10_000, &imp_rate, &1000, &100);
+     }
+ 
+     #[test]
+@@ -502,7 +523,7 @@ mod tests {
+ 
+         intent_engine.pause();
+ 
+-        intent_engine.execute_fixed_yield_intent(&user, &10_000, &1, &1000);
++        intent_engine.execute_fixed_yield_intent(&user, &10_000, &1, &1000, &100);
+     }
+ 
+     #[test]
+@@ -510,7 +531,7 @@ mod tests {
+     fn test_zero_amount() {
+         let (env, _, _, intent_engine, _, _, _, _, _) = setup_env();
+         let user = Address::generate(&env);
+-        intent_engine.execute_fixed_yield_intent(&user, &0, &1, &1000);
++        intent_engine.execute_fixed_yield_intent(&user, &0, &1, &1000, &100);
+     }
+ 
+     #[test]

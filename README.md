@@ -125,7 +125,7 @@ Novaire/
     ├── lib/, utils/, providers/, types/
 ```
 
-Note: a number of one-off debug/trace scripts live at the repository root (`check_balances.js`, `check_spot_price.js`, `debug_trade.js`, `decode_events.js`, `get_marketplace_state.sh`, `run_bootstrap.sh`, `run_invokes*.sh`, `trade_audit.sh`, `test_*.{ts,js,rs}`, `patch_*.py`). These are ad hoc developer tooling used while building against testnet, not part of the supported public interface — treat anything not referenced in this README or `package.json` as unmaintained/experimental.
+Note: a number of one-off debug/trace scripts live in `archive/root-dev-scripts/` (`check_balances.js`, `check_spot_price.js`, `debug_trade.js`, `decode_events.js`, `get_marketplace_state.sh`, `run_bootstrap.sh`, `run_invokes*.sh`, `trade_audit.sh`, `test_*.{ts,js,rs}`, `patch_*.py`). These are ad hoc developer tooling used while building against testnet, not part of the supported public interface — treat anything not referenced in this README or `package.json` as unmaintained/experimental.
 
 ---
 
