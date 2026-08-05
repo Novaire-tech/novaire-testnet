@@ -1,0 +1,45 @@
+"""ledger_key_contract_instance""","{
+  ""contract_instance"": {
+    ""executable"": {
+      ""wasm"": ""73bf2cf274cb4e7dc295a3c347f9bd302725c4d9d558788664430f83e7a01b4d""
+    },
+    ""storage"": [
+      {
+        ""key"": {
+          ""vec"": [
+            {
+              ""symbol"": ""Admin""
+            }
+          ]
+        },
+        ""val"": {
+          ""address"": ""GBULVWCJSEZOBASS4PM2KLIMTDOLIY2MTDNA6M3YZBRNWPICEGI3754U""
+        }
+      },
+      {
+        ""key"": {
+          ""vec"": [
+            {
+              ""symbol"": ""EpochCount""
+            }
+          ]
+        },
+        ""val"": {
+          ""u32"": 3
+        }
+      },
+      {
+        ""key"": {
+          ""vec"": [
+            {
+              ""symbol"": ""ProtocolVersion""
+            }
+          ]
+        },
+        ""val"": {
+          ""u32"": 1
+        }
+      }
+    ]
+  }
+}",3417342,3538225

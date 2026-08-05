@@ -1,0 +1,30 @@
+const { Contract, rpc, Networks, TransactionBuilder, Account, scValToNative } = require('@stellar/stellar-sdk');
+const RPC_URL = 'https://soroban-testnet.stellar.org';
+const server = new rpc.Server(RPC_URL);
+const factoryId = 'CCCGZFAE7TEMGKC7P5PSG73W3BY5475WETXNPD33K42YHKVL6RZ3YI6R';
+const factory = new Contract(factoryId);
+
+async function run() {
+    try {
+        const { nativeToScVal } = require('@stellar/stellar-sdk');
+        const account = new Account('GBULVWCJSEZOBASS4PM2KLIMTDOLIY2MTDNA6M3YZBRNWPICEGI3754U', '1');
+        async function sim(method, ...args) {
+            const builder = new TransactionBuilder(account, { fee: "100", networkPassphrase: Networks.TESTNET });
+            const tx = builder.addOperation(factory.call(method, ...args)).setTimeout(30).build();
+            const simRes = await server.simulateTransaction(tx);
+            if (rpc.Api.isSimulationSuccess(simRes)) return simRes.result.retval;
+            return simRes.error;
+        }
+        
+        console.log("epoch_count:", await sim("epoch_count"));
+        const epoch4 = await sim("get_epoch", nativeToScVal(4, {type: 'u32'}));
+        if (epoch4 && epoch4.value) {
+            console.log("Epoch 4 exists.");
+        } else {
+            console.log("Epoch 4 error:", epoch4);
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+run();
