@@ -112,7 +112,7 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
 
     setStep('simulating');
     try {
-      const { Client } = await import('../../../packages/bindings/intent_engine/src/index');
+      const { Client } = await import('../../../../../packages/bindings/intent_engine/src/index');
       const { rpc } = await import('@stellar/stellar-sdk');
 
       const server = new rpc.Server(RPC_URL, { allowHttp: true });

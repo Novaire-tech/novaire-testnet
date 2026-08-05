@@ -19,7 +19,7 @@ export class YieldService {
     let maturityMs = Date.now() + 30 * 24 * 60 * 60 * 1000;
 
     try {
-      const { Client: TokenizerClient } = await import('../../packages/bindings/tokenizer/src/index');
+      const { Client: TokenizerClient } = await import('../../../../packages/bindings/tokenizer/src/index');
       const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE, NETWORK } = await import('../config/contracts');
       
       const IS_DEV = process.env.NODE_ENV !== 'production';
@@ -71,7 +71,7 @@ export class YieldService {
 
   static async getActiveMaturityLedger(): Promise<number> {
     try {
-      const { Client: TokenizerClient } = await import('../../packages/bindings/tokenizer/src/index');
+      const { Client: TokenizerClient } = await import('../../../../packages/bindings/tokenizer/src/index');
       const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
 
       const tokenizerClient = new TokenizerClient({ 
@@ -94,7 +94,7 @@ export class YieldService {
 
   static async getEpochStartIndex(): Promise<number> {
     try {
-      const { Client: TokenizerClient } = await import('../../packages/bindings/tokenizer/src/index');
+      const { Client: TokenizerClient } = await import('../../../../packages/bindings/tokenizer/src/index');
       const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
 
       const tokenizerClient = new TokenizerClient({ 

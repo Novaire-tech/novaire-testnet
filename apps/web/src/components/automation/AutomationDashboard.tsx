@@ -66,7 +66,7 @@ export function AutomationDashboard() {
         const hasRealStrategies = activeStrategies.some(s => s.isReal && (s.eta === 'Registered' || s.eta === 'Executing'));
         if (!hasRealStrategies) return;
         
-        const { Client: RolloverClient } = await import('../../../packages/bindings/rollover/src/index');
+        const { Client: RolloverClient } = await import('../../../../../packages/bindings/rollover/src/index');
         const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../../config/contracts');
         
         const client = new RolloverClient({

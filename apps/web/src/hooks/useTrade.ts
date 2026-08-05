@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { WalletService } from '../services/walletService';
 import { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } from '../config/contracts';
-import { NovaireMarketError } from '../../packages/bindings/marketplace/src/index';
+import { NovaireMarketError } from '../../../../packages/bindings/marketplace/src/index';
 
 export type TradeAsset = 'PT' | 'YT';
 export type TradeAction = 'Buy' | 'Sell';
@@ -72,7 +72,7 @@ export function useTrade() {
 
   const fetchMarketData = useCallback(async () => {
     try {
-      const { Client: MarketplaceClient } = await import('../../packages/bindings/marketplace/src/index');
+      const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
       const address = await WalletService.getWalletAddress() || 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'; // dummy if not connected
       
       const client = new MarketplaceClient({
@@ -164,7 +164,7 @@ export function useTrade() {
       const address = await WalletService.getWalletAddress();
       if (!address) throw new Error('Wallet not connected');
 
-      const { Client: MarketplaceClient } = await import('../../packages/bindings/marketplace/src/index');
+      const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
       const client = new MarketplaceClient({
         rpcUrl: RPC_URL,
         networkPassphrase: NETWORK_PASSPHRASE,
@@ -231,7 +231,7 @@ export function useTrade() {
       if (!address) throw new Error('Wallet not connected');
 
       const { signTransaction } = await import('@stellar/freighter-api');
-      const { Client: MarketplaceClient } = await import('../../packages/bindings/marketplace/src/index');
+      const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
       
       const client = new MarketplaceClient({
         rpcUrl: RPC_URL,

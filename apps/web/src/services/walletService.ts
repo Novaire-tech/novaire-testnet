@@ -268,8 +268,8 @@ export class WalletService {
 
       // Fetch PT and YT balances via Soroban RPC
       try {
-        const { Client: PtClient } = await import('../../packages/bindings/pt_token/src/index');
-        const { Client: YtClient } = await import('../../packages/bindings/yt_token/src/index');
+        const { Client: PtClient } = await import('../../../../packages/bindings/pt_token/src/index');
+        const { Client: YtClient } = await import('../../../../packages/bindings/yt_token/src/index');
         const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
 
         const ptClient = new PtClient({

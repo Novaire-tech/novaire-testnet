@@ -96,10 +96,10 @@ export class PortfolioService {
 
       // Fetch protocol positions DIRECTLY from on-chain contracts (bypassing broken Indexer/DB)
       try {
-        const { Client: PtClient } = await import('../../packages/bindings/pt_token/src/index');
-        const { Client: YtClient } = await import('../../packages/bindings/yt_token/src/index');
-        const { Client: VaultClient } = await import('../../packages/bindings/vault/src/index');
-        const { Client: MarketplaceClient } = await import('../../packages/bindings/marketplace/src/index');
+        const { Client: PtClient } = await import('../../../../packages/bindings/pt_token/src/index');
+        const { Client: YtClient } = await import('../../../../packages/bindings/yt_token/src/index');
+        const { Client: VaultClient } = await import('../../../../packages/bindings/vault/src/index');
+        const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
         const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
 
         const clientOptions = {

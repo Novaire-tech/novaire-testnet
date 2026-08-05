@@ -181,7 +181,7 @@ export function AutomationBuilderModal({ isOpen, onClose, onSubmit, initialTempl
         if (!address) throw new Error('Wallet not connected');
 
         const { signTransaction } = await import('@stellar/freighter-api');
-        const { Client: RolloverClient } = await import('../../../packages/bindings/rollover/src/index');
+        const { Client: RolloverClient } = await import('../../../../../packages/bindings/rollover/src/index');
         const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../../config/contracts');
         
         const client = new RolloverClient({
