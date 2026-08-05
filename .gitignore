@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+**/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -15,10 +16,14 @@
 
 # next.js
 /.next/
+**/.next/
 /out/
+**/out/
 
 # production
 /build
+**/build/
+**/dist/
 
 # misc
 .DS_Store
@@ -43,7 +48,7 @@ next-env.d.ts
 # Rust
 target/
 **/target/
-/src/generated/prisma
+/apps/web/src/generated/prisma
 *_keys.json
 
 # local/generated data
