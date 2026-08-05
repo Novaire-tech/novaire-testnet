@@ -243,20 +243,24 @@ There is no build/start script defined in `apps/indexer/package.json`; run the e
 
 ## Deployed Contract Addresses
 
-`scripts/deployments.testnet.json` currently tracks only the underlying test asset — the full protocol suite has not been deployed to a persisted testnet record in this repository at the time of writing:
+The full protocol suite is deployed and wired on Stellar Testnet, per `scripts/deployments.testnet.json`:
 
 | Contract | Testnet Address |
 | :--- | :--- |
-| **Underlying Token** | `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA` |
-| **Factory** | _not yet recorded — run `npm run deploy` and see `scripts/deployments.testnet.json`_ |
-| **SY Wrapper** | _not yet recorded_ |
-| **Vault** | _not yet recorded_ |
-| **Tokenizer** | _not yet recorded_ |
-| **PT Token** | _not yet recorded_ |
-| **YT Token** | _not yet recorded_ |
-| **Marketplace** | _not yet recorded_ |
-| **Intent Engine** | _not yet recorded_ |
-| **Rollover** | _not yet recorded_ |
+| **Underlying Token** (Native XLM SAC) | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
+| **Factory** | `CCCMNVS2O5NXTMUQPOQEHO7NOYN5NBOYIZXYB4BXWZ6TKR43GDYOKD4V` |
+| **SY Wrapper** | `CATZXVA6LN4VH5FG5XW2GVMUGSCTLAHMTUBCHQPYFPR7DUWXJQFUNWXR` |
+| **Vault** | `CBOFEBNGEACMIO4ENB3W7SZMSKSKFHJDVAIUBDR3ZVCCXP6IPXO4GVUH` |
+| **Tokenizer** | `CCXLGZDU6WD2FSF35PWMLD4OVFD6YWYNQREC74OQKIPXBXKBSBPXGFUR` |
+| **PT Token** | `CCMHOO7GEALGAYX2CAO2TGBFEM4KY6BQ62K26ZHG3CG7CICPR3GWAHSE` |
+| **YT Token** | `CCUSBAGDQR4MRP73IVHU6VDBTSPCUHCUPBLKGIN7EXLTG56XTES6ZCXV` |
+| **Marketplace** | `CB5KFAWH5B4CMZZGCA3SPVXU2FNTCE6W5TXLFHTFBEYEHWJK3YCFCC7J` |
+| **Intent Engine** | `CBJGQSF5ZG4FGTDUMYH33I5EQ5XTOJUVBNMABJZVKXTMS4V4YIIOVZ3C` |
+| **Rollover** | `CD3XW2CWR2GIRP26EYG4O5WEIHOUQ3TB7EW7EXKLI5AIS5XWOZ7TYRG6` |
+
+The Factory is initialized and Epoch 2 has been deployed (maturity ledger `4032411`), wiring all of the above together via `deploy_epoch`. The epoch's `blend_pool` points at Blend Capital's live testnet lending pool (`CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF`), and `underlying_token` above is the pool's actual native XLM SAC reserve, so SY Wrapper deposits route into Blend correctly.
+
+> **Note:** Epoch 1's contract instances (deployed earlier) were wired to a stale, non-existent `underlying_token` address (`CAS3J7GY...`) — a leftover bad value that predated this deployment. Those instances are dead; do not use them. See `scripts/deployments.testnet.json` → `_deprecated_epoch1` for the record.
 
 `scripts/deployments.mainnet.json` does contain a full set of addresses, but per this project's testnet-only status, treat that file as a historical/reference record rather than a live, supported Mainnet deployment. Always verify addresses against your own `scripts/deployments.testnet.json` after running `npm run deploy`.
 
@@ -330,7 +334,7 @@ All routes are Next.js Route Handlers under `src/app/api/`. There is no OpenAPI/
 
 ## Security Considerations & Known Limitations
 
-- **Testnet only.** Contract addresses recorded in `scripts/deployments.testnet.json` are incomplete/experimental; the addresses in `scripts/deployments.mainnet.json` should not be treated as a supported, audited Mainnet deployment.
+- **Testnet only.** The full protocol suite is deployed and wired on Testnet (see [Deployed Contract Addresses](#deployed-contract-addresses)), but it is experimental; the addresses in `scripts/deployments.mainnet.json` should not be treated as a supported, audited Mainnet deployment.
 - **No independent audit.** The contracts in `contracts/` have not undergone third-party security review as documented in this repository.
 - **Admin-privileged operations.** Per `CONTRACTS.md`, epoch creation on the `factory` contract is currently gated to a protocol admin key — this is centralization risk during the testnet phase.
 - **Secrets in `.env`.** `ADMIN_SECRET` and `KEEPER_SECRET` are raw Stellar secret keys read from environment variables by deploy/bootstrap scripts — never commit `.env` or reuse a funded Mainnet key for testnet development.

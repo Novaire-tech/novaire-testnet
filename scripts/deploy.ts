@@ -148,10 +148,12 @@ async function deploy() {
         const maturity_ledger = ledger.sequence + (isMainnet ? 518400 : 50000);
         const grace_period_ledgers = 1000;
         const keeper = admin.publicKey();
+        const BLEND_POOL = process.env.BLEND_POOL || (isMainnet ? '' : 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF');
 
         const paramsJson = JSON.stringify({
             maturity_ledger: maturity_ledger,
             underlying_token: deployments.underlying_token,
+            blend_pool: BLEND_POOL,
             sy_wrapper: deployments.sy_wrapper,
             vault: deployments.vault,
             pt_token: deployments.pt_token,
