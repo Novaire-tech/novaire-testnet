@@ -1,0 +1,18 @@
+[package]
+name = "marketplace"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = "22.0.0"
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.0", features = ["testutils"] }
+sy_wrapper = { path = "../sy_wrapper" }
+vault = { path = "../vault" }
+pt_token = { path = "../tokenizer/pt_token" }
+yt_token = { path = "../tokenizer/yt_token" }
+tokenizer = { path = "../tokenizer/tokenizer" }

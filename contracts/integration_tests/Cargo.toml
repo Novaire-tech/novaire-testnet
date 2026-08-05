@@ -1,0 +1,23 @@
+[package]
+name = "integration_tests"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+soroban-sdk = "22.0.11"
+proptest = "1.5.0"
+
+[dev-dependencies]
+soroban-sdk = { version = "22.0.11", features = ["testutils"] }
+sy_wrapper = { path = "../sy_wrapper" }
+vault = { path = "../vault" }
+pt_token = { path = "../tokenizer/pt_token" }
+yt_token = { path = "../tokenizer/yt_token" }
+tokenizer = { path = "../tokenizer/tokenizer" }
+marketplace = { path = "../marketplace" }
+intent_engine = { path = "../intent_engine" }
+rollover = { path = "../rollover" }
+maturity_engine = { path = "../maturity_engine" }
+
+[lib]
+crate-type = ["rlib"]
