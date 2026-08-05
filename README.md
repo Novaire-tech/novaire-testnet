@@ -226,7 +226,7 @@ There is no build/start script defined in `apps/indexer/package.json`; run the e
 
 1. Install the [Stellar CLI](https://developers.stellar.org/docs/tools/developer-tools/cli) and ensure `stellar` is on your `PATH`.
 2. Add the WASM build target: `rustup target add wasm32-unknown-unknown`.
-3. Create `.env` at the repo root with at least `ADMIN_SECRET` and `KEEPER_SECRET` (testnet keypairs — `scripts/deploy.ts` funds them via Friendbot automatically if unfunded).
+3. Copy `.env.example` to `.env` at the repo root and fill in at least `ADMIN_SECRET` and `KEEPER_SECRET` (testnet keypairs — `scripts/deploy.ts` funds them via Friendbot automatically if unfunded).
 4. Run:
    ```bash
    npm run deploy
