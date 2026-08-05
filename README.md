@@ -82,7 +82,7 @@ flowchart TD
     Frontend --> |API routes| DB
 ```
 
-**Contract dependency graph** (see [CONTRACTS.md](CONTRACTS.md) for full per-contract detail):
+**Contract dependency graph** (see [CONTRACTS.md](docs/protocol/CONTRACTS.md) for full per-contract detail):
 
 - `factory` deploys and wires together `tokenizer`, `marketplace`, `pt_token`, and `yt_token` for each epoch.
 - `vault` custodies the underlying asset and talks to `sy_wrapper` to standardize yield accounting.
@@ -91,7 +91,7 @@ flowchart TD
 - `intent_engine` routes multi-contract user intents through `vault`, `tokenizer`, and `marketplace`.
 - `rollover` moves matured PT positions into a new epoch via `tokenizer`.
 
-For deeper architectural background, see [ARCHITECTURE.md](ARCHITECTURE.md).
+For deeper architectural background, see [ARCHITECTURE.md](docs/architecture/ARCHITECTURE.md).
 
 ---
 
