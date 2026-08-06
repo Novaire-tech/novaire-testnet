@@ -1,4 +1,5 @@
-import { test, expect, type Page, type Locator } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
+import { openDepositModal } from './helpers/vault-page';
 
 /**
  * E2E coverage for the deposit ("Mint PT & YT") flow at /app/vaults.
@@ -104,16 +105,6 @@ function mockSorobanRpc(page: Page, requests: { method: string; body: any }[]) {
       }),
     });
   });
-}
-
-// Opens the deposit modal and returns a locator scoped to it, so queries
-// don't collide with identically-labelled elements on the page behind it.
-async function openDepositModal(page: Page): Promise<Locator> {
-  await page.goto('/app/vaults');
-  await page.getByRole('button', { name: 'Deposit' }).first().click();
-  const heading = page.getByRole('heading', { name: 'Mint PT & YT' });
-  await expect(heading).toBeVisible();
-  return heading.locator('../..');
 }
 
 test.describe('Deposit flow (XLM -> Blend-backed vault)', () => {

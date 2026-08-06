@@ -11,7 +11,18 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    {
+      name: 'chromium',
+      testIgnore: /.*\.real-wallet\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // Opt-in only: drives a real Freighter extension against live testnet.
+      // Run via `npm run test:e2e:real`, not part of the default `chromium` project.
+      name: 'real-wallet',
+      testMatch: /.*\.real-wallet\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
   ],
   webServer: {
     command: 'npm run dev -- -p 3100',

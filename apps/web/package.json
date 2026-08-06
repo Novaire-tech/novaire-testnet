@@ -7,7 +7,10 @@
     "build": "prisma generate --schema=../../prisma/schema.prisma && next build",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test --project=chromium",
+    "vendor:freighter": "bash e2e/vendor/download-freighter.sh",
+    "pretest:e2e:real": "npm run vendor:freighter",
+    "test:e2e:real": "playwright test --project=real-wallet"
   },
   "dependencies": {
     "@prisma/client": "^7.8.0",
