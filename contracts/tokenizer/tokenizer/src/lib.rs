@@ -1,5 +1,5 @@
 #![no_std]
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Symbol};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -76,6 +76,7 @@ pub trait YtTokenInterface {
     fn update_yield_index(env: Env, new_index: i128);
     fn total_supply(env: Env) -> i128;
     fn add_accrued_yield(env: Env, user: Address, amount: i128);
+    fn get_yield_index(env: Env) -> i128;
 }
 
 #[contracttype]
@@ -91,6 +92,9 @@ pub enum DataKey {
     EpochStartIndex,
     TotalPtMinted,
     SettlementExchangeRate,
+    /// Raw surplus (assets_held_raw - pt_liability_raw) recorded as of the last
+    /// reward-per-YT accumulator refresh. See `refresh_yield_index`.
+    LastRecordedSurplus,
 }
 
 mod storage {
@@ -179,6 +183,7 @@ impl Tokenizer {
         
         storage::set_i128(&env, DataKey::EpochStartIndex, epoch_start_index);
         storage::set_i128(&env, DataKey::TotalPtMinted, 0i128);
+        storage::set_i128(&env, DataKey::LastRecordedSurplus, 0i128);
 
         Ok(())
     }
@@ -202,6 +207,16 @@ impl Tokenizer {
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let sy_wrapper_addr = storage::get_address(&env, DataKey::SyWrapper)?;
 
+        // Refresh the reward-per-YT accumulator BEFORE this deposit's own shares/PT
+        // are added, so existing YT holders correctly receive their share of organic
+        // growth up to this point (distributed over the pre-mint total YT supply).
+        // Fixes M2b: previously a claim_yield() withdrawal shrank a user's real
+        // backing shares without reducing their YT balance, so crediting organic
+        // accrual against the raw exchange rate (instead of an accumulator that
+        // tracks actual realized surplus) silently over-credited every holder who
+        // had ever claimed, eventually violating solvency on a later claim.
+        let pre_mint_surplus_raw = Self::refresh_yield_index_and_get_surplus(&env)?;
+
         // 1. Pull shares from User to Tokenizer
         let vault_client = VaultClient::new(&env, &vault_addr);
         vault_client.transfer_shares(&user, &env.current_contract_address(), &sy_shares);
@@ -210,23 +225,38 @@ impl Tokenizer {
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
         pt_client.mint(&user, &sy_shares);
 
-        // 3. Update global yield index and Mint YT
+        // 3. Mint YT (checkpoints the user's pre-mint balance against the
+        // just-refreshed accumulator, then adds the new tokens)
         let sy_client = SyWrapperClient::new(&env, &sy_wrapper_addr);
         let exchange_rate = sy_client.get_exchange_rate();
 
         let yt_client = YtTokenClient::new(&env, &yt_token_addr);
-        yt_client.update_yield_index(&exchange_rate);
         yt_client.mint(&user, &sy_shares);
 
-        // M2 Fix: Credit historical yield to late minters
+        // M2 Fix: Credit historical yield to late minters. This tranche's own
+        // deposit intrinsically funds this credit — it deposits at the current,
+        // already-grown exchange rate but is only liable for `epoch_start_index`
+        // principal, so the difference is fully self-backed and never draws on
+        // any other holder's surplus.
         let epoch_start_index = storage::get_i128(&env, DataKey::EpochStartIndex)?;
+        let mut structural_margin_raw: i128 = 0;
         if exchange_rate > epoch_start_index {
             let index_delta = exchange_rate.checked_sub(epoch_start_index).ok_or(NovaireTokenizerError::MathUnderflow)?;
-            let historical_yield = index_delta.checked_mul(sy_shares).ok_or(NovaireTokenizerError::MathOverflow)? / 1_000_000_000;
+            structural_margin_raw = index_delta.checked_mul(sy_shares).ok_or(NovaireTokenizerError::MathOverflow)?;
+            let historical_yield = structural_margin_raw / 1_000_000_000;
             if historical_yield > 0 {
                 yt_client.add_accrued_yield(&user, &historical_yield);
             }
         }
+
+        // Absorb this deposit's structural surplus contribution into the recorded
+        // baseline so it isn't later misattributed as organic growth to distribute
+        // to ALL holders — it belongs solely to this tranche, already credited above.
+        // Derived arithmetically from the pre-mint surplus plus this mint's own
+        // known contribution (sy_shares * (exchange_rate - epoch_start_index)),
+        // instead of a second `compute_surplus_raw` cross-contract round-trip.
+        let post_mint_surplus_raw = pre_mint_surplus_raw.checked_add(structural_margin_raw).ok_or(NovaireTokenizerError::MathOverflow)?;
+        env.storage().instance().set(&DataKey::LastRecordedSurplus, &post_mint_surplus_raw);
 
         // 4. Update Internal Accounting
         let mut total_pt_minted = storage::get_i128(&env, DataKey::TotalPtMinted)?;
@@ -253,19 +283,15 @@ impl Tokenizer {
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let yt_client = YtTokenClient::new(&env, &yt_token_addr);
 
+        let mut pre_claim_surplus_raw: Option<i128> = None;
         let exchange_rate = match state {
-            EpochState::Open => {
-                // Pre-maturity: use live rate and update global index
-                let live_rate = sy_client.get_exchange_rate();
-                yt_client.update_yield_index(&live_rate);
-                live_rate
-            },
-            EpochState::Matured => {
-                // Post-maturity but pre-settlement: use live rate and UPDATE global index.
-                // Yield generated before settlement belongs to YT holders.
-                let live_rate = sy_client.get_exchange_rate();
-                yt_client.update_yield_index(&live_rate);
-                live_rate
+            EpochState::Open | EpochState::Matured => {
+                // Pre-settlement (yield generated before settlement belongs to YT
+                // holders): refresh the reward-per-YT accumulator from real accrued
+                // surplus (not the raw exchange rate — see the M2 fix note in
+                // mint_pt_yt) before checkpointing the claimant.
+                pre_claim_surplus_raw = Some(Self::refresh_yield_index_and_get_surplus(&env)?);
+                sy_client.get_exchange_rate()
             },
             EpochState::Settled => {
                 // Post-settlement: use the locked settlement rate
@@ -290,7 +316,42 @@ impl Tokenizer {
         // Withdraw underlying physical assets via the Vault
         let vault_addr = storage::get_address(&env, DataKey::Vault)?;
         let vault_client = VaultClient::new(&env, &vault_addr);
+        // Vault::withdraw_for requires auth from `withdrawer` (this contract), but the
+        // call to it happens through the Tokenizer -> Vault hop, so it needs an explicit
+        // sub-invocation authorization rather than a direct require_auth call.
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            &env,
+            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+                soroban_sdk::auth::SubContractInvocation {
+                    context: soroban_sdk::auth::ContractContext {
+                        contract: vault_addr.clone(),
+                        fn_name: Symbol::new(&env, "withdraw_for"),
+                        args: soroban_sdk::vec![
+                            &env,
+                            env.current_contract_address().into_val(&env),
+                            user.clone().into_val(&env),
+                            shares_to_withdraw.into_val(&env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![&env],
+                }
+            )
+        ]);
         let actual_underlying = vault_client.withdraw_for(&env.current_contract_address(), &user, &shares_to_withdraw);
+
+        // Record the post-withdrawal (now lower) surplus baseline so the next
+        // accumulator refresh measures organic growth from this correctly-reduced
+        // starting point, instead of over-crediting against the pre-claim surplus.
+        // Derived arithmetically from the pre-claim surplus minus exactly what was
+        // just withdrawn (shares_to_withdraw * exchange_rate), instead of a second
+        // `compute_surplus_raw` cross-contract round-trip. Skipped in the Settled
+        // state, where no further refresh will ever read this baseline again (the
+        // accumulator is frozen at settlement).
+        if let Some(pre_claim_surplus_raw) = pre_claim_surplus_raw {
+            let withdrawn_raw = shares_to_withdraw.checked_mul(exchange_rate).ok_or(NovaireTokenizerError::MathOverflow)?;
+            let post_claim_surplus_raw = pre_claim_surplus_raw.checked_sub(withdrawn_raw).ok_or(NovaireTokenizerError::MathUnderflow)?;
+            env.storage().instance().set(&DataKey::LastRecordedSurplus, &post_claim_surplus_raw);
+        }
 
         env.events().publish((Symbol::new(&env, "tokenizer_claimed"), user), (actual_underlying, shares_to_withdraw));
         Self::assert_invariant(env.clone())?;
@@ -312,18 +373,17 @@ impl Tokenizer {
         // State is Matured. We now transition to Settled.
         let sy_wrapper_addr = storage::get_address(&env, DataKey::SyWrapper)?;
         let sy_client = SyWrapperClient::new(&env, &sy_wrapper_addr);
-        
+
         // Fix M3: Prevent stale settlement rate by refreshing accounting before freezing
         sy_client.refresh_rate();
-        let settlement_rate = sy_client.get_exchange_rate();
-        
-        storage::set_settlement_rate(&env, settlement_rate);
 
-        // Update the YT index one final time with the exact settlement rate
-        // This guarantees that ANY remaining yield in the Tokenizer belongs to YT holders
-        let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
-        let yt_client = YtTokenClient::new(&env, &yt_token_addr);
-        yt_client.update_yield_index(&settlement_rate);
+        // Final distribution of any remaining organic growth to current YT holders
+        // (via the reward-per-YT accumulator) before the settlement rate freezes it.
+        // This guarantees that ANY remaining yield in the Tokenizer belongs to YT holders.
+        Self::refresh_yield_index(env.clone())?;
+
+        let settlement_rate = sy_client.get_exchange_rate();
+        storage::set_settlement_rate(&env, settlement_rate);
 
         let epoch_id = storage::get_u32(&env, DataKey::EpochId)?;
         env.events().publish((Symbol::new(&env, "tokenizer_settled"),), (epoch_id, settlement_rate));
@@ -369,6 +429,24 @@ impl Tokenizer {
         // 4. Withdraw physical assets via Vault
         let vault_addr = storage::get_address(&env, DataKey::Vault)?;
         let vault_client = VaultClient::new(&env, &vault_addr);
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            &env,
+            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+                soroban_sdk::auth::SubContractInvocation {
+                    context: soroban_sdk::auth::ContractContext {
+                        contract: vault_addr.clone(),
+                        fn_name: Symbol::new(&env, "withdraw_for"),
+                        args: soroban_sdk::vec![
+                            &env,
+                            env.current_contract_address().into_val(&env),
+                            user.clone().into_val(&env),
+                            shares_to_withdraw.into_val(&env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![&env],
+                }
+            )
+        ]);
         let actual_underlying = vault_client.withdraw_for(&env.current_contract_address(), &user, &shares_to_withdraw);
 
         env.events().publish((Symbol::new(&env, "tokenizer_redeemed"), user), (pt_amount, actual_underlying));
@@ -402,13 +480,160 @@ impl Tokenizer {
         })
     }
 
-    /// Asserts protocol accounting solvency. 
+    /// Raw surplus = assets_held_raw - pt_liability_raw, where assets_held_raw
+    /// includes PT principal PLUS unclaimed yield for YT holders, and
+    /// pt_liability_raw is the minimum PT principal requirement. Both are raw
+    /// (pre-1e9-scaled) cross-multiplied values to avoid division truncation
+    /// masking sub-unit insolvencies. Shared by `assert_invariant` and the
+    /// reward-per-YT accumulator (`refresh_yield_index` / `preview_yield_index`).
+    fn compute_surplus_raw(env: &Env) -> Result<i128, NovaireTokenizerError> {
+        let pt_token_addr = storage::get_address(env, DataKey::PtToken)?;
+        let pt_client = PtTokenClient::new(env, &pt_token_addr);
+        let pt_outstanding = pt_client.total_supply();
+
+        let vault_addr = storage::get_address(env, DataKey::Vault)?;
+        let vault_client = VaultClient::new(env, &vault_addr);
+        let sy_shares_held = vault_client.balance_of(&env.current_contract_address());
+
+        let sy_wrapper_addr = storage::get_address(env, DataKey::SyWrapper)?;
+        let sy_client = SyWrapperClient::new(env, &sy_wrapper_addr);
+
+        let current_exchange_rate = match storage::get_settlement_rate(env) {
+            Some(rate) => rate, // If settled, the backing required is locked to the settlement rate.
+            None => sy_client.get_exchange_rate()
+        };
+
+        let epoch_start_index = storage::get_i128(env, DataKey::EpochStartIndex)?;
+
+        let pt_liability_raw = pt_outstanding.checked_mul(epoch_start_index).ok_or(NovaireTokenizerError::MathOverflow)?;
+        let assets_held_raw = sy_shares_held.checked_mul(current_exchange_rate).ok_or(NovaireTokenizerError::MathOverflow)?;
+
+        assets_held_raw.checked_sub(pt_liability_raw).ok_or(NovaireTokenizerError::MathUnderflow)
+    }
+
+    /// Records the current raw surplus as the baseline for the next reward-per-YT
+    /// accumulator refresh. Must be called after any operation that changes
+    /// surplus for a reason OTHER than organic yield growth (a mint's own
+    /// structural margin, or a claim's withdrawal), so that effect isn't later
+    /// misattributed as distributable organic growth.
+    fn record_surplus_baseline(env: Env) -> Result<(), NovaireTokenizerError> {
+        let surplus = Self::compute_surplus_raw(&env)?;
+        env.storage().instance().set(&DataKey::LastRecordedSurplus, &surplus);
+        Ok(())
+    }
+
+    /// Read-only `(current_surplus_raw, last_recorded_surplus_raw)` snapshot.
+    ///
+    /// Deliberately does NOT call into YtToken (unlike `preview_yield_index` /
+    /// `refresh_yield_index`, which read/write YtToken's index directly). This is
+    /// the function YtToken itself calls (from `transfer`/`transfer_from`/
+    /// `claimable_yield`) to compute its own index update locally — Soroban
+    /// rejects a contract calling back into itself further up the same call
+    /// stack ("contract re-entry"), so YtToken cannot safely call
+    /// `preview_yield_index`/`refresh_yield_index` (which call back into
+    /// YtToken) from within its own entry points. This getter breaks that cycle.
+    pub fn get_surplus_snapshot(env: Env) -> Result<(i128, i128), NovaireTokenizerError> {
+        let current = Self::compute_surplus_raw(&env)?;
+        let last: i128 = env.storage().instance().get(&DataKey::LastRecordedSurplus).unwrap_or(0i128);
+        Ok((current, last))
+    }
+
+    /// Public wrapper around `record_surplus_baseline`, safe for YtToken to call
+    /// for the same reason as `get_surplus_snapshot` (touches no YtToken state).
+    pub fn record_surplus_baseline_pub(env: Env) -> Result<(), NovaireTokenizerError> {
+        Self::record_surplus_baseline(env)
+    }
+
+    /// Previews what the YT reward-per-share accumulator (`YtToken::yield_index`)
+    /// would become if `refresh_yield_index` were called right now, without
+    /// mutating any state. Used both internally and by `YtToken::claimable_yield`
+    /// for a live, pre-refresh preview of pending yield.
+    ///
+    /// This is the fix for the M2 double-mint insolvency bug: rather than driving
+    /// YT accrual off the raw SyWrapper exchange rate (which implicitly assumes
+    /// 1 YT token is always backed by exactly 1 real vault share — true only at
+    /// genesis, and broken the moment any claim withdraws real shares without
+    /// reducing YT balance), the index only ever advances by
+    /// (realized surplus growth / current YT supply), i.e. a proper
+    /// reward-per-share accumulator. A user's real backing shrinking after a
+    /// claim can no longer cause their nominal YT balance to be over-credited on
+    /// subsequent accrual.
+    pub fn preview_yield_index(env: Env) -> Result<i128, NovaireTokenizerError> {
+        let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
+        let yt_client = YtTokenClient::new(&env, &yt_token_addr);
+        let total_yt_supply = yt_client.total_supply();
+        let old_index = yt_client.get_yield_index();
+
+        let current_surplus_raw = Self::compute_surplus_raw(&env)?;
+        let last_surplus_raw: i128 = env.storage().instance().get(&DataKey::LastRecordedSurplus).unwrap_or(0i128);
+
+        if total_yt_supply > 0 && current_surplus_raw > last_surplus_raw {
+            let delta_surplus_raw = current_surplus_raw.checked_sub(last_surplus_raw).ok_or(NovaireTokenizerError::MathUnderflow)?;
+            let delta_surplus_underlying = delta_surplus_raw / 1_000_000_000;
+            if delta_surplus_underlying > 0 {
+                let delta_reward_per_yt = delta_surplus_underlying
+                    .checked_mul(1_000_000_000).ok_or(NovaireTokenizerError::MathOverflow)?
+                    .checked_div(total_yt_supply).ok_or(NovaireTokenizerError::MathUnderflow)?;
+                return old_index.checked_add(delta_reward_per_yt).ok_or(NovaireTokenizerError::MathOverflow);
+            }
+        }
+        Ok(old_index)
+    }
+
+    /// Advances the YT reward-per-share accumulator to reflect any organic
+    /// surplus growth since the last refresh, records the new baseline, and
+    /// returns the surplus it computed — so callers on the hot path
+    /// (`mint_pt_yt`, `claim_yield`) can derive their own post-operation
+    /// baseline arithmetically instead of paying for another full
+    /// `compute_surplus_raw` (3 more cross-contract calls). This function
+    /// itself already computes `compute_surplus_raw` exactly once (rather than
+    /// delegating to `preview_yield_index` + `record_surplus_baseline`, which
+    /// would each recompute it) — `mint_pt_yt`/`claim_yield` are themselves
+    /// called from `intent_engine`'s multi-hop flows, and the extra
+    /// cross-contract calls from a duplicated computation were enough to blow
+    /// the transaction's CPU budget on testnet.
+    fn refresh_yield_index_and_get_surplus(env: &Env) -> Result<i128, NovaireTokenizerError> {
+        let yt_token_addr = storage::get_address(env, DataKey::YtToken)?;
+        let yt_client = YtTokenClient::new(env, &yt_token_addr);
+        let total_yt_supply = yt_client.total_supply();
+        let old_index = yt_client.get_yield_index();
+
+        let current_surplus_raw = Self::compute_surplus_raw(env)?;
+        let last_surplus_raw: i128 = env.storage().instance().get(&DataKey::LastRecordedSurplus).unwrap_or(0i128);
+
+        if total_yt_supply > 0 && current_surplus_raw > last_surplus_raw {
+            let delta_surplus_raw = current_surplus_raw.checked_sub(last_surplus_raw).ok_or(NovaireTokenizerError::MathUnderflow)?;
+            let delta_surplus_underlying = delta_surplus_raw / 1_000_000_000;
+            if delta_surplus_underlying > 0 {
+                let delta_reward_per_yt = delta_surplus_underlying
+                    .checked_mul(1_000_000_000).ok_or(NovaireTokenizerError::MathOverflow)?
+                    .checked_div(total_yt_supply).ok_or(NovaireTokenizerError::MathUnderflow)?;
+                let new_index = old_index.checked_add(delta_reward_per_yt).ok_or(NovaireTokenizerError::MathOverflow)?;
+                if new_index > old_index {
+                    yt_client.update_yield_index(&new_index);
+                }
+            }
+        }
+
+        env.storage().instance().set(&DataKey::LastRecordedSurplus, &current_surplus_raw);
+        Ok(current_surplus_raw)
+    }
+
+    /// Permissionless (like `SyWrapper::refresh_rate`) — callable by anyone.
+    /// Public entry-point wrapper around `refresh_yield_index_and_get_surplus`
+    /// for external/keeper use, where the returned surplus isn't needed.
+    pub fn refresh_yield_index(env: Env) -> Result<(), NovaireTokenizerError> {
+        Self::refresh_yield_index_and_get_surplus(&env)?;
+        Ok(())
+    }
+
+    /// Asserts protocol accounting solvency.
     /// Verifies that PT backing logic hasn't been structurally compromised.
     fn assert_invariant(env: Env) -> Result<(), NovaireTokenizerError> {
         let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
         let pt_outstanding = pt_client.total_supply();
-        
+
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let yt_client = YtTokenClient::new(&env, &yt_token_addr);
         let yt_outstanding = yt_client.total_supply();
@@ -419,28 +644,9 @@ impl Tokenizer {
                 return Err(NovaireTokenizerError::InvariantViolated);
             }
 
-        // INVARIANT 2: Tokenizer must hold enough Vault Shares to mathematically satisfy the outstanding PT principal guarantee.
-        let vault_addr = storage::get_address(&env, DataKey::Vault)?;
-        let vault_client = VaultClient::new(&env, &vault_addr);
-        let sy_shares_held = vault_client.balance_of(&env.current_contract_address());
-        
-        let sy_wrapper_addr = storage::get_address(&env, DataKey::SyWrapper)?;
-        let sy_client = SyWrapperClient::new(&env, &sy_wrapper_addr);
-        
-        let current_exchange_rate = match storage::get_settlement_rate(&env) {
-            Some(rate) => rate, // If settled, the backing required is locked to the settlement rate.
-            None => sy_client.get_exchange_rate()
-        };
-
-        let epoch_start_index = storage::get_i128(&env, DataKey::EpochStartIndex)?;
-
-        let pt_liability_raw = pt_outstanding.checked_mul(epoch_start_index).ok_or(NovaireTokenizerError::MathOverflow)?;
-        let assets_held_raw = sy_shares_held.checked_mul(current_exchange_rate).ok_or(NovaireTokenizerError::MathOverflow)?;
-
-        // Note: assets_held_raw includes PT principal PLUS unclaimed yield for YT holders.
-        // It should ALWAYS exceed or equal the minimum PT principal requirements raw cross-multiplied value.
-        // Comparing raw outputs avoids 1e9 division truncation masking sub-unit insolvencies.
-        if assets_held_raw < pt_liability_raw {
+        // INVARIANT 2: Tokenizer must hold enough Vault Shares to mathematically
+        // satisfy the outstanding PT principal guarantee (surplus >= 0).
+        if Self::compute_surplus_raw(&env)? < 0 {
             return Err(NovaireTokenizerError::InvariantViolated);
         }
 

@@ -32,9 +32,9 @@ if (typeof window !== "undefined") {
 
 
 export const networks = {
-  unknown: {
-    networkPassphrase: "Public Global Stellar Network ; September 2015",
-    contractId: "CCSRZVD7DOGERXLMRUAZRDQHPPPYJUL7O6HS7KDW3JCSSMZACM63KF4T",
+  testnet: {
+    networkPassphrase: "Test SDF Network ; September 2015",
+    contractId: "CBEHGEZADWQMTAAPOWPVMZMQSGPM5B34L4YVVLRCG5QDJS7BWVPMBT7K",
   }
 } as const
 

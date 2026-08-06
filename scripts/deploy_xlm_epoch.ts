@@ -98,13 +98,20 @@ async function deployXlmEpoch() {
 
     console.log("Invoking Factory.deploy_epoch()...");
     const ledger = await server.getLatestLedger();
-    const maturity_ledger = ledger.sequence + (isMainnet ? 518400 : 50000);
+    // ~5.5s per ledger. Default testnet maturity: ~30 days (470000 ledgers).
+    // Override with MATURITY_LEDGERS=<n> to pick a different duration per run.
+    const DEFAULT_TESTNET_MATURITY_LEDGERS = 470000;
+    const testnetMaturityLedgers = Number(process.env.MATURITY_LEDGERS || DEFAULT_TESTNET_MATURITY_LEDGERS);
+    const maturity_ledger = ledger.sequence + (isMainnet ? 518400 : testnetMaturityLedgers);
     const grace_period_ledgers = 1000;
     const keeper = admin.publicKey();
+
+    const BLEND_POOL = process.env.BLEND_POOL || (isMainnet ? '' : 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF');
 
     const paramsJson = JSON.stringify({
         maturity_ledger: maturity_ledger,
         underlying_token: deployments.underlying_token,
+        blend_pool: BLEND_POOL,
         sy_wrapper: deployments.sy_wrapper,
         vault: deployments.vault,
         pt_token: deployments.pt_token,

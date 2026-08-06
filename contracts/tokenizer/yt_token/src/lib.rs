@@ -3,11 +3,21 @@
 use soroban_sdk::{contract, contracterror, contractclient, contractimpl, contracttype, Address, Env, String, Symbol};
 
 /// Cross-contract client for reading the live SY exchange rate.
-/// This enables the YT Token to refresh its global yield index
-/// before user-initiated balance mutations (H4 fix).
 #[contractclient(name = "SyWrapperClient")]
 pub trait SyWrapperInterface {
     fn get_exchange_rate(env: Env) -> i128;
+}
+
+/// Cross-contract client for the two narrow Tokenizer functions YT is allowed to
+/// call from its own entry points. Deliberately does NOT include
+/// `preview_yield_index`/`refresh_yield_index` — those call back into YtToken,
+/// and Soroban rejects a contract re-entering itself further up the call stack,
+/// so YtToken must compute its own index update locally using these
+/// YtToken-free getters instead of delegating the whole computation.
+#[contractclient(name = "TokenizerClient")]
+pub trait TokenizerInterface {
+    fn get_surplus_snapshot(env: Env) -> Result<(i128, i128), soroban_sdk::Error>;
+    fn record_surplus_baseline_pub(env: Env) -> Result<(), soroban_sdk::Error>;
 }
 
 #[contracterror]
@@ -244,15 +254,38 @@ impl YtToken {
         Ok(())
     }
 
-    /// Refreshes the global yield index from the live SY Wrapper exchange rate.
+    /// Computes what the local yield index would become given a Tokenizer surplus
+    /// snapshot, without mutating storage. Mirrors `Tokenizer::preview_yield_index`
+    /// exactly, but reads `total_supply`/`yield_index` from this contract's own
+    /// storage directly instead of over a cross-contract call (see
+    /// `TokenizerInterface`'s doc comment for why).
+    fn compute_local_index_preview(env: &Env, current_surplus_raw: i128, last_surplus_raw: i128) -> Result<i128, NovaireYtError> {
+        let old_index = storage::get_yield_index(env);
+        let total_yt_supply = storage::get_total_supply(env);
+
+        if total_yt_supply > 0 && current_surplus_raw > last_surplus_raw {
+            let delta_surplus_raw = current_surplus_raw.checked_sub(last_surplus_raw).ok_or(NovaireYtError::MathUnderflow)?;
+            let delta_surplus_underlying = delta_surplus_raw / YIELD_SCALAR;
+            if delta_surplus_underlying > 0 {
+                let delta_reward_per_yt = delta_surplus_underlying
+                    .checked_mul(YIELD_SCALAR).ok_or(NovaireYtError::MathOverflow)?
+                    .checked_div(total_yt_supply).ok_or(NovaireYtError::MathUnderflow)?;
+                return old_index.checked_add(delta_reward_per_yt).ok_or(NovaireYtError::MathOverflow);
+            }
+        }
+        Ok(old_index)
+    }
+
+    /// Refreshes the local yield index from the Tokenizer's real accrued surplus.
     /// This is the core H4 fix: ensures the index reflects real accrued yield
     /// before any user-initiated balance mutation (transfer, transfer_from).
     ///
     /// Safety:
-    /// - The index can only increase (monotonically non-decreasing exchange rate).
-    /// - Skipped if SyWrapper is not configured (backward compatibility).
+    /// - The index can only increase (mirrors Tokenizer's own guard).
+    /// - Skipped if Tokenizer is not configured (backward compatibility).
     /// - Skipped post-maturity (yield is frozen at settlement).
-    fn refresh_index_from_sy(env: &Env) {
+    /// - Best-effort: swallows failures rather than blocking a transfer.
+    fn refresh_index_locally(env: &Env) {
         // Skip if past maturity — yield accrual is frozen.
         if let Ok(maturity) = storage::get_maturity_ledger(env) {
             if env.ledger().sequence() >= maturity {
@@ -260,20 +293,25 @@ impl YtToken {
             }
         }
 
-        // Skip if SyWrapper is not configured (backward compat for pre-upgrade tokens).
-        let sy_wrapper_addr = match storage::get_sy_wrapper(env) {
-            Some(addr) => addr,
-            None => return,
+        let tokenizer_addr = match storage::get_tokenizer(env) {
+            Ok(addr) => addr,
+            Err(_) => return,
+        };
+        let tokenizer_client = TokenizerClient::new(env, &tokenizer_addr);
+
+        let (current_surplus_raw, last_surplus_raw) = match tokenizer_client.try_get_surplus_snapshot() {
+            Ok(Ok(snapshot)) => snapshot,
+            _ => return,
         };
 
-        let sy_client = SyWrapperClient::new(env, &sy_wrapper_addr);
-        let live_rate = sy_client.get_exchange_rate();
-        let current_index = storage::get_yield_index(env);
-
-        // Only advance the index — never decrease it.
-        if live_rate > current_index {
-            storage::set_yield_index(env, live_rate);
+        if let Ok(new_index) = Self::compute_local_index_preview(env, current_surplus_raw, last_surplus_raw) {
+            let old_index = storage::get_yield_index(env);
+            if new_index > old_index {
+                storage::set_yield_index(env, new_index);
+            }
         }
+
+        let _ = tokenizer_client.try_record_surplus_baseline_pub();
     }
 
     fn internal_checkpoint_user(env: &Env, user: &Address) -> Result<(), NovaireYtError> {
@@ -443,7 +481,7 @@ impl YtToken {
         // BEFORE checkpointing either party. This ensures that yield
         // accrued during the sender's holding period is permanently
         // locked to the sender and cannot transfer to the receiver.
-        Self::refresh_index_from_sy(&env);
+        Self::refresh_index_locally(&env);
 
         Self::internal_checkpoint_user(&env, &from)?;
         Self::internal_checkpoint_user(&env, &to)?;
@@ -487,7 +525,7 @@ impl YtToken {
 
         // H4 fix: Refresh global index from the live SY exchange rate
         // BEFORE checkpointing either party.
-        Self::refresh_index_from_sy(&env);
+        Self::refresh_index_locally(&env);
 
         Self::internal_checkpoint_user(&env, &from)?;
         Self::internal_checkpoint_user(&env, &to)?;
@@ -593,21 +631,27 @@ impl YtToken {
         let user_index = storage::get_user_yield_index(&env, &user);
         let balance = storage::get_balance(&env, &user);
 
-        // Determine the best available index: live rate if SyWrapper is configured
-        // and we are pre-maturity, otherwise fall back to the stored global index.
+        // Determine the best available index: a live, locally-computed preview of
+        // the Tokenizer's reward-per-YT accumulator (via the YtToken-free
+        // `get_surplus_snapshot` getter — see `TokenizerInterface`'s doc comment)
+        // if we are pre-maturity, otherwise fall back to the stored global index.
         let effective_index = {
             let stored_index = storage::get_yield_index(&env);
             let is_expired = storage::is_expired(&env).unwrap_or(true);
             if is_expired {
                 stored_index
             } else {
-                match storage::get_sy_wrapper(&env) {
-                    Some(sy_addr) => {
-                        let sy_client = SyWrapperClient::new(&env, &sy_addr);
-                        let live_rate = sy_client.get_exchange_rate();
-                        if live_rate > stored_index { live_rate } else { stored_index }
+                match storage::get_tokenizer(&env) {
+                    Ok(tokenizer_addr) => {
+                        let tokenizer_client = TokenizerClient::new(&env, &tokenizer_addr);
+                        match tokenizer_client.try_get_surplus_snapshot() {
+                            Ok(Ok((current, last))) => {
+                                Self::compute_local_index_preview(&env, current, last).unwrap_or(stored_index)
+                            },
+                            _ => stored_index,
+                        }
                     },
-                    None => stored_index,
+                    Err(_) => stored_index,
                 }
             }
         };
@@ -629,6 +673,10 @@ impl YtToken {
 
     pub fn total_supply(env: Env) -> i128 {
         storage::get_total_supply(&env)
+    }
+
+    pub fn get_yield_index(env: Env) -> i128 {
+        storage::get_yield_index(&env)
     }
 
     pub fn allowance(env: Env, from: Address, spender: Address) -> i128 {

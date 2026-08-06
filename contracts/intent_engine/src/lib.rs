@@ -341,10 +341,46 @@ impl IntentEngine {
 
         let vault_addr = storage::get_address(&env, DataKey::Vault)?;
         let vault_client = VaultClient::new(&env, &vault_addr);
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            &env,
+            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+                soroban_sdk::auth::SubContractInvocation {
+                    context: soroban_sdk::auth::ContractContext {
+                        contract: underlying_addr.clone(),
+                        fn_name: soroban_sdk::Symbol::new(&env, "transfer"),
+                        args: soroban_sdk::vec![
+                            &env,
+                            intent_engine_addr.clone().into_val(&env),
+                            vault_addr.clone().into_val(&env),
+                            usdc_amount.into_val(&env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![&env],
+                }
+            )
+        ]);
         let sy_shares = vault_client.deposit(&intent_engine_addr, &usdc_amount);
 
         let tokenizer_addr = storage::get_address(&env, DataKey::Tokenizer)?;
         let tokenizer_client = TokenizerClient::new(&env, &tokenizer_addr);
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            &env,
+            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+                soroban_sdk::auth::SubContractInvocation {
+                    context: soroban_sdk::auth::ContractContext {
+                        contract: vault_addr.clone(),
+                        fn_name: soroban_sdk::Symbol::new(&env, "transfer_shares"),
+                        args: soroban_sdk::vec![
+                            &env,
+                            intent_engine_addr.clone().into_val(&env),
+                            tokenizer_addr.clone().into_val(&env),
+                            sy_shares.into_val(&env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![&env],
+                }
+            )
+        ]);
         let (pt_amount, yt_amount) = tokenizer_client.mint_pt_yt(&intent_engine_addr, &sy_shares);
 
         if yt_amount < min_yt_out {
@@ -353,12 +389,31 @@ impl IntentEngine {
 
         let marketplace_addr = storage::get_address(&env, DataKey::Marketplace)?;
         let marketplace_client = MarketplaceClient::new(&env, &marketplace_addr);
-        
+
         let (pt_reserves, underlying_reserves, _) = marketplace_client.get_reserves();
         if pt_reserves == 0 || underlying_reserves == 0 {
             return Err(NovaireIntentError::MarketplaceNotBootstrapped);
         }
 
+        let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            &env,
+            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+                soroban_sdk::auth::SubContractInvocation {
+                    context: soroban_sdk::auth::ContractContext {
+                        contract: pt_token_addr.clone(),
+                        fn_name: soroban_sdk::Symbol::new(&env, "transfer"),
+                        args: soroban_sdk::vec![
+                            &env,
+                            intent_engine_addr.clone().into_val(&env),
+                            marketplace_addr.clone().into_val(&env),
+                            pt_amount.into_val(&env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![&env],
+                }
+            )
+        ]);
         let underlying_from_pt = marketplace_client.swap_pt_for_underlying(&intent_engine_addr, &pt_amount, &min_underlying_out);
 
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;

@@ -1,7 +1,7 @@
 #![no_std]
 use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, token, Address, Env,
-    Map, Symbol, Vec,
+    IntoVal, Map, Symbol, Vec,
 };
 
 /// A Blend Capital `Request`, as submitted to `Pool::submit`. Only `Supply` (0) and
@@ -243,6 +243,27 @@ impl SyWrapper {
             address: underlying_addr.clone(),
             amount,
         });
+        // Pool::submit performs the token transfer (this -> pool) itself, one call
+        // frame below this contract, so it needs an explicit sub-invocation
+        // authorization from us rather than a direct require_auth call.
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            &env,
+            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+                soroban_sdk::auth::SubContractInvocation {
+                    context: soroban_sdk::auth::ContractContext {
+                        contract: underlying_addr.clone(),
+                        fn_name: Symbol::new(&env, "transfer"),
+                        args: soroban_sdk::vec![
+                            &env,
+                            this.clone().into_val(&env),
+                            pool_id.clone().into_val(&env),
+                            amount.into_val(&env),
+                        ],
+                    },
+                    sub_invocations: soroban_sdk::vec![&env],
+                }
+            )
+        ]);
         pool_client.submit(&this, &this, &this, &requests);
 
         total_shares = total_shares.checked_add(shares_to_mint).ok_or(NovaireSyError::MathOverflow)?;

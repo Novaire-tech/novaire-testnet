@@ -228,6 +228,37 @@ fn test_m2_claim_mint_claim() {
     InvariantEngine::assert_everything(&protocol);
 }
 
+// ── Test 1b: Repeated Claim → Accrue → Claim, No Re-mint ─────────────────────
+// Regression coverage for the root cause behind M2b: a claim_yield() withdrawal
+// shrinks a user's real backing shares without touching their YT balance. With
+// no re-mint at all, two accrual+claim cycles on a SINGLE tranche must still
+// stay solvent (this used to be untested — test_m2_claim_mint_claim only
+// caught the bug because a re-mint happened to compound it into a visible
+// invariant violation).
+#[test]
+fn test_m2_repeated_claim_no_remint() {
+    let protocol = Protocol::new();
+    let alice = protocol.create_user();
+
+    protocol.mint_mock_usdc(&alice, 100_000_000);
+    protocol.deposit(&alice, 100_000_000);
+    protocol.mint_pt_yt(&alice, 50_000_000);
+
+    protocol.mint_mock_usdc(&protocol.sy_wrapper.address, 10_000_000);
+    protocol.sy_wrapper.refresh_rate();
+
+    let claim_1 = protocol.tokenizer.claim_yield(&alice);
+    assert!(claim_1 > 0, "Alice should have claimed yield");
+    InvariantEngine::assert_everything(&protocol);
+
+    protocol.mint_mock_usdc(&protocol.sy_wrapper.address, 10_000_000);
+    protocol.sy_wrapper.refresh_rate();
+
+    let claim_2 = protocol.tokenizer.claim_yield(&alice);
+    assert!(claim_2 > 0, "Alice should claim again with no re-mint in between");
+    InvariantEngine::assert_everything(&protocol);
+}
+
 // ── Test 2: Multiple refresh_rate() Calls Before Mint ────────────────────────
 #[test]
 fn test_m2_multiple_refreshes_before_mint() {

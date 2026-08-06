@@ -32,9 +32,9 @@ if (typeof window !== "undefined") {
 
 
 export const networks = {
-  unknown: {
-    networkPassphrase: "Public Global Stellar Network ; September 2015",
-    contractId: "CDU3YFWCPBPZN6SYWKIP6TCFNGZ3G4MJWNLBB2RVNZGBUJR6HGZXPZKD",
+  testnet: {
+    networkPassphrase: "Test SDF Network ; September 2015",
+    contractId: "CCDJJPPLWQ6ATBQNCTZDVWEX5OYEQEZ6Q3QXADDDZMZE2RUV6PCKO7NB",
   }
 } as const
 
@@ -86,6 +86,22 @@ export interface Client {
   claim_amm_yield: (options?: MethodOptions) => Promise<AssembledTransaction<Result<i128>>>
 
   /**
+   * Construct and simulate a add_yt_liquidity transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Funds the YT side of the pool so `swap_underlying_for_yt` has real liquidity to
+   * sell against. Without this, `YtReserves` can only ever be decremented (by YT
+   * purchases) or incremented (by YT sales / proportional `remove_liquidity`), with no
+   * legitimate entrypoint to seed it in the first place, so YT purchases always revert
+   * with `InsufficientLiquidity` on a fresh deployment.
+   * 
+   * Contributed YT does not mint new LP shares (it isn't priced against PT/underlying
+   * reserves by the AMM curve), so this is intentionally a one-way top-up: contributors
+   * donate YT depth to the pool. It mirrors `add_liquidity`'s minimum-liquidity floor to
+   * keep `swap_yt_for_underlying`'s downstream math (which assumes reserves stay above
+   * dust) safe.
+   */
+  add_yt_liquidity: ({provider, yt_amount}: {provider: string, yt_amount: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<i128>>>
+
+  /**
    * Construct and simulate a remove_liquidity transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   remove_liquidity: ({provider, lp_shares}: {provider: string, lp_shares: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<readonly [i128, i128, i128]>>>
@@ -135,6 +151,7 @@ export class Client extends ContractClient {
         "AAAAAAAAAAAAAAANYWRkX2xpcXVpZGl0eQAAAAAAAAMAAAAAAAAACHByb3ZpZGVyAAAAEwAAAAAAAAAJcHRfYW1vdW50AAAAAAAACwAAAAAAAAARdW5kZXJseWluZ19hbW91bnQAAAAAAAALAAAAAQAAA+kAAAALAAAH0AAAABJOb3ZhaXJlTWFya2V0RXJyb3IAAA==",
         "AAAAAAAAAAAAAAANZ2V0X3R3YXBfcmF0ZQAAAAAAAAAAAAABAAAD6QAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
         "AAAAAAAAAAAAAAAPY2xhaW1fYW1tX3lpZWxkAAAAAAAAAAABAAAD6QAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
+        "AAAAAAAAAtFGdW5kcyB0aGUgWVQgc2lkZSBvZiB0aGUgcG9vbCBzbyBgc3dhcF91bmRlcmx5aW5nX2Zvcl95dGAgaGFzIHJlYWwgbGlxdWlkaXR5IHRvCnNlbGwgYWdhaW5zdC4gV2l0aG91dCB0aGlzLCBgWXRSZXNlcnZlc2AgY2FuIG9ubHkgZXZlciBiZSBkZWNyZW1lbnRlZCAoYnkgWVQKcHVyY2hhc2VzKSBvciBpbmNyZW1lbnRlZCAoYnkgWVQgc2FsZXMgLyBwcm9wb3J0aW9uYWwgYHJlbW92ZV9saXF1aWRpdHlgKSwgd2l0aCBubwpsZWdpdGltYXRlIGVudHJ5cG9pbnQgdG8gc2VlZCBpdCBpbiB0aGUgZmlyc3QgcGxhY2UsIHNvIFlUIHB1cmNoYXNlcyBhbHdheXMgcmV2ZXJ0CndpdGggYEluc3VmZmljaWVudExpcXVpZGl0eWAgb24gYSBmcmVzaCBkZXBsb3ltZW50LgoKQ29udHJpYnV0ZWQgWVQgZG9lcyBub3QgbWludCBuZXcgTFAgc2hhcmVzIChpdCBpc24ndCBwcmljZWQgYWdhaW5zdCBQVC91bmRlcmx5aW5nCnJlc2VydmVzIGJ5IHRoZSBBTU0gY3VydmUpLCBzbyB0aGlzIGlzIGludGVudGlvbmFsbHkgYSBvbmUtd2F5IHRvcC11cDogY29udHJpYnV0b3JzCmRvbmF0ZSBZVCBkZXB0aCB0byB0aGUgcG9vbC4gSXQgbWlycm9ycyBgYWRkX2xpcXVpZGl0eWAncyBtaW5pbXVtLWxpcXVpZGl0eSBmbG9vciB0bwprZWVwIGBzd2FwX3l0X2Zvcl91bmRlcmx5aW5nYCdzIGRvd25zdHJlYW0gbWF0aCAod2hpY2ggYXNzdW1lcyByZXNlcnZlcyBzdGF5IGFib3ZlCmR1c3QpIHNhZmUuAAAAAAAAEGFkZF95dF9saXF1aWRpdHkAAAACAAAAAAAAAAhwcm92aWRlcgAAABMAAAAAAAAACXl0X2Ftb3VudAAAAAAAAAsAAAABAAAD6QAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
         "AAAAAAAAAAAAAAAQcmVtb3ZlX2xpcXVpZGl0eQAAAAIAAAAAAAAACHByb3ZpZGVyAAAAEwAAAAAAAAAJbHBfc2hhcmVzAAAAAAAACwAAAAEAAAPpAAAD7QAAAAMAAAALAAAACwAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
         "AAAABAAAAAAAAAAAAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAAAAAACwAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAA5Ob3RJbml0aWFsaXplZAAAAAAAAgAAAAAAAAAMVW5hdXRob3JpemVkAAAAAwAAAAAAAAAMRXBvY2hFeHBpcmVkAAAABAAAAAAAAAAVSW5zdWZmaWNpZW50TGlxdWlkaXR5AAAAAAAABQAAAAAAAAAQU2xpcHBhZ2VFeGNlZWRlZAAAAAYAAAAAAAAACVplcm9JbnB1dAAAAAAAAAcAAAAAAAAAFUJlbG93TWluaW11bUxpcXVpZGl0eQAAAAAAAAgAAAAAAAAADlN0b3JhZ2VNaXNzaW5nAAAAAAAJAAAAAAAAABFJbnZhcmlhbnRWaW9sYXRlZAAAAAAAAAoAAAAAAAAADE1hdGhPdmVyZmxvdwAAAAs=",
         "AAAAAAAAAAAAAAAWc3dhcF9wdF9mb3JfdW5kZXJseWluZwAAAAAAAwAAAAAAAAAGc2VsbGVyAAAAAAATAAAAAAAAAAVwdF9pbgAAAAAAAAsAAAAAAAAAEm1pbl91bmRlcmx5aW5nX291dAAAAAAACwAAAAEAAAPpAAAACwAAB9AAAAASTm92YWlyZU1hcmtldEVycm9yAAA=",
@@ -151,6 +168,7 @@ export class Client extends ContractClient {
         add_liquidity: this.txFromJSON<Result<i128>>,
         get_twap_rate: this.txFromJSON<Result<i128>>,
         claim_amm_yield: this.txFromJSON<Result<i128>>,
+        add_yt_liquidity: this.txFromJSON<Result<i128>>,
         remove_liquidity: this.txFromJSON<Result<readonly [i128, i128, i128]>>,
         swap_pt_for_underlying: this.txFromJSON<Result<i128>>,
         swap_underlying_for_pt: this.txFromJSON<Result<i128>>,
