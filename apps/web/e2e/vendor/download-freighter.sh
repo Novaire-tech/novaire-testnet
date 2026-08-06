@@ -4,13 +4,15 @@
 set -euo pipefail
 
 # Pin together: bumping the version requires re-verifying the extension UI
-# selectors in ../fixtures/freighter-onboarding.ts.
-FREIGHTER_VERSION="5.32.1"
-FREIGHTER_SHA256="REPLACE_WITH_PINNED_SHA256"
+# selectors in ../fixtures/freighter-onboarding.ts. sha256 taken from the
+# release's own asset digest (GitHub API `assets[].digest`), not recomputed
+# by us out-of-band.
+FREIGHTER_VERSION="5.44.0"
+FREIGHTER_SHA256="16eb5eacfefc9bc33b994b3a6a9660fb2736b7ab2190164ec90dafa8d399a7ef"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST_DIR="${SCRIPT_DIR}/freighter-extension"
-ARCHIVE_URL="https://github.com/stellar/freighter/releases/download/${FREIGHTER_VERSION}/extension.zip"
+ARCHIVE_URL="https://github.com/stellar/freighter/releases/download/${FREIGHTER_VERSION}/build-${FREIGHTER_VERSION}.zip"
 TMP_ZIP="$(mktemp -t freighter-XXXXXX.zip)"
 
 if [ -f "${DEST_DIR}/manifest.json" ]; then
