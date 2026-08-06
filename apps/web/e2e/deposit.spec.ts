@@ -21,7 +21,7 @@ import { openDepositModal } from './helpers/vault-page';
 
 const RPC_URL = 'https://soroban-testnet.stellar.org';
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
-const MOCK_ADDRESS = 'GABCDEXAMPLE0000000000000000000000000000000000000000000000';
+const MOCK_ADDRESS = 'GBDTV2XZIDNAIBJBADA5QMVRMY5RVPQ7IFKVOWY2BKFDXCDWLPIPRT7I';
 
 // Freighter isn't a `window.freighterApi` object you can stub directly — the
 // real extension talks to the page via `window.postMessage`, using the
