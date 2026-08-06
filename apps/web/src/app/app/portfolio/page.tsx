@@ -1,6 +1,5 @@
 'use client';
 
-import { motion } from 'framer-motion';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { PortfolioKPICards } from '@/components/portfolio/PortfolioKPICards';
 import { WalletAssetsTable } from '@/components/portfolio/WalletAssetsTable';

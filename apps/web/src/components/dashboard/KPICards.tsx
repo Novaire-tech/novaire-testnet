@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
 import { Briefcase, TrendingUp, HandCoins, PiggyBank, Activity, ShieldCheck } from 'lucide-react';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { ProtocolService, ProtocolState } from '@/services/protocolService';

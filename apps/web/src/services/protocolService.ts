@@ -123,7 +123,7 @@ export class ProtocolService {
         if (priceData && priceData.priceUsd) {
           xlmPriceUsd = priceData.priceUsd;
         }
-      } catch (e) {
+      } catch {
         console.warn("Could not fetch XLM price");
       }
 

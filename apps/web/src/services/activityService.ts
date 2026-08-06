@@ -1,4 +1,4 @@
-import { CONTRACTS, NETWORK } from '../config/contracts';
+import { NETWORK } from '../config/contracts';
 
 const IS_DEV = process.env.NODE_ENV !== 'production';
 const isMainnet = NETWORK === 'MAINNET';
@@ -84,7 +84,7 @@ export class ActivityService {
                 if (decoded.length > 3) {
                   fnName += decoded.toLowerCase();
                 }
-              } catch (e) {
+              } catch {
                 // Ignore base64 decode errors
               }
             }

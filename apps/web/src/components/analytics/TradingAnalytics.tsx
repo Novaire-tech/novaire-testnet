@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Activity, ArrowRightLeft, BarChart3, TrendingUp, DollarSign, Percent } from 'lucide-react';
+import { Activity, BarChart3, TrendingUp, DollarSign, Percent } from 'lucide-react';
 import { useTrade } from '../../hooks/useTrade';
 import { ProtocolService, ProtocolState } from '../../services/protocolService';
 import { useEffect, useState } from 'react';

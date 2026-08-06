@@ -13,7 +13,6 @@
  */
 import { PriceOracleService } from './priceOracleService';
 import { PortfolioService } from './portfolioService';
-import { YieldService } from './yieldService';
 
 export interface AnalyticsSnapshot {
   timestamp: number;

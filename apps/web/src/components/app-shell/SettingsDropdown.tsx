@@ -21,7 +21,7 @@ export function SettingsDropdown({ isOpen, onClose }: SettingsDropdownProps) {
       if (savedNotifs) {
         try {
           setNotifications(JSON.parse(savedNotifs));
-        } catch (e) {
+        } catch {
           // Ignore
         }
       }

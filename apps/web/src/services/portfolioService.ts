@@ -1,6 +1,5 @@
 import { WalletService, WalletAssetBalance } from './walletService';
 import { PriceOracleService } from './priceOracleService';
-import { MarketService } from './marketService';
 import { YieldService } from './yieldService';
 
 export interface PortfolioAsset {
@@ -59,7 +58,7 @@ export class PortfolioService {
       let rawBalances: WalletAssetBalance[] = [];
       try {
         rawBalances = await WalletService.getBalances();
-      } catch (e: any) {
+      } catch {
         return this.emptyPortfolio('Failed to fetch wallet balances');
       }
 
@@ -76,7 +75,7 @@ export class PortfolioService {
           if (priceData && typeof priceData.priceUsd === 'number' && !isNaN(priceData.priceUsd)) {
             priceUsd = priceData.priceUsd;
           }
-        } catch (e) {
+        } catch {
           console.warn(`Price API unavailable for ${bal.assetCode}, defaulting to 0`);
         }
 
@@ -123,7 +122,7 @@ export class PortfolioService {
           if (priceData && typeof priceData.priceUsd === 'number' && !isNaN(priceData.priceUsd)) {
             underlyingSpotUsd = priceData.priceUsd;
           }
-        } catch (e) {
+        } catch {
           console.warn("Could not fetch XLM price");
         }
 
@@ -360,7 +359,7 @@ export class PortfolioService {
         if (xlmPriceData && typeof xlmPriceData.priceUsd === 'number' && !isNaN(xlmPriceData.priceUsd) && xlmPriceData.priceUsd > 0) {
           xlmPriceUsd = xlmPriceData.priceUsd;
         }
-      } catch (e) {
+      } catch {
         console.warn('Failed to fetch XLM price for conversions.');
       }
 

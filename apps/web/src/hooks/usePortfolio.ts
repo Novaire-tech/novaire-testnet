@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { PortfolioService, PortfolioSummary } from '../services/portfolioService';
 import { WalletService } from '../services/walletService';
 import { NotificationService } from '../services/notificationService';

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Zap, Settings, Clock, ChevronDown } from 'lucide-react';
+import { X, Zap, Clock, ChevronDown } from 'lucide-react';
 import { YieldService } from '@/services/yieldService';
 import { WalletService } from '@/services/walletService';
 import { usePortfolio } from '@/hooks/usePortfolio';

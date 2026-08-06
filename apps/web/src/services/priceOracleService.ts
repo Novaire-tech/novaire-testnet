@@ -72,7 +72,7 @@ export class PriceOracleService {
         if (stored) {
            try {
               return JSON.parse(stored);
-           } catch (e) {}
+           } catch {}
         }
       }
       throw new Error('Price Oracle is unavailable on testnet');

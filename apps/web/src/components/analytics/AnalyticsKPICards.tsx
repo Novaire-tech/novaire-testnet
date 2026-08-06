@@ -1,6 +1,5 @@
 'use client';
 
-import { motion } from 'framer-motion';
 import { Briefcase, HandCoins, Activity, ShieldCheck, Clock, TrendingUp, TrendingDown, Layers } from 'lucide-react';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { useState, useEffect } from 'react';

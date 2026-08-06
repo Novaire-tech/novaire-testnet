@@ -58,7 +58,7 @@ export class YieldService {
                 }
               }
             }
-          } catch (e) {
+          } catch {
             if (IS_DEV) console.warn("Failed to fetch horizon ledger for maturity calculation, using approximation");
           }
         }
@@ -123,7 +123,7 @@ export class YieldService {
       const state = await ProtocolService.getProtocolState();
       tvlUsd = state.tvlUsd;
       impliedApy = state.impliedYieldApy;
-    } catch (e) {
+    } catch {
       console.warn("Could not fetch live ProtocolState for Vault page");
     }
 

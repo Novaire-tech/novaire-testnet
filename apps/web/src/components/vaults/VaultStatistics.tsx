@@ -1,6 +1,5 @@
-import { motion } from 'framer-motion';
 import { Vault } from '../../types';
-import { Activity, Layers, Shield, Zap, TrendingUp, HandCoins } from 'lucide-react';
+import { Layers, Shield, Zap, TrendingUp, HandCoins } from 'lucide-react';
 
 import { ProtocolState } from '@/services/protocolService';
 import { MetricCard } from '../ui/MetricCard';

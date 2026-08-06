@@ -1,7 +1,6 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { usePortfolio } from '../../hooks/usePortfolio';
 import { usePrices } from '../../hooks/usePrices';
 import { useState, useEffect } from 'react';
 import { YieldService } from '../../services/yieldService';

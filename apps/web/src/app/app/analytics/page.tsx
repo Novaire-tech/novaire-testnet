@@ -1,6 +1,5 @@
 'use client';
 
-import { motion } from 'framer-motion';
 import { DashboardHeader } from '@/components/dashboard/DashboardHeader';
 import { AnalyticsKPICards } from '@/components/analytics/AnalyticsKPICards';
 import { MainInteractiveChart } from '@/components/analytics/MainInteractiveChart';

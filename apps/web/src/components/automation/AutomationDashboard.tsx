@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Zap, Activity, TrendingUp, Calendar, Plus, CheckCircle2 } from 'lucide-react';
+import { Zap, Activity, TrendingUp, Calendar } from 'lucide-react';
 import { StrategyCards } from './StrategyCards';
 import { ExecutionHistory } from './ExecutionHistory';
 import { AutomationBuilderModal } from './AutomationBuilderModal';

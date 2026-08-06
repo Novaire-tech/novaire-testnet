@@ -109,7 +109,7 @@ export function useTrade() {
       if (rawReserves) {
         let unwrappedRes = rawReserves;
         if (typeof rawReserves.unwrap === 'function') {
-           try { unwrappedRes = rawReserves.unwrap(); } catch(e) {}
+           try { unwrappedRes = rawReserves.unwrap(); } catch {}
         }
         if (Array.isArray(unwrappedRes) && unwrappedRes.length === 3) {
           console.log(`Raw Reserves from contract: PT=${unwrappedRes[0].toString()}, Underlying=${unwrappedRes[1].toString()}, YT=${unwrappedRes[2].toString()}`);

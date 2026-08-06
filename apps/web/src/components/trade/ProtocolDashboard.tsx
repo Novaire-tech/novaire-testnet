@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { useTrade } from '../../hooks/useTrade';
 import { usePortfolio } from '../../hooks/usePortfolio';
 

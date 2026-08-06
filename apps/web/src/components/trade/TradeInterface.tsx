@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowDown, Info, Loader2, Settings2, Wallet, X } from 'lucide-react';
+import { Info, Loader2, Settings2, Wallet, X } from 'lucide-react';
 import { useTrade, TradeAsset, TradeAction } from '../../hooks/useTrade';
 import { useWallet } from '../../hooks/useWallet';
 import { NotificationService } from '../../services/notificationService';

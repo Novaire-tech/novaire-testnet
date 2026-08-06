@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Bell, Wallet, CircleUser, Plus } from 'lucide-react';
+import { Wallet, Plus } from 'lucide-react';
 import { useWallet } from '../../hooks/useWallet';
 import { MintModal } from '../modals/MintModal';
 import { usePortfolio } from '../../hooks/usePortfolio';

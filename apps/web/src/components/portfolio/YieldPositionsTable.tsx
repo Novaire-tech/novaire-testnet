@@ -26,7 +26,7 @@ export function YieldPositionsTable() {
     // Determine underlying from assetCode like "PT-XLM"
     const isPT = asset.assetType === 'pt';
     const isYT = asset.assetType === 'yt';
-    let underlying = asset.assetCode.split('-')[1] || 'Unknown';
+    const underlying = asset.assetCode.split('-')[1] || 'Unknown';
     
     // Group by issuer/epochId if available, otherwise underlying
     const key = asset.issuer || underlying;

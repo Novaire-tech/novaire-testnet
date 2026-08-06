@@ -19,7 +19,7 @@ class NotificationServiceClass {
       if (prefs) {
         return JSON.parse(prefs);
       }
-    } catch (e) {
+    } catch {
       // Ignore parse error
     }
     return {
