@@ -1,11 +1,14 @@
-import { Keypair } from '@stellar/stellar-sdk';
+import StellarHDWallet from 'stellar-hd-wallet';
 
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 const FRIENDBOT_URL = 'https://friendbot.stellar.org';
 
 export interface FundedTestnetAccount {
   publicKey: string;
-  secretKey: string;
+  // Freighter's "I already have a wallet" import screen only accepts a
+  // BIP-39 mnemonic (SEP-0005 derivation, account index 0) — not a raw
+  // secret key — so that's what onboardFreighter() needs.
+  mnemonic: string;
 }
 
 async function fundViaFriendbot(publicKey: string): Promise<void> {
@@ -26,11 +29,15 @@ async function waitForAccount(publicKey: string, timeoutMs = 30_000): Promise<vo
   throw new Error(`Timed out waiting for testnet account ${publicKey} to appear on Horizon`);
 }
 
-// Generates a fresh keypair and funds it via Friendbot, so the real-wallet
-// e2e test never depends on a long-lived secret checked into the environment.
+// Generates a fresh 12-word mnemonic (matching Freighter's default "12 word"
+// import mode) and funds its account-0 address via Friendbot, so the
+// real-wallet e2e test never depends on a long-lived secret checked into
+// the environment.
 export async function createFundedTestnetAccount(): Promise<FundedTestnetAccount> {
-  const keypair = Keypair.random();
-  await fundViaFriendbot(keypair.publicKey());
-  await waitForAccount(keypair.publicKey());
-  return { publicKey: keypair.publicKey(), secretKey: keypair.secret() };
+  const mnemonic = StellarHDWallet.generateMnemonic({ entropyBits: 128 });
+  const wallet = StellarHDWallet.fromMnemonic(mnemonic);
+  const publicKey = wallet.getPublicKey(0);
+  await fundViaFriendbot(publicKey);
+  await waitForAccount(publicKey);
+  return { publicKey, mnemonic };
 }

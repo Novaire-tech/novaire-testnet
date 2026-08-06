@@ -10,24 +10,42 @@ import { getFreighterExtensionId } from './freighter-extension';
 
 const EPHEMERAL_PASSWORD = 'E2eTestOnly-Password-1!';
 
+// Confirmed against a live Freighter 5.44.0 build (see
+// apps/web/e2e/vendor/README.md for the pinned version): the "welcome"
+// screen's "I already have a wallet" leads straight to a password-creation
+// step (#/recover-account with no fields yet), *then* to the actual
+// 12-word mnemonic entry (still under #/recover-account) — Freighter only
+// accepts a mnemonic here, never a raw secret key. On success it navigates
+// to #/recover-account-success.
 export async function onboardFreighter(
   context: BrowserContext,
-  account: { secretKey: string },
+  account: { mnemonic: string },
 ): Promise<void> {
   const extensionId = await getFreighterExtensionId(context);
   const page = await context.newPage();
-  await page.goto(`chrome-extension://${extensionId}/index.html#/recover-account`);
+  await page.goto(`chrome-extension://${extensionId}/index.html`);
 
-  await page.getByRole('button', { name: /import|recover/i }).first().click();
-  await page.getByPlaceholder(/secret key/i).fill(account.secretKey);
-  await page.getByPlaceholder(/^password$/i).first().fill(EPHEMERAL_PASSWORD);
-  await page.getByPlaceholder(/confirm password/i).fill(EPHEMERAL_PASSWORD);
-  await page.getByRole('button', { name: /import|confirm|continue/i }).last().click();
+  await page.getByText('I already have a wallet').click();
+  await page.locator('#new-password-input').fill(EPHEMERAL_PASSWORD);
+  await page.locator('#confirm-password-input').fill(EPHEMERAL_PASSWORD);
+  // Freighter's terms checkbox is a custom SVG control whose visible label
+  // intercepts plain clicks; force-checking the underlying input is reliable.
+  await page.locator('#termsOfUse-input').check({ force: true });
+  await page.getByTestId('account-creator-submit').click();
 
-  // Freighter defaults to a mainnet-like network; switch explicitly to Testnet
-  // to match apps/web's NEXT_PUBLIC_NETWORK_PASSPHRASE.
-  await page.getByRole('button', { name: /network/i }).click();
-  await page.getByText(/^Testnet$/i).click();
+  const words = account.mnemonic.split(' ');
+  for (let i = 0; i < words.length; i++) {
+    await page.locator(`#MnemonicPhrase-${i + 1}`).fill(words[i]);
+  }
+  await page.getByRole('button', { name: 'Import' }).click();
+  await page.waitForURL(/#\/recover-account-success/, { timeout: 20_000 });
+
+  // TODO(unverified): confirm the exact selector for switching the active
+  // network to Testnet once this runs against a live app connection — the
+  // network toggle lives behind the account header's globe icon, but the
+  // click target wasn't pinned down before this fixture was written. If the
+  // vendored build already defaults to Testnet this may be a no-op; verify
+  // and delete this comment once confirmed.
 
   await page.close();
 }
