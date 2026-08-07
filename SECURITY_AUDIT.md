@@ -116,9 +116,9 @@ Unlike `transfer_admin`/`accept_admin` (correctly two-step throughout the codeba
 The SY exchange-rate computation sums the entire `supply` map from `BlendPoolClient::get_positions()` with no filtering or independent cross-check, beyond a 10%-per-call rate-increase ratchet (`refresh_rate`, L340-379) that bounds how fast a bad report can move the rate. A compromised or buggy Blend pool would (rate-limited) permanently inflate `TotalUnderlying`, letting early withdrawers over-drain relative to real backing. `YieldSource` is set once at `initialize` with no rotation function — good for reducing admin-rug risk, but means the deployed address must be independently verified as genuine before mainnet.
 *This is the single largest external trust dependency in the protocol and should be named explicitly in any external audit summary or user-facing risk disclosure.*
 
-**SEC-11 — `sy_wrapper.deposit` external call precedes final state commit**
+**SEC-11 — `sy_wrapper.deposit` external call precedes final state commit — FIXED**
 `contracts/sy_wrapper/src/lib.rs:226-274`
-The external Blend `submit` call (L267) executes before final state commits (L269-274), a CEI-pattern deviation. `withdraw`'s ordering is correct (state decremented before the external call). Low practical risk on Soroban (no reentrancy vector via standard SAC tokens confirmed), but `deposit` should mirror `withdraw`'s ordering for defense-in-depth.
+The external Blend `submit` call (L267) executes before final state commits (L269-274), a CEI-pattern deviation. `withdraw`'s ordering is correct (state decremented before the external call). Low practical risk on Soroban (no reentrancy vector via standard SAC tokens confirmed), but `deposit` should mirror `withdraw`'s ordering for defense-in-depth. `total_shares`/`total_underlying` are now committed before `pool_client.submit(...)`, matching `withdraw`'s CEI ordering.
 
 **SEC-12 — Unused `_maturity_ledger` parameter in Intent Engine**
 `contracts/intent_engine/src/lib.rs:225`
@@ -148,7 +148,7 @@ Neither file contains a `#[cfg(test)]` module. All confidence in these contracts
 | SEC-08 | Rollover deltas floor to zero | Informational | Low | None (invariant check backstops) — **FIXED** |
 | SEC-09 | Missing keeper-gate test | Informational | N/A | Test-hygiene only — **FIXED** |
 | SEC-10 | Full trust in Blend pool | Informational/Trust | Depends on third party | High if Blend pool compromised |
-| SEC-11 | sy_wrapper deposit CEI ordering | Informational | Very low | None demonstrated |
+| SEC-11 | sy_wrapper deposit CEI ordering | Informational | Very low | None demonstrated — **FIXED** |
 | SEC-12 | Dead `_maturity_ledger` param | Informational | N/A | None |
 | SEC-13 | add_accrued_yield no-op on zero | Informational | N/A | None |
 | SEC-14 | pt_token/yt_token zero unit tests | Process | N/A | Increases risk of undetected regressions |

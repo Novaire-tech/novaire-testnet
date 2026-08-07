@@ -261,6 +261,15 @@ impl SyWrapper {
             address: underlying_addr.clone(),
             amount,
         });
+
+        // Commit state before the external Blend call (CEI ordering, mirroring `withdraw`).
+        total_shares = total_shares.checked_add(shares_to_mint).ok_or(NovaireSyError::MathOverflow)?;
+        env.storage().instance().set(&DataKey::TotalShares, &total_shares);
+
+        let mut total_underlying = storage::get_total_underlying(&env);
+        total_underlying = total_underlying.checked_add(amount).ok_or(NovaireSyError::MathOverflow)?;
+        storage::set_total_underlying(&env, total_underlying);
+
         // Pool::submit performs the token transfer (this -> pool) itself, one call
         // frame below this contract, so it needs an explicit sub-invocation
         // authorization from us rather than a direct require_auth call.
@@ -283,13 +292,6 @@ impl SyWrapper {
             )
         ]);
         pool_client.submit(&this, &this, &this, &requests);
-
-        total_shares = total_shares.checked_add(shares_to_mint).ok_or(NovaireSyError::MathOverflow)?;
-        env.storage().instance().set(&DataKey::TotalShares, &total_shares);
-
-        let mut total_underlying = storage::get_total_underlying(&env);
-        total_underlying = total_underlying.checked_add(amount).ok_or(NovaireSyError::MathOverflow)?;
-        storage::set_total_underlying(&env, total_underlying);
 
         env.events().publish(
             (Symbol::new(&env, "sy_deposit"), from), 
