@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CAPPLVFBLWJHQUKHP4T6EEPEYBF7PYD4THMCNUQFZUX23OO6B76KNXXC",
+    contractId: "CCAAVSY4RNROHJSCJON6BP4BRID5ZZCMVK7Z7GBTH5KKS6E47PL6UJPK",
   }
 } as const
 
@@ -45,6 +45,7 @@ export interface EpochRecord {
   created_ledger: u32;
   epoch_id: u32;
   maturity_ledger: u32;
+  pt_token: string;
 }
 
 
@@ -76,7 +77,8 @@ export const NovaireRolloverError = {
   12: {message:"Paused"},
   13: {message:"InvariantViolation"},
   14: {message:"InvalidKeeper"},
-  15: {message:"InvalidEpoch"}
+  15: {message:"InvalidEpoch"},
+  16: {message:"PositionAlreadyActive"}
 }
 
 
@@ -112,6 +114,11 @@ export interface Client {
    * Construct and simulate a exit_rollover transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   exit_rollover: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a total_pt_held transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   */
+  total_pt_held: (options?: MethodOptions) => Promise<AssembledTransaction<i128>>
 
   /**
    * Construct and simulate a update_keeper transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -152,12 +159,13 @@ export class Client extends ContractClient {
         "AAAAAAAAAAAAAAAKaW5pdGlhbGl6ZQAAAAAACgAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAAAAAAl0b2tlbml6ZXIAAAAAAAATAAAAAAAAAAV2YXVsdAAAAAAAABMAAAAAAAAAC21hcmtldHBsYWNlAAAAABMAAAAAAAAADWludGVudF9lbmdpbmUAAAAAAAATAAAAAAAAAAZrZWVwZXIAAAAAABMAAAAAAAAACHB0X3Rva2VuAAAAEwAAAAAAAAAQdW5kZXJseWluZ190b2tlbgAAABMAAAAAAAAAB2ZhY3RvcnkAAAAAEwAAAAAAAAAUZ3JhY2VfcGVyaW9kX2xlZGdlcnMAAAAEAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAUTm92YWlyZVJvbGxvdmVyRXJyb3I=",
         "AAAAAAAAAAAAAAAMZ2V0X3Bvc2l0aW9uAAAAAQAAAAAAAAAEdXNlcgAAABMAAAABAAAD6QAAB9AAAAAQUm9sbG92ZXJQb3NpdGlvbgAAB9AAAAAUTm92YWlyZVJvbGxvdmVyRXJyb3I=",
         "AAAAAAAAAAAAAAANZXhpdF9yb2xsb3ZlcgAAAAAAAAEAAAAAAAAABHVzZXIAAAATAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAUTm92YWlyZVJvbGxvdmVyRXJyb3I=",
+        "AAAAAAAAAAAAAAANdG90YWxfcHRfaGVsZAAAAAAAAAAAAAABAAAACw==",
         "AAAAAAAAAAAAAAANdXBkYXRlX2tlZXBlcgAAAAAAAAEAAAAAAAAACm5ld19rZWVwZXIAAAAAABMAAAABAAAD6QAAA+0AAAAAAAAH0AAAABROb3ZhaXJlUm9sbG92ZXJFcnJvcg==",
-        "AAAAAQAAAAAAAAAAAAAAC0Vwb2NoUmVjb3JkAAAAAAMAAAAAAAAADmNyZWF0ZWRfbGVkZ2VyAAAAAAAEAAAAAAAAAAhlcG9jaF9pZAAAAAQAAAAAAAAAD21hdHVyaXR5X2xlZGdlcgAAAAAE",
+        "AAAAAQAAAAAAAAAAAAAAC0Vwb2NoUmVjb3JkAAAAAAQAAAAAAAAADmNyZWF0ZWRfbGVkZ2VyAAAAAAAEAAAAAAAAAAhlcG9jaF9pZAAAAAQAAAAAAAAAD21hdHVyaXR5X2xlZGdlcgAAAAAEAAAAAAAAAAhwdF90b2tlbgAAABM=",
         "AAAAAAAAAAAAAAAQZXhlY3V0ZV9yb2xsb3ZlcgAAAAEAAAAAAAAABHVzZXIAAAATAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAUTm92YWlyZVJvbGxvdmVyRXJyb3I=",
         "AAAAAAAAAAAAAAARcmVnaXN0ZXJfcm9sbG92ZXIAAAAAAAAFAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAJcHRfYW1vdW50AAAAAAAACwAAAAAAAAAWY3VycmVudF9lcG9jaF9tYXR1cml0eQAAAAAABAAAAAAAAAAMbWluX3JhdGVfYnBzAAAACwAAAAAAAAASbWluX3VuZGVybHlpbmdfb3V0AAAAAAALAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAUTm92YWlyZVJvbGxvdmVyRXJyb3I=",
         "AAAAAQAAAAAAAAAAAAAAEFJvbGxvdmVyUG9zaXRpb24AAAAKAAAAAAAAAAZhY3RpdmUAAAAAAAEAAAAAAAAADmNyZWF0ZWRfbGVkZ2VyAAAAAAAEAAAAAAAAABZjdXJyZW50X2Vwb2NoX21hdHVyaXR5AAAAAAAEAAAAAAAAABFpbml0aWFsX3ByaW5jaXBhbAAAAAAAAAsAAAAAAAAAEmxhc3Rfcm9sbGVkX2xlZGdlcgAAAAAABAAAAAAAAAAMbWluX3JhdGVfYnBzAAAACwAAAAAAAAASbWluX3VuZGVybHlpbmdfb3V0AAAAAAALAAAAAAAAABVwcm90b2NvbF95aWVsZF9lYXJuZWQAAAAAAAALAAAAAAAAAApwdF9iYWxhbmNlAAAAAAALAAAAAAAAAAxyZWFsaXplZF9wbmwAAAAL",
-        "AAAABAAAAAAAAAAAAAAAFE5vdmFpcmVSb2xsb3ZlckVycm9yAAAADwAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAACAAAAAAAAABBQb3NpdGlvbk5vdEZvdW5kAAAAAwAAAAAAAAAPRXBvY2hOb3RFeHBpcmVkAAAAAAQAAAAAAAAAD05leHRFcG9jaE5vdFNldAAAAAAFAAAAAAAAABFQb3NpdGlvbk5vdEFjdGl2ZQAAAAAAAAYAAAAAAAAAClJhdGVUb29Mb3cAAAAAAAcAAAAAAAAAClplcm9BbW91bnQAAAAAAAgAAAAAAAAADlN0b3JhZ2VNaXNzaW5nAAAAAAAJAAAAAAAAAAxNYXRoT3ZlcmZsb3cAAAAKAAAAAAAAAA1NYXRoVW5kZXJmbG93AAAAAAAACwAAAAAAAAAGUGF1c2VkAAAAAAAMAAAAAAAAABJJbnZhcmlhbnRWaW9sYXRpb24AAAAAAA0AAAAAAAAADUludmFsaWRLZWVwZXIAAAAAAAAOAAAAAAAAAAxJbnZhbGlkRXBvY2gAAAAP",
+        "AAAABAAAAAAAAAAAAAAAFE5vdmFpcmVSb2xsb3ZlckVycm9yAAAAEAAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAACAAAAAAAAABBQb3NpdGlvbk5vdEZvdW5kAAAAAwAAAAAAAAAPRXBvY2hOb3RFeHBpcmVkAAAAAAQAAAAAAAAAD05leHRFcG9jaE5vdFNldAAAAAAFAAAAAAAAABFQb3NpdGlvbk5vdEFjdGl2ZQAAAAAAAAYAAAAAAAAAClJhdGVUb29Mb3cAAAAAAAcAAAAAAAAAClplcm9BbW91bnQAAAAAAAgAAAAAAAAADlN0b3JhZ2VNaXNzaW5nAAAAAAAJAAAAAAAAAAxNYXRoT3ZlcmZsb3cAAAAKAAAAAAAAAA1NYXRoVW5kZXJmbG93AAAAAAAACwAAAAAAAAAGUGF1c2VkAAAAAAAMAAAAAAAAABJJbnZhcmlhbnRWaW9sYXRpb24AAAAAAA0AAAAAAAAADUludmFsaWRLZWVwZXIAAAAAAAAOAAAAAAAAAAxJbnZhbGlkRXBvY2gAAAAPAAAAAAAAABVQb3NpdGlvbkFscmVhZHlBY3RpdmUAAAAAAAAQ",
         "AAAAAQAAAAAAAAAAAAAAFkN1bXVsYXRpdmVJbnRlbnRSZWNvcmQAAAAAAAQAAAAAAAAAFnRvdGFsX2RlcG9zaXRlZF9hbW91bnQAAAAAAAsAAAAAAAAADXRvdGFsX3B0X2hlbGQAAAAAAAALAAAAAAAAABl0b3RhbF91bmRlcmx5aW5nX3JlY2VpdmVkAAAAAAAACwAAAAAAAAANdG90YWxfeXRfc29sZAAAAAAAAAs=" ]),
       options
     )
@@ -168,6 +176,7 @@ export class Client extends ContractClient {
         initialize: this.txFromJSON<Result<void>>,
         get_position: this.txFromJSON<Result<RolloverPosition>>,
         exit_rollover: this.txFromJSON<Result<void>>,
+        total_pt_held: this.txFromJSON<i128>,
         update_keeper: this.txFromJSON<Result<void>>,
         execute_rollover: this.txFromJSON<Result<void>>,
         register_rollover: this.txFromJSON<Result<void>>

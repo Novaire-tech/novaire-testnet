@@ -34,11 +34,11 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CCDJJPPLWQ6ATBQNCTZDVWEX5OYEQEZ6Q3QXADDDZMZE2RUV6PCKO7NB",
+    contractId: "CCTSO5FM2LOSHNH4VMMUKBHT4273KDXB4LKGHVXC6AYEZKTZ4VSH5NBZ",
   }
 } as const
 
-export type DataKey = {tag: "Admin", values: void} | {tag: "PtToken", values: void} | {tag: "YtToken", values: void} | {tag: "Underlying", values: void} | {tag: "SyWrapper", values: void} | {tag: "Tokenizer", values: void} | {tag: "MaturityLedger", values: void} | {tag: "MaturityEngine", values: void} | {tag: "MaturityEngineEpochId", values: void} | {tag: "CreatedLedger", values: void} | {tag: "PtReserves", values: void} | {tag: "UnderlyingReserves", values: void} | {tag: "YtReserves", values: void} | {tag: "TotalLpShares", values: void} | {tag: "ImpliedRateTwap", values: void} | {tag: "LastTwapLedger", values: void} | {tag: "LpBalance", values: readonly [string]};
+export type DataKey = {tag: "Admin", values: void} | {tag: "PtToken", values: void} | {tag: "YtToken", values: void} | {tag: "Underlying", values: void} | {tag: "SyWrapper", values: void} | {tag: "Tokenizer", values: void} | {tag: "MaturityLedger", values: void} | {tag: "MaturityEngine", values: void} | {tag: "MaturityEngineEpochId", values: void} | {tag: "CreatedLedger", values: void} | {tag: "PtReserves", values: void} | {tag: "UnderlyingReserves", values: void} | {tag: "YtReserves", values: void} | {tag: "TotalLpShares", values: void} | {tag: "ImpliedRateTwap", values: void} | {tag: "LastTwapLedger", values: void} | {tag: "LpBalance", values: readonly [string]} | {tag: "Paused", values: void};
 
 export const NovaireMarketError = {
   1: {message:"AlreadyInitialized"},
@@ -51,10 +51,31 @@ export const NovaireMarketError = {
   8: {message:"BelowMinimumLiquidity"},
   9: {message:"StorageMissing"},
   10: {message:"InvariantViolated"},
-  11: {message:"MathOverflow"}
+  11: {message:"MathOverflow"},
+  12: {message:"Paused"}
 }
 
 export interface Client {
+  /**
+   * Construct and simulate a pause transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Pauses the marketplace, blocking swaps and new-liquidity deposits.
+   * `remove_liquidity` stays available so LPs/admins can always recover
+   * funds even while paused.
+   */
+  pause: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a unpause transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Unpauses the marketplace, restoring normal operations.
+   */
+  unpause: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a is_paused transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Returns true if the marketplace is currently paused.
+   */
+  is_paused: (options?: MethodOptions) => Promise<AssembledTransaction<boolean>>
+
   /**
    * Construct and simulate a initialize transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
@@ -116,6 +137,11 @@ export interface Client {
    * donate YT depth to the pool. It mirrors `add_liquidity`'s minimum-liquidity floor to
    * keep `swap_yt_for_underlying`'s downstream math (which assumes reserves stay above
    * dust) safe.
+   * 
+   * Sizing note for LPs: on a near-par pool (real PT discount much smaller than
+   * `SWAP_FEE_NUM`/`SWAP_FEE_DEN`), the fee dominates the tiny genuine YT price and any
+   * fee-based AMM quotes thin YT depth for a given contribution — this isn't fixable by
+   * changing this function, it's inherent to trading a near
    */
   add_yt_liquidity: ({provider, yt_amount}: {provider: string, yt_amount: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<i128>>>
 
@@ -191,7 +217,10 @@ export class Client extends ContractClient {
   }
   constructor(public readonly options: ContractClientOptions) {
     super(
-      new ContractSpec([ "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAAEQAAAAAAAAAAAAAABUFkbWluAAAAAAAAAAAAAAAAAAAHUHRUb2tlbgAAAAAAAAAAAAAAAAdZdFRva2VuAAAAAAAAAAAAAAAAClVuZGVybHlpbmcAAAAAAAAAAAAAAAAACVN5V3JhcHBlcgAAAAAAAAAAAAAAAAAACVRva2VuaXplcgAAAAAAAAAAAAAAAAAADk1hdHVyaXR5TGVkZ2VyAAAAAAAAAAAAhUNhbm9uaWNhbCBlcG9jaC1jbG9jayBjb250cmFjdC4gU291cmNlIG9mIHRydXRoIGZvciBgRXBvY2hFeHBpcmVkYApjaGVja3M7IGBNYXR1cml0eUxlZGdlcmAgaXMgcmV0YWluZWQgb25seSBhcyBhIGRpc3BsYXktb25seSB2YWx1ZS4AAAAAAAAOTWF0dXJpdHlFbmdpbmUAAAAAAAAAAABHVGhlIGVwb2NoX2lkIGBNYXR1cml0eUVuZ2luZTo6b3Blbl9lcG9jaGAgcmV0dXJuZWQgZm9yIHRoaXMgZGVwbG95bWVudC4AAAAAFU1hdHVyaXR5RW5naW5lRXBvY2hJZAAAAAAAAAAAAAAAAAAADUNyZWF0ZWRMZWRnZXIAAAAAAAAAAAAAAAAAAApQdFJlc2VydmVzAAAAAAAAAAAAAAAAABJVbmRlcmx5aW5nUmVzZXJ2ZXMAAAAAAAAAAAAAAAAACll0UmVzZXJ2ZXMAAAAAAAAAAAAAAAAADVRvdGFsTHBTaGFyZXMAAAAAAAAAAAAAAAAAAA9JbXBsaWVkUmF0ZVR3YXAAAAAAAAAAAAAAAAAOTGFzdFR3YXBMZWRnZXIAAAAAAAEAAAAAAAAACUxwQmFsYW5jZQAAAAAAAAEAAAAT",
+      new ContractSpec([ "AAAAAAAAAJ9QYXVzZXMgdGhlIG1hcmtldHBsYWNlLCBibG9ja2luZyBzd2FwcyBhbmQgbmV3LWxpcXVpZGl0eSBkZXBvc2l0cy4KYHJlbW92ZV9saXF1aWRpdHlgIHN0YXlzIGF2YWlsYWJsZSBzbyBMUHMvYWRtaW5zIGNhbiBhbHdheXMgcmVjb3ZlcgpmdW5kcyBldmVuIHdoaWxlIHBhdXNlZC4AAAAABXBhdXNlAAAAAAAAAAAAAAEAAAPpAAAD7QAAAAAAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
+        "AAAAAAAAADZVbnBhdXNlcyB0aGUgbWFya2V0cGxhY2UsIHJlc3RvcmluZyBub3JtYWwgb3BlcmF0aW9ucy4AAAAAAAd1bnBhdXNlAAAAAAAAAAABAAAD6QAAA+0AAAAAAAAH0AAAABJOb3ZhaXJlTWFya2V0RXJyb3IAAA==",
+        "AAAAAAAAADRSZXR1cm5zIHRydWUgaWYgdGhlIG1hcmtldHBsYWNlIGlzIGN1cnJlbnRseSBwYXVzZWQuAAAACWlzX3BhdXNlZAAAAAAAAAAAAAABAAAAAQ==",
+        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAAEgAAAAAAAAAAAAAABUFkbWluAAAAAAAAAAAAAAAAAAAHUHRUb2tlbgAAAAAAAAAAAAAAAAdZdFRva2VuAAAAAAAAAAAAAAAAClVuZGVybHlpbmcAAAAAAAAAAAAAAAAACVN5V3JhcHBlcgAAAAAAAAAAAAAAAAAACVRva2VuaXplcgAAAAAAAAAAAAAAAAAADk1hdHVyaXR5TGVkZ2VyAAAAAAAAAAAAhUNhbm9uaWNhbCBlcG9jaC1jbG9jayBjb250cmFjdC4gU291cmNlIG9mIHRydXRoIGZvciBgRXBvY2hFeHBpcmVkYApjaGVja3M7IGBNYXR1cml0eUxlZGdlcmAgaXMgcmV0YWluZWQgb25seSBhcyBhIGRpc3BsYXktb25seSB2YWx1ZS4AAAAAAAAOTWF0dXJpdHlFbmdpbmUAAAAAAAAAAABHVGhlIGVwb2NoX2lkIGBNYXR1cml0eUVuZ2luZTo6b3Blbl9lcG9jaGAgcmV0dXJuZWQgZm9yIHRoaXMgZGVwbG95bWVudC4AAAAAFU1hdHVyaXR5RW5naW5lRXBvY2hJZAAAAAAAAAAAAAAAAAAADUNyZWF0ZWRMZWRnZXIAAAAAAAAAAAAAAAAAAApQdFJlc2VydmVzAAAAAAAAAAAAAAAAABJVbmRlcmx5aW5nUmVzZXJ2ZXMAAAAAAAAAAAAAAAAACll0UmVzZXJ2ZXMAAAAAAAAAAAAAAAAADVRvdGFsTHBTaGFyZXMAAAAAAAAAAAAAAAAAAA9JbXBsaWVkUmF0ZVR3YXAAAAAAAAAAAAAAAAAOTGFzdFR3YXBMZWRnZXIAAAAAAAEAAAAAAAAACUxwQmFsYW5jZQAAAAAAAAEAAAATAAAAAAAAAAAAAAAGUGF1c2VkAAA=",
         "AAAAAAAAAAAAAAAKaW5pdGlhbGl6ZQAAAAAACQAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAAAAAAhwdF90b2tlbgAAABMAAAAAAAAACHl0X3Rva2VuAAAAEwAAAAAAAAAKdW5kZXJseWluZwAAAAAAEwAAAAAAAAAKc3lfd3JhcHBlcgAAAAAAEwAAAAAAAAAJdG9rZW5pemVyAAAAAAAAEwAAAAAAAAAPbWF0dXJpdHlfbGVkZ2VyAAAAAAQAAAAAAAAAD21hdHVyaXR5X2VuZ2luZQAAAAATAAAAAAAAABhtYXR1cml0eV9lbmdpbmVfZXBvY2hfaWQAAAAEAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAASTm92YWlyZU1hcmtldEVycm9yAAA=",
         "AAAAAAAAAAAAAAAMZ2V0X3B0X3ByaWNlAAAAAAAAAAEAAAPpAAAACwAAB9AAAAASTm92YWlyZU1hcmtldEVycm9yAAA=",
         "AAAAAAAAAAAAAAAMZ2V0X3Jlc2VydmVzAAAAAAAAAAEAAAPpAAAD7QAAAAMAAAALAAAACwAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
@@ -200,9 +229,9 @@ export class Client extends ContractClient {
         "AAAAAAAAAAAAAAANYWRkX2xpcXVpZGl0eQAAAAAAAAMAAAAAAAAACHByb3ZpZGVyAAAAEwAAAAAAAAAJcHRfYW1vdW50AAAAAAAACwAAAAAAAAARdW5kZXJseWluZ19hbW91bnQAAAAAAAALAAAAAQAAA+kAAAALAAAH0AAAABJOb3ZhaXJlTWFya2V0RXJyb3IAAA==",
         "AAAAAAAAAAAAAAANZ2V0X3R3YXBfcmF0ZQAAAAAAAAAAAAABAAAD6QAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
         "AAAAAAAAAAAAAAAPY2xhaW1fYW1tX3lpZWxkAAAAAAAAAAABAAAD6QAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
-        "AAAAAAAAAtFGdW5kcyB0aGUgWVQgc2lkZSBvZiB0aGUgcG9vbCBzbyBgc3dhcF91bmRlcmx5aW5nX2Zvcl95dGAgaGFzIHJlYWwgbGlxdWlkaXR5IHRvCnNlbGwgYWdhaW5zdC4gV2l0aG91dCB0aGlzLCBgWXRSZXNlcnZlc2AgY2FuIG9ubHkgZXZlciBiZSBkZWNyZW1lbnRlZCAoYnkgWVQKcHVyY2hhc2VzKSBvciBpbmNyZW1lbnRlZCAoYnkgWVQgc2FsZXMgLyBwcm9wb3J0aW9uYWwgYHJlbW92ZV9saXF1aWRpdHlgKSwgd2l0aCBubwpsZWdpdGltYXRlIGVudHJ5cG9pbnQgdG8gc2VlZCBpdCBpbiB0aGUgZmlyc3QgcGxhY2UsIHNvIFlUIHB1cmNoYXNlcyBhbHdheXMgcmV2ZXJ0CndpdGggYEluc3VmZmljaWVudExpcXVpZGl0eWAgb24gYSBmcmVzaCBkZXBsb3ltZW50LgoKQ29udHJpYnV0ZWQgWVQgZG9lcyBub3QgbWludCBuZXcgTFAgc2hhcmVzIChpdCBpc24ndCBwcmljZWQgYWdhaW5zdCBQVC91bmRlcmx5aW5nCnJlc2VydmVzIGJ5IHRoZSBBTU0gY3VydmUpLCBzbyB0aGlzIGlzIGludGVudGlvbmFsbHkgYSBvbmUtd2F5IHRvcC11cDogY29udHJpYnV0b3JzCmRvbmF0ZSBZVCBkZXB0aCB0byB0aGUgcG9vbC4gSXQgbWlycm9ycyBgYWRkX2xpcXVpZGl0eWAncyBtaW5pbXVtLWxpcXVpZGl0eSBmbG9vciB0bwprZWVwIGBzd2FwX3l0X2Zvcl91bmRlcmx5aW5nYCdzIGRvd25zdHJlYW0gbWF0aCAod2hpY2ggYXNzdW1lcyByZXNlcnZlcyBzdGF5IGFib3ZlCmR1c3QpIHNhZmUuAAAAAAAAEGFkZF95dF9saXF1aWRpdHkAAAACAAAAAAAAAAhwcm92aWRlcgAAABMAAAAAAAAACXl0X2Ftb3VudAAAAAAAAAsAAAABAAAD6QAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
+        "AAAAAAAABABGdW5kcyB0aGUgWVQgc2lkZSBvZiB0aGUgcG9vbCBzbyBgc3dhcF91bmRlcmx5aW5nX2Zvcl95dGAgaGFzIHJlYWwgbGlxdWlkaXR5IHRvCnNlbGwgYWdhaW5zdC4gV2l0aG91dCB0aGlzLCBgWXRSZXNlcnZlc2AgY2FuIG9ubHkgZXZlciBiZSBkZWNyZW1lbnRlZCAoYnkgWVQKcHVyY2hhc2VzKSBvciBpbmNyZW1lbnRlZCAoYnkgWVQgc2FsZXMgLyBwcm9wb3J0aW9uYWwgYHJlbW92ZV9saXF1aWRpdHlgKSwgd2l0aCBubwpsZWdpdGltYXRlIGVudHJ5cG9pbnQgdG8gc2VlZCBpdCBpbiB0aGUgZmlyc3QgcGxhY2UsIHNvIFlUIHB1cmNoYXNlcyBhbHdheXMgcmV2ZXJ0CndpdGggYEluc3VmZmljaWVudExpcXVpZGl0eWAgb24gYSBmcmVzaCBkZXBsb3ltZW50LgoKQ29udHJpYnV0ZWQgWVQgZG9lcyBub3QgbWludCBuZXcgTFAgc2hhcmVzIChpdCBpc24ndCBwcmljZWQgYWdhaW5zdCBQVC91bmRlcmx5aW5nCnJlc2VydmVzIGJ5IHRoZSBBTU0gY3VydmUpLCBzbyB0aGlzIGlzIGludGVudGlvbmFsbHkgYSBvbmUtd2F5IHRvcC11cDogY29udHJpYnV0b3JzCmRvbmF0ZSBZVCBkZXB0aCB0byB0aGUgcG9vbC4gSXQgbWlycm9ycyBgYWRkX2xpcXVpZGl0eWAncyBtaW5pbXVtLWxpcXVpZGl0eSBmbG9vciB0bwprZWVwIGBzd2FwX3l0X2Zvcl91bmRlcmx5aW5nYCdzIGRvd25zdHJlYW0gbWF0aCAod2hpY2ggYXNzdW1lcyByZXNlcnZlcyBzdGF5IGFib3ZlCmR1c3QpIHNhZmUuCgpTaXppbmcgbm90ZSBmb3IgTFBzOiBvbiBhIG5lYXItcGFyIHBvb2wgKHJlYWwgUFQgZGlzY291bnQgbXVjaCBzbWFsbGVyIHRoYW4KYFNXQVBfRkVFX05VTWAvYFNXQVBfRkVFX0RFTmApLCB0aGUgZmVlIGRvbWluYXRlcyB0aGUgdGlueSBnZW51aW5lIFlUIHByaWNlIGFuZCBhbnkKZmVlLWJhc2VkIEFNTSBxdW90ZXMgdGhpbiBZVCBkZXB0aCBmb3IgYSBnaXZlbiBjb250cmlidXRpb24g4oCUIHRoaXMgaXNuJ3QgZml4YWJsZSBieQpjaGFuZ2luZyB0aGlzIGZ1bmN0aW9uLCBpdCdzIGluaGVyZW50IHRvIHRyYWRpbmcgYSBuZWFyAAAAEGFkZF95dF9saXF1aWRpdHkAAAACAAAAAAAAAAhwcm92aWRlcgAAABMAAAAAAAAACXl0X2Ftb3VudAAAAAAAAAsAAAABAAAD6QAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
         "AAAAAAAAAAAAAAAQcmVtb3ZlX2xpcXVpZGl0eQAAAAIAAAAAAAAACHByb3ZpZGVyAAAAEwAAAAAAAAAJbHBfc2hhcmVzAAAAAAAACwAAAAEAAAPpAAAD7QAAAAMAAAALAAAACwAAAAsAAAfQAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAA",
-        "AAAABAAAAAAAAAAAAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAAAAAACwAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAA5Ob3RJbml0aWFsaXplZAAAAAAAAgAAAAAAAAAMVW5hdXRob3JpemVkAAAAAwAAAAAAAAAMRXBvY2hFeHBpcmVkAAAABAAAAAAAAAAVSW5zdWZmaWNpZW50TGlxdWlkaXR5AAAAAAAABQAAAAAAAAAQU2xpcHBhZ2VFeGNlZWRlZAAAAAYAAAAAAAAACVplcm9JbnB1dAAAAAAAAAcAAAAAAAAAFUJlbG93TWluaW11bUxpcXVpZGl0eQAAAAAAAAgAAAAAAAAADlN0b3JhZ2VNaXNzaW5nAAAAAAAJAAAAAAAAABFJbnZhcmlhbnRWaW9sYXRlZAAAAAAAAAoAAAAAAAAADE1hdGhPdmVyZmxvdwAAAAs=",
+        "AAAABAAAAAAAAAAAAAAAEk5vdmFpcmVNYXJrZXRFcnJvcgAAAAAADAAAAAAAAAASQWxyZWFkeUluaXRpYWxpemVkAAAAAAABAAAAAAAAAA5Ob3RJbml0aWFsaXplZAAAAAAAAgAAAAAAAAAMVW5hdXRob3JpemVkAAAAAwAAAAAAAAAMRXBvY2hFeHBpcmVkAAAABAAAAAAAAAAVSW5zdWZmaWNpZW50TGlxdWlkaXR5AAAAAAAABQAAAAAAAAAQU2xpcHBhZ2VFeGNlZWRlZAAAAAYAAAAAAAAACVplcm9JbnB1dAAAAAAAAAcAAAAAAAAAFUJlbG93TWluaW11bUxpcXVpZGl0eQAAAAAAAAgAAAAAAAAADlN0b3JhZ2VNaXNzaW5nAAAAAAAJAAAAAAAAABFJbnZhcmlhbnRWaW9sYXRlZAAAAAAAAAoAAAAAAAAADE1hdGhPdmVyZmxvdwAAAAsAAAAAAAAABlBhdXNlZAAAAAAADA==",
         "AAAAAAAAAiRPcmFjbGUtc2FmZSBUV0FQIGFjY2Vzc29yOiByZXZlcnRzIHdpdGggYEludmFyaWFudFZpb2xhdGVkYCBpZiB0aGUKY2hlY2twb2ludCBpcyBvbGRlciB0aGFuIGBNQVhfVFdBUF9BR0VfTEVER0VSU2AgKGkuZS4gdGhlIG1hcmtldCBoYXMKZ29uZSBxdWlldCBsb25nIGVub3VnaCB0aGF0IHRoZSBFTUEgaXMgbm8gbG9uZ2VyIHJlcHJlc2VudGF0aXZlKS4KSW50ZW50aW9uYWxseSBhICpzZXBhcmF0ZSogZnVuY3Rpb24gZnJvbSBgZ2V0X3R3YXBfcmF0ZWAgc28gZXhpc3RpbmcKY2FsbGVycyAoZS5nLiBJbnRlbnQgRW5naW5lJ3Mgc2xpcHBhZ2UgZ2F0ZSkgYXJlIHVuYWZmZWN0ZWQg4oCUIHRoaXMgaXMKYWRkaXRpdmUgb3JhY2xlLXNhZmV0eSB0b29saW5nLCBub3QgYSBiZWhhdmlvciBjaGFuZ2UgdG8gdGhlIGV4aXN0aW5nClRXQVAgY29uc3VtZXIuIE5vdCB1c2VkIGJ5IHRoZSBQVCBvciBZVCBzd2FwIGV4ZWN1dGlvbiBwYXRocywgd2hpY2gKcHJpY2UgZW50aXJlbHkgb2ZmIGxpdmUgY3VydmUgc3RhdGUgYW5kIGhhdmUgbm8gc3RhbGVuZXNzIGV4cG9zdXJlLgAAABVnZXRfdHdhcF9yYXRlX2NoZWNrZWQAAAAAAAAAAAAAAQAAA+kAAAALAAAH0AAAABJOb3ZhaXJlTWFya2V0RXJyb3IAAA==",
         "AAAAAAAAAAAAAAAWc3dhcF9wdF9mb3JfdW5kZXJseWluZwAAAAAAAwAAAAAAAAAGc2VsbGVyAAAAAAATAAAAAAAAAAVwdF9pbgAAAAAAAAsAAAAAAAAAEm1pbl91bmRlcmx5aW5nX291dAAAAAAACwAAAAEAAAPpAAAACwAAB9AAAAASTm92YWlyZU1hcmtldEVycm9yAAA=",
         "AAAAAAAAAAAAAAAWc3dhcF91bmRlcmx5aW5nX2Zvcl9wdAAAAAAAAwAAAAAAAAAFYnV5ZXIAAAAAAAATAAAAAAAAAA11bmRlcmx5aW5nX2luAAAAAAAACwAAAAAAAAAKbWluX3B0X291dAAAAAAACwAAAAEAAAPpAAAACwAAB9AAAAASTm92YWlyZU1hcmtldEVycm9yAAA=",
@@ -214,7 +243,10 @@ export class Client extends ContractClient {
     )
   }
   public readonly fromJSON = {
-    initialize: this.txFromJSON<Result<void>>,
+    pause: this.txFromJSON<Result<void>>,
+        unpause: this.txFromJSON<Result<void>>,
+        is_paused: this.txFromJSON<boolean>,
+        initialize: this.txFromJSON<Result<void>>,
         get_pt_price: this.txFromJSON<Result<i128>>,
         get_reserves: this.txFromJSON<Result<readonly [i128, i128, i128]>>,
         get_twap_age: this.txFromJSON<u32>,

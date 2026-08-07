@@ -263,7 +263,7 @@ async function run() {
         const mintResult = invoke(
             d.intent_engine,
             'execute_fixed_yield_intent',
-            `--user ${testWallet.publicKey()} --usdc_amount ${retailDeposit} --min_implied_rate 0 --_maturity_ledger ${currentMaturityLedger} --yt_sale_percentage 100 --min_underlying_out 0`,
+            `--user ${testWallet.publicKey()} --usdc_amount ${retailDeposit} --min_implied_rate 0 --min_underlying_out 0 --yt_sale_percentage 100`,
             testWallet.secret()
         );
         console.log('Retail Transaction Success!');

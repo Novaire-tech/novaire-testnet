@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CBQCZ2GSXWNYXVYOUWDXWSOGMS32E5ZPXGVCDFL4WXAGYO5ZAA6YRJ7R",
+    contractId: "CACPDKF7WEDRJYUB2MTIVG2B6VTCJN3WLFXWCV54EH5SOFKM7DJ5WP5H",
   }
 } as const
 
@@ -50,7 +50,8 @@ export const NovaireIntentError = {
   7: {message:"StorageMissing"},
   8: {message:"InvariantViolated"},
   9: {message:"InvalidPercentage"},
-  10: {message:"MarketplaceNotBootstrapped"}
+  10: {message:"MarketplaceNotBootstrapped"},
+  11: {message:"MathOverflow"}
 }
 
 
@@ -90,7 +91,7 @@ export interface Client {
   /**
    * Construct and simulate a execute_fixed_yield_intent transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
-  execute_fixed_yield_intent: ({user, usdc_amount, min_implied_rate, min_underlying_out, _maturity_ledger, yt_sale_percentage}: {user: string, usdc_amount: i128, min_implied_rate: i128, min_underlying_out: i128, _maturity_ledger: u32, yt_sale_percentage: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<CumulativeIntentRecord>>>
+  execute_fixed_yield_intent: ({user, usdc_amount, min_implied_rate, min_underlying_out, yt_sale_percentage}: {user: string, usdc_amount: i128, min_implied_rate: i128, min_underlying_out: i128, yt_sale_percentage: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<CumulativeIntentRecord>>>
 
   /**
    * Construct and simulate a execute_yield_speculation_intent transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -120,10 +121,10 @@ export class Client extends ContractClient {
         "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAACgAAAAAAAAAAAAAABUFkbWluAAAAAAAAAAAAAAAAAAAFVmF1bHQAAAAAAAAAAAAAAAAAAAlUb2tlbml6ZXIAAAAAAAAAAAAAAAAAAAtNYXJrZXRwbGFjZQAAAAAAAAAAAAAAAAlTeVdyYXBwZXIAAAAAAAAAAAAAAAAAAApVbmRlcmx5aW5nAAAAAAAAAAAAAAAAAAdQdFRva2VuAAAAAAAAAAAAAAAAB1l0VG9rZW4AAAAAAAAAAAAAAAAGUGF1c2VkAAAAAAABAAAAAAAAAAtVc2VySW50ZW50cwAAAAABAAAAEw==",
         "AAAAAAAAAAAAAAAKaW5pdGlhbGl6ZQAAAAAACAAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAAAAAAV2YXVsdAAAAAAAABMAAAAAAAAACXRva2VuaXplcgAAAAAAABMAAAAAAAAAC21hcmtldHBsYWNlAAAAABMAAAAAAAAACnN5X3dyYXBwZXIAAAAAABMAAAAAAAAACnVuZGVybHlpbmcAAAAAABMAAAAAAAAACHB0X3Rva2VuAAAAEwAAAAAAAAAIeXRfdG9rZW4AAAATAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAASTm92YWlyZUludGVudEVycm9yAAA=",
         "AAAAAAAAAAAAAAAPZ2V0X3VzZXJfaW50ZW50AAAAAAEAAAAAAAAABHVzZXIAAAATAAAAAQAAA+kAAAfQAAAAFkN1bXVsYXRpdmVJbnRlbnRSZWNvcmQAAAAAB9AAAAASTm92YWlyZUludGVudEVycm9yAAA=",
-        "AAAABAAAAAAAAAAAAAAAEk5vdmFpcmVJbnRlbnRFcnJvcgAAAAAACgAAAAAAAAAGUGF1c2VkAAAAAAABAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAACAAAAAAAAAApaZXJvQW1vdW50AAAAAAADAAAAAAAAAApSYXRlVG9vTG93AAAAAAAEAAAAAAAAAAxJbnRlbnRGYWlsZWQAAAAFAAAAAAAAABJBbHJlYWR5SW5pdGlhbGl6ZWQAAAAAAAYAAAAAAAAADlN0b3JhZ2VNaXNzaW5nAAAAAAAHAAAAAAAAABFJbnZhcmlhbnRWaW9sYXRlZAAAAAAAAAgAAAAAAAAAEUludmFsaWRQZXJjZW50YWdlAAAAAAAACQAAAAAAAAAaTWFya2V0cGxhY2VOb3RCb290c3RyYXBwZWQAAAAAAAo=",
+        "AAAABAAAAAAAAAAAAAAAEk5vdmFpcmVJbnRlbnRFcnJvcgAAAAAACwAAAAAAAAAGUGF1c2VkAAAAAAABAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAACAAAAAAAAAApaZXJvQW1vdW50AAAAAAADAAAAAAAAAApSYXRlVG9vTG93AAAAAAAEAAAAAAAAAAxJbnRlbnRGYWlsZWQAAAAFAAAAAAAAABJBbHJlYWR5SW5pdGlhbGl6ZWQAAAAAAAYAAAAAAAAADlN0b3JhZ2VNaXNzaW5nAAAAAAAHAAAAAAAAABFJbnZhcmlhbnRWaW9sYXRlZAAAAAAAAAgAAAAAAAAAEUludmFsaWRQZXJjZW50YWdlAAAAAAAACQAAAAAAAAAaTWFya2V0cGxhY2VOb3RCb290c3RyYXBwZWQAAAAAAAoAAAAAAAAADE1hdGhPdmVyZmxvdwAAAAs=",
         "AAAAAAAAAAAAAAAVZ2V0X2N1cnJlbnRfYmVzdF9yYXRlAAAAAAAAAAAAAAEAAAPpAAAACwAAB9AAAAASTm92YWlyZUludGVudEVycm9yAAA=",
         "AAAAAQAAAAAAAAAAAAAAFkN1bXVsYXRpdmVJbnRlbnRSZWNvcmQAAAAAAAQAAAAAAAAAFnRvdGFsX2RlcG9zaXRlZF9hbW91bnQAAAAAAAsAAAAAAAAADXRvdGFsX3B0X2hlbGQAAAAAAAALAAAAAAAAABl0b3RhbF91bmRlcmx5aW5nX3JlY2VpdmVkAAAAAAAACwAAAAAAAAANdG90YWxfeXRfc29sZAAAAAAAAAs=",
-        "AAAAAAAAAAAAAAAaZXhlY3V0ZV9maXhlZF95aWVsZF9pbnRlbnQAAAAAAAYAAAAAAAAABHVzZXIAAAATAAAAAAAAAAt1c2RjX2Ftb3VudAAAAAALAAAAAAAAABBtaW5faW1wbGllZF9yYXRlAAAACwAAAAAAAAASbWluX3VuZGVybHlpbmdfb3V0AAAAAAALAAAAAAAAABBfbWF0dXJpdHlfbGVkZ2VyAAAABAAAAAAAAAASeXRfc2FsZV9wZXJjZW50YWdlAAAAAAAEAAAAAQAAA+kAAAfQAAAAFkN1bXVsYXRpdmVJbnRlbnRSZWNvcmQAAAAAB9AAAAASTm92YWlyZUludGVudEVycm9yAAA=",
+        "AAAAAAAAAAAAAAAaZXhlY3V0ZV9maXhlZF95aWVsZF9pbnRlbnQAAAAAAAUAAAAAAAAABHVzZXIAAAATAAAAAAAAAAt1c2RjX2Ftb3VudAAAAAALAAAAAAAAABBtaW5faW1wbGllZF9yYXRlAAAACwAAAAAAAAASbWluX3VuZGVybHlpbmdfb3V0AAAAAAALAAAAAAAAABJ5dF9zYWxlX3BlcmNlbnRhZ2UAAAAAAAQAAAABAAAD6QAAB9AAAAAWQ3VtdWxhdGl2ZUludGVudFJlY29yZAAAAAAH0AAAABJOb3ZhaXJlSW50ZW50RXJyb3IAAA==",
         "AAAAAAAAAAAAAAAgZXhlY3V0ZV95aWVsZF9zcGVjdWxhdGlvbl9pbnRlbnQAAAAEAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAALdXNkY19hbW91bnQAAAAACwAAAAAAAAAKbWluX3l0X291dAAAAAAACwAAAAAAAAASbWluX3VuZGVybHlpbmdfb3V0AAAAAAALAAAAAQAAA+kAAAALAAAH0AAAABJOb3ZhaXJlSW50ZW50RXJyb3IAAA==" ]),
       options
     )

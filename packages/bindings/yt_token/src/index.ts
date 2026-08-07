@@ -34,11 +34,11 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CDAVGQWNNDZR356NF5IR2RWEGCQMWUXBORXMNXJFQ2BFGGH3KRFTIF44",
+    contractId: "CD4T6Z55OTUXTJM3V4SIIW2W7LBP6CER26F2RHGD57VN3O6PI2RX2OTO",
   }
 } as const
 
-export type DataKey = {tag: "Admin", values: void} | {tag: "PendingAdmin", values: void} | {tag: "Tokenizer", values: void} | {tag: "SyWrapper", values: void} | {tag: "TotalSupply", values: void} | {tag: "YieldIndex", values: void} | {tag: "MaturityLedger", values: void} | {tag: "Paused", values: void} | {tag: "Balance", values: readonly [string]} | {tag: "Allowance", values: readonly [string, string]} | {tag: "UserYieldIndex", values: readonly [string]} | {tag: "AccruedYield", values: readonly [string]};
+export type DataKey = {tag: "Admin", values: void} | {tag: "PendingAdmin", values: void} | {tag: "Tokenizer", values: void} | {tag: "PendingTokenizer", values: void} | {tag: "SyWrapper", values: void} | {tag: "PendingSyWrapper", values: void} | {tag: "TotalSupply", values: void} | {tag: "YieldIndex", values: void} | {tag: "MaturityLedger", values: void} | {tag: "MaturityEngine", values: void} | {tag: "MaturityEngineEpochId", values: void} | {tag: "Paused", values: void} | {tag: "Balance", values: readonly [string]} | {tag: "Allowance", values: readonly [string, string]} | {tag: "UserYieldIndex", values: readonly [string]} | {tag: "AccruedYield", values: readonly [string]};
 
 
 export interface YtMetadata {
@@ -65,7 +65,9 @@ export const NovaireYtError = {
   10: {message:"StorageMissing"},
   11: {message:"InvalidAdminTransfer"},
   12: {message:"PastMaturity"},
-  13: {message:"IndexCannotDecrease"}
+  13: {message:"IndexCannotDecrease"},
+  14: {message:"InvalidTokenizerTransfer"},
+  15: {message:"InvalidSyWrapperTransfer"}
 }
 
 export interface Client {
@@ -187,7 +189,7 @@ export interface Client {
    * # Errors
    * Returns `AlreadyInitialized` if called more than once.
    */
-  initialize: ({admin, tokenizer, maturity_ledger, sy_wrapper}: {admin: string, tokenizer: string, maturity_ledger: u32, sy_wrapper: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  initialize: ({admin, tokenizer, maturity_ledger, sy_wrapper, maturity_engine, maturity_engine_epoch_id}: {admin: string, tokenizer: string, maturity_ledger: u32, sy_wrapper: string, maturity_engine: string, maturity_engine_epoch_id: u32}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a is_expired transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -207,7 +209,9 @@ export interface Client {
 
   /**
    * Construct and simulate a set_tokenizer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Updates the trusted Tokenizer contract address.
+   * Initiates a two-step update of the trusted Tokenizer contract address
+   * (SEC-06: instant reassignment is a centralization risk on a
+   * single-key admin, so this now requires a second confirming call).
    */
   set_tokenizer: ({new_tokenizer}: {new_tokenizer: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
@@ -220,9 +224,8 @@ export interface Client {
 
   /**
    * Construct and simulate a set_sy_wrapper transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Sets the SY Wrapper address for live yield index refresh.
-   * This is the upgrade-compatible entry point for H4: existing deployed
-   * YT Token contracts can call this without re-initialization.
+   * Initiates a two-step update of the SY Wrapper address used for live
+   * yield index refresh (SEC-06: see `set_tokenizer`).
    */
   set_sy_wrapper: ({sy_wrapper}: {sy_wrapper: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
@@ -272,6 +275,18 @@ export interface Client {
    * Returns `Unauthorized`.
    */
   reset_claimable: ({user}: {user: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a accept_tokenizer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Confirms a pending Tokenizer address change, requiring admin auth again.
+   */
+  accept_tokenizer: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a accept_sy_wrapper transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Confirms a pending SY Wrapper address change, requiring admin auth again.
+   */
+  accept_sy_wrapper: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a add_accrued_yield transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -336,21 +351,23 @@ export class Client extends ContractClient {
         "AAAAAAAAAfdUcmFuc2ZlcnMgdG9rZW5zIGZyb20gdGhlIGNhbGxlciB0byBhIHJlY2lwaWVudC4KQ2hlY2twb2ludHMgYm90aCBzZW5kZXIgYW5kIHJlY2lwaWVudCBiZWZvcmUgdHJhbnNmZXJyaW5nIGJhbGFuY2VzLgoKTm90ZTogVHJhbnNmZXJzIGludGVudGlvbmFsbHkgYnlwYXNzIHRoZSBgcGF1c2VgIG1lY2hhbmlzbSB0byBwcmVzZXJ2ZQpzZWNvbmRhcnkgbWFya2V0IGxpcXVpZGl0eSBhcyBhbiBlc2NhcGUgdmFsdmUgZHVyaW5nIHByb3RvY29sIGVtZXJnZW5jaWVzLgoKIyBBcmd1bWVudHMKKiBgZnJvbWAgLSBUaGUgY2FsbGVyIHNlbmRpbmcgdGhlIHRva2VucyAocmVxdWlyZXMgYXV0aCkuCiogYHRvYCAtIFRoZSByZWNpcGllbnQgb2YgdGhlIHRva2Vucy4KKiBgYW1vdW50YCAtIFRoZSBhbW91bnQgdG8gdHJhbnNmZXIuCgojIEVycm9ycwpSZXR1cm5zIGBJbnZhbGlkQW1vdW50YCwgYEluc3VmZmljaWVudEJhbGFuY2VgLCBgTWF0aE92ZXJmbG93YCwgb3IgYE1hdGhVbmRlcmZsb3dgLgAAAAAIdHJhbnNmZXIAAAADAAAAAAAAAARmcm9tAAAAEwAAAAAAAAACdG8AAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
         "AAAAAAAAAAAAAAAJYWxsb3dhbmNlAAAAAAAAAgAAAAAAAAAEZnJvbQAAABMAAAAAAAAAB3NwZW5kZXIAAAAAEwAAAAEAAAAL",
         "AAAAAAAAAAAAAAAJaXNfcGF1c2VkAAAAAAAAAAAAAAEAAAAB",
-        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAADAAAAAAAAAAAAAAABUFkbWluAAAAAAAAAAAAAAAAAAAMUGVuZGluZ0FkbWluAAAAAAAAAAAAAAAJVG9rZW5pemVyAAAAAAAAAAAAAAAAAAAJU3lXcmFwcGVyAAAAAAAAAAAAAAAAAAALVG90YWxTdXBwbHkAAAAAAAAAAAAAAAAKWWllbGRJbmRleAAAAAAAAAAAAAAAAAAOTWF0dXJpdHlMZWRnZXIAAAAAAAAAAAAAAAAABlBhdXNlZAAAAAAAAQAAAAAAAAAHQmFsYW5jZQAAAAABAAAAEwAAAAEAAAAAAAAACUFsbG93YW5jZQAAAAAAAAIAAAATAAAAEwAAAAEAAAAAAAAADlVzZXJZaWVsZEluZGV4AAAAAAABAAAAEwAAAAEAAAAAAAAADEFjY3J1ZWRZaWVsZAAAAAEAAAAT",
-        "AAAAAAAAAW9Jbml0aWFsaXplcyB0aGUgTm92YWlyZSBZaWVsZCBUb2tlbiAoWVQpLgoKIyBBcmd1bWVudHMKKiBgYWRtaW5gIC0gUHJvdG9jb2wgYWRtaW5pc3RyYXRvciByZXNwb25zaWJsZSBmb3IgcGF1c2luZyBhbmQgdXBncmFkZXMuCiogYHRva2VuaXplcmAgLSBUaGUgZXhjbHVzaXZlIGF1dGhvcml0eSBhbGxvd2VkIHRvIG1pbnQsIGJ1cm4sIGFuZCB1cGRhdGUgeWllbGQgaW5kaWNlcy4KKiBgbWF0dXJpdHlfbGVkZ2VyYCAtIFRoZSBleGFjdCBsZWRnZXIgc2VxdWVuY2Ugd2hlbiB5aWVsZCBhY2NydWFsIHBlcm1hbmVudGx5IHN0b3BzLgoKIyBFcnJvcnMKUmV0dXJucyBgQWxyZWFkeUluaXRpYWxpemVkYCBpZiBjYWxsZWQgbW9yZSB0aGFuIG9uY2UuAAAAAAppbml0aWFsaXplAAAAAAAEAAAAAAAAAAVhZG1pbgAAAAAAABMAAAAAAAAACXRva2VuaXplcgAAAAAAABMAAAAAAAAAD21hdHVyaXR5X2xlZGdlcgAAAAAEAAAAAAAAAApzeV93cmFwcGVyAAAAAAATAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAOTm92YWlyZVl0RXJyb3IAAA==",
+        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAAEAAAAAAAAAAAAAAABUFkbWluAAAAAAAAAAAAAAAAAAAMUGVuZGluZ0FkbWluAAAAAAAAAAAAAAAJVG9rZW5pemVyAAAAAAAAAAAAAAAAAAAQUGVuZGluZ1Rva2VuaXplcgAAAAAAAAAAAAAACVN5V3JhcHBlcgAAAAAAAAAAAAAAAAAAEFBlbmRpbmdTeVdyYXBwZXIAAAAAAAAAAAAAAAtUb3RhbFN1cHBseQAAAAAAAAAAAAAAAApZaWVsZEluZGV4AAAAAAAAAAAAAAAAAA5NYXR1cml0eUxlZGdlcgAAAAAAAAAAAHZDYW5vbmljYWwgZXBvY2gtY2xvY2sgY29udHJhY3QuIFNvdXJjZSBvZiB0cnV0aCBmb3IgZXhwaXJ5OwpgTWF0dXJpdHlMZWRnZXJgIGlzIHJldGFpbmVkIG9ubHkgYXMgYSBkaXNwbGF5LW9ubHkgdmFsdWUuAAAAAAAOTWF0dXJpdHlFbmdpbmUAAAAAAAAAAABHVGhlIGVwb2NoX2lkIGBNYXR1cml0eUVuZ2luZTo6b3Blbl9lcG9jaGAgcmV0dXJuZWQgZm9yIHRoaXMgZGVwbG95bWVudC4AAAAAFU1hdHVyaXR5RW5naW5lRXBvY2hJZAAAAAAAAAAAAAAAAAAABlBhdXNlZAAAAAAAAQAAAAAAAAAHQmFsYW5jZQAAAAABAAAAEwAAAAEAAAAAAAAACUFsbG93YW5jZQAAAAAAAAIAAAATAAAAEwAAAAEAAAAAAAAADlVzZXJZaWVsZEluZGV4AAAAAAABAAAAEwAAAAEAAAAAAAAADEFjY3J1ZWRZaWVsZAAAAAEAAAAT",
+        "AAAAAAAAAW9Jbml0aWFsaXplcyB0aGUgTm92YWlyZSBZaWVsZCBUb2tlbiAoWVQpLgoKIyBBcmd1bWVudHMKKiBgYWRtaW5gIC0gUHJvdG9jb2wgYWRtaW5pc3RyYXRvciByZXNwb25zaWJsZSBmb3IgcGF1c2luZyBhbmQgdXBncmFkZXMuCiogYHRva2VuaXplcmAgLSBUaGUgZXhjbHVzaXZlIGF1dGhvcml0eSBhbGxvd2VkIHRvIG1pbnQsIGJ1cm4sIGFuZCB1cGRhdGUgeWllbGQgaW5kaWNlcy4KKiBgbWF0dXJpdHlfbGVkZ2VyYCAtIFRoZSBleGFjdCBsZWRnZXIgc2VxdWVuY2Ugd2hlbiB5aWVsZCBhY2NydWFsIHBlcm1hbmVudGx5IHN0b3BzLgoKIyBFcnJvcnMKUmV0dXJucyBgQWxyZWFkeUluaXRpYWxpemVkYCBpZiBjYWxsZWQgbW9yZSB0aGFuIG9uY2UuAAAAAAppbml0aWFsaXplAAAAAAAGAAAAAAAAAAVhZG1pbgAAAAAAABMAAAAAAAAACXRva2VuaXplcgAAAAAAABMAAAAAAAAAD21hdHVyaXR5X2xlZGdlcgAAAAAEAAAAAAAAAApzeV93cmFwcGVyAAAAAAATAAAAAAAAAA9tYXR1cml0eV9lbmdpbmUAAAAAEwAAAAAAAAAYbWF0dXJpdHlfZW5naW5lX2Vwb2NoX2lkAAAABAAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
         "AAAAAAAAAAAAAAAKaXNfZXhwaXJlZAAAAAAAAAAAAAEAAAPpAAAAAQAAB9AAAAAOTm92YWlyZVl0RXJyb3IAAA==",
         "AAAAAAAAAEpBY2NlcHRzIGEgcGVuZGluZyBhZG1pbiB0cmFuc2ZlciwgZmluYWxpemluZyB0aGUgY2hhbmdlIG9mIGFkbWluaXN0cmF0aW9uLgAAAAAADGFjY2VwdF9hZG1pbgAAAAAAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlWXRFcnJvcgAA",
         "AAAAAAAAAAAAAAAMdG90YWxfc3VwcGx5AAAAAAAAAAEAAAAL",
         "AAAAAQAAAAAAAAAAAAAACll0TWV0YWRhdGEAAAAAAAgAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAKaXNfZXhwaXJlZAAAAAAAAQAAAAAAAAAJaXNfcGF1c2VkAAAAAAAAAQAAAAAAAAAPbWF0dXJpdHlfbGVkZ2VyAAAAAAQAAAAAAAAACXRva2VuaXplcgAAAAAAABMAAAAAAAAADHRvdGFsX3N1cHBseQAAAAsAAAAAAAAAB3ZlcnNpb24AAAAABAAAAAAAAAALeWllbGRfaW5kZXgAAAAACw==",
-        "AAAAAAAAAC9VcGRhdGVzIHRoZSB0cnVzdGVkIFRva2VuaXplciBjb250cmFjdCBhZGRyZXNzLgAAAAANc2V0X3Rva2VuaXplcgAAAAAAAAEAAAAAAAAADW5ld190b2tlbml6ZXIAAAAAAAATAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAOTm92YWlyZVl0RXJyb3IAAA==",
+        "AAAAAAAAAMNJbml0aWF0ZXMgYSB0d28tc3RlcCB1cGRhdGUgb2YgdGhlIHRydXN0ZWQgVG9rZW5pemVyIGNvbnRyYWN0IGFkZHJlc3MKKFNFQy0wNjogaW5zdGFudCByZWFzc2lnbm1lbnQgaXMgYSBjZW50cmFsaXphdGlvbiByaXNrIG9uIGEKc2luZ2xlLWtleSBhZG1pbiwgc28gdGhpcyBub3cgcmVxdWlyZXMgYSBzZWNvbmQgY29uZmlybWluZyBjYWxsKS4AAAAADXNldF90b2tlbml6ZXIAAAAAAAABAAAAAAAAAA1uZXdfdG9rZW5pemVyAAAAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
         "AAAAAAAAAGdUcmFuc2ZlcnMgdG9rZW5zIGZyb20gb25lIGFkZHJlc3MgdG8gYW5vdGhlciB1c2luZyBhbiBhbGxvd2FuY2UuCkNoZWNrcG9pbnRzIGJvdGggc2VuZGVyIGFuZCByZWNpcGllbnQuAAAAAA10cmFuc2Zlcl9mcm9tAAAAAAAABAAAAAAAAAAHc3BlbmRlcgAAAAATAAAAAAAAAARmcm9tAAAAEwAAAAAAAAACdG8AAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
-        "AAAAAAAAALpTZXRzIHRoZSBTWSBXcmFwcGVyIGFkZHJlc3MgZm9yIGxpdmUgeWllbGQgaW5kZXggcmVmcmVzaC4KVGhpcyBpcyB0aGUgdXBncmFkZS1jb21wYXRpYmxlIGVudHJ5IHBvaW50IGZvciBINDogZXhpc3RpbmcgZGVwbG95ZWQKWVQgVG9rZW4gY29udHJhY3RzIGNhbiBjYWxsIHRoaXMgd2l0aG91dCByZS1pbml0aWFsaXphdGlvbi4AAAAAAA5zZXRfc3lfd3JhcHBlcgAAAAAAAQAAAAAAAAAKc3lfd3JhcHBlcgAAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
+        "AAAAAAAAAHZJbml0aWF0ZXMgYSB0d28tc3RlcCB1cGRhdGUgb2YgdGhlIFNZIFdyYXBwZXIgYWRkcmVzcyB1c2VkIGZvciBsaXZlCnlpZWxkIGluZGV4IHJlZnJlc2ggKFNFQy0wNjogc2VlIGBzZXRfdG9rZW5pemVyYCkuAAAAAAAOc2V0X3N5X3dyYXBwZXIAAAAAAAEAAAAAAAAACnN5X3dyYXBwZXIAAAAAABMAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlWXRFcnJvcgAA",
         "AAAAAAAAADVJbml0aWF0ZXMgYSB0d28tc3RlcCBhZG1pbiB0cmFuc2ZlciB0byBhIG5ldyBhZGRyZXNzLgAAAAAAAA50cmFuc2Zlcl9hZG1pbgAAAAAAAQAAAAAAAAAJbmV3X2FkbWluAAAAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
         "AAAAAAAAASdDaGVja3BvaW50cyBhIHVzZXIsIHNhZmVseSBsb2NraW5nIGluIHRoZWlyIGFjY3J1ZWQgeWllbGQgYmVmb3JlIGEgYmFsYW5jZSBtdXRhdGlvbi4KClRoaXMgZnVuY3Rpb24gcGVyZm9ybXMgdGhlIGNvcmUgbWF0aDogYChjdXJyZW50X2luZGV4IC0gdXNlcl9pbmRleCkgKiBiYWxhbmNlIC8gMWU5YAoKIyBBcmd1bWVudHMKKiBgdXNlcmAgLSBUaGUgYWRkcmVzcyB0byBjaGVja3BvaW50LgoKIyBFcnJvcnMKUmV0dXJucyBgTWF0aE92ZXJmbG93YCBvciBgTWF0aFVuZGVyZmxvd2AgaWYgY2FsY3VsYXRpb24gZmFpbHMuAAAAAA9jaGVja3BvaW50X3VzZXIAAAAAAQAAAAAAAAAEdXNlcgAAABMAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlWXRFcnJvcgAA",
         "AAAAAAAAAOxTaW11bGF0ZXMgd2hhdCBhIHVzZXIgaXMgY3VycmVudGx5IG93ZWQgYmFzZWQgb24gdGhlaXIgYmFsYW5jZSBhbmQgdGhlIGxpdmUgaW5kZXguCkg0IGZpeDogVXNlcyB0aGUgbGl2ZSBTWSBleGNoYW5nZSByYXRlIChpZiBhdmFpbGFibGUpIHRvIHByb3ZpZGUgYW4gYWNjdXJhdGUKcmVhbC10aW1lIHZpZXcgb2YgcGVuZGluZyB5aWVsZCwgZXZlbiB3aGVuIHRoZSBzdG9yZWQgZ2xvYmFsIGluZGV4IGlzIHN0YWxlLgAAAA9jbGFpbWFibGVfeWllbGQAAAAAAQAAAAAAAAAEdXNlcgAAABMAAAABAAAD6QAAAAsAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
         "AAAAAAAAAAAAAAAPZ2V0X3lpZWxkX2luZGV4AAAAAAAAAAABAAAACw==",
         "AAAAAAAAAOZSZXNldHMgdGhlIGNsYWltYWJsZSB5aWVsZCBmb3IgYSB1c2VyIHRvIHplcm8gYWZ0ZXIgdGhleSBzdWNjZXNzZnVsbHkgY2xhaW0uCgoqKlN0cmljdGx5IHJlc3RyaWN0ZWQgdG8gdGhlIFRva2VuaXplciBjb250cmFjdC4qKgoKIyBBcmd1bWVudHMKKiBgdXNlcmAgLSBUaGUgYWRkcmVzcyB3aG9zZSBjbGFpbWFibGUgeWllbGQgaXMgcmVzZXQuCgojIEVycm9ycwpSZXR1cm5zIGBVbmF1dGhvcml6ZWRgLgAAAAAAD3Jlc2V0X2NsYWltYWJsZQAAAAABAAAAAAAAAAR1c2VyAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
-        "AAAABAAAAAAAAAAAAAAADk5vdmFpcmVZdEVycm9yAAAAAAANAAAAAAAAABJBbHJlYWR5SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAADk5vdEluaXRpYWxpemVkAAAAAAACAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAADAAAAAAAAAAZQYXVzZWQAAAAAAAQAAAAAAAAADUludmFsaWRBbW91bnQAAAAAAAAFAAAAAAAAABNJbnN1ZmZpY2llbnRCYWxhbmNlAAAAAAYAAAAAAAAAFUluc3VmZmljaWVudEFsbG93YW5jZQAAAAAAAAcAAAAAAAAADE1hdGhPdmVyZmxvdwAAAAgAAAAAAAAADU1hdGhVbmRlcmZsb3cAAAAAAAAJAAAAAAAAAA5TdG9yYWdlTWlzc2luZwAAAAAACgAAAAAAAAAUSW52YWxpZEFkbWluVHJhbnNmZXIAAAALAAAAAAAAAAxQYXN0TWF0dXJpdHkAAAAMAAAAAAAAABNJbmRleENhbm5vdERlY3JlYXNlAAAAAA0=",
+        "AAAAAAAAAEhDb25maXJtcyBhIHBlbmRpbmcgVG9rZW5pemVyIGFkZHJlc3MgY2hhbmdlLCByZXF1aXJpbmcgYWRtaW4gYXV0aCBhZ2Fpbi4AAAAQYWNjZXB0X3Rva2VuaXplcgAAAAAAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlWXRFcnJvcgAA",
+        "AAAABAAAAAAAAAAAAAAADk5vdmFpcmVZdEVycm9yAAAAAAAPAAAAAAAAABJBbHJlYWR5SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAADk5vdEluaXRpYWxpemVkAAAAAAACAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAADAAAAAAAAAAZQYXVzZWQAAAAAAAQAAAAAAAAADUludmFsaWRBbW91bnQAAAAAAAAFAAAAAAAAABNJbnN1ZmZpY2llbnRCYWxhbmNlAAAAAAYAAAAAAAAAFUluc3VmZmljaWVudEFsbG93YW5jZQAAAAAAAAcAAAAAAAAADE1hdGhPdmVyZmxvdwAAAAgAAAAAAAAADU1hdGhVbmRlcmZsb3cAAAAAAAAJAAAAAAAAAA5TdG9yYWdlTWlzc2luZwAAAAAACgAAAAAAAAAUSW52YWxpZEFkbWluVHJhbnNmZXIAAAALAAAAAAAAAAxQYXN0TWF0dXJpdHkAAAAMAAAAAAAAABNJbmRleENhbm5vdERlY3JlYXNlAAAAAA0AAAAAAAAAGEludmFsaWRUb2tlbml6ZXJUcmFuc2ZlcgAAAA4AAAAAAAAAGEludmFsaWRTeVdyYXBwZXJUcmFuc2ZlcgAAAA8=",
+        "AAAAAAAAAElDb25maXJtcyBhIHBlbmRpbmcgU1kgV3JhcHBlciBhZGRyZXNzIGNoYW5nZSwgcmVxdWlyaW5nIGFkbWluIGF1dGggYWdhaW4uAAAAAAAAEWFjY2VwdF9zeV93cmFwcGVyAAAAAAAAAAAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVZdEVycm9yAAA=",
         "AAAAAAAAAapDcmVkaXRzIGhpc3RvcmljYWwgeWllbGQgZGlyZWN0bHkgdG8gYSB1c2VyJ3MgYWNjcnVlZCB5aWVsZCBiYWxhbmNlLgoKKipTdHJpY3RseSByZXN0cmljdGVkIHRvIHRoZSBUb2tlbml6ZXIgY29udHJhY3QuKioKVXNlZCBkdXJpbmcgbGF0ZSBtaW50aW5nIHRvIHJlc3RvcmUgZWNvbm9taWMgaWRlbnRpdHkgYnkgY3JlZGl0aW5nIHRoZQpoaXN0b3JpY2FsbHkgYmFja2VkIHlpZWxkIHRoYXQgaGFzIGFjY3VtdWxhdGVkIHNpbmNlIGVwb2NoIGdlbmVzaXMuCgojIEFyZ3VtZW50cwoqIGB1c2VyYCAtIFRoZSBhZGRyZXNzIHJlY2VpdmluZyB0aGUgY3JlZGl0LgoqIGBhbW91bnRgIC0gVGhlIGFtb3VudCBvZiB5aWVsZCB0byBjcmVkaXQuCgojIEVycm9ycwpSZXR1cm5zIGBVbmF1dGhvcml6ZWRgIG9yIGBJbnZhbGlkQW1vdW50YCBpZiBuZWdhdGl2ZS4AAAAAABFhZGRfYWNjcnVlZF95aWVsZAAAAAAAAAIAAAAAAAAABHVzZXIAAAATAAAAAAAAAAZhbW91bnQAAAAAAAsAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlWXRFcnJvcgAA",
         "AAAAAAAAAOJVcGRhdGVzIHRoZSBnbG9iYWwgeWllbGQgaW5kZXguCgoqKlN0cmljdGx5IHJlc3RyaWN0ZWQgdG8gdGhlIFRva2VuaXplciBjb250cmFjdC4qKgoKIyBBcmd1bWVudHMKKiBgbmV3X2luZGV4YCAtIFRoZSBuZXcgZ2xvYmFsIHlpZWxkIGluZGV4LgoKIyBFcnJvcnMKUmV0dXJucyBgVW5hdXRob3JpemVkYCwgYFBhdXNlZGAsIGBQYXN0TWF0dXJpdHlgLCBvciBgSW5kZXhDYW5ub3REZWNyZWFzZWAuAAAAAAASdXBkYXRlX3lpZWxkX2luZGV4AAAAAAABAAAAAAAAAAluZXdfaW5kZXgAAAAAAAALAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAOTm92YWlyZVl0RXJyb3IAAA==" ]),
       options
@@ -383,6 +400,8 @@ export class Client extends ContractClient {
         claimable_yield: this.txFromJSON<Result<i128>>,
         get_yield_index: this.txFromJSON<i128>,
         reset_claimable: this.txFromJSON<Result<void>>,
+        accept_tokenizer: this.txFromJSON<Result<void>>,
+        accept_sy_wrapper: this.txFromJSON<Result<void>>,
         add_accrued_yield: this.txFromJSON<Result<void>>,
         update_yield_index: this.txFromJSON<Result<void>>
   }

@@ -34,11 +34,11 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CAT45FQKQGOADQOCPHCGDHI7DPAKTGAZ52YL6FTRHJFNDKUSHFFEBQZF",
+    contractId: "CCF4IUEV73G5FUE6QPSWRYSS4COYU67NPBOVKE4HFA6QCAGHGVJSKLCV",
   }
 } as const
 
-export type DataKey = {tag: "Admin", values: void} | {tag: "PendingAdmin", values: void} | {tag: "Tokenizer", values: void} | {tag: "TotalSupply", values: void} | {tag: "Paused", values: void} | {tag: "Balance", values: readonly [string]} | {tag: "Allowance", values: readonly [string, string]};
+export type DataKey = {tag: "Admin", values: void} | {tag: "PendingAdmin", values: void} | {tag: "Tokenizer", values: void} | {tag: "PendingTokenizer", values: void} | {tag: "TotalSupply", values: void} | {tag: "Paused", values: void} | {tag: "Balance", values: readonly [string]} | {tag: "Allowance", values: readonly [string, string]};
 
 
 export interface PtMetadata {
@@ -60,7 +60,8 @@ export const NovairePtError = {
   8: {message:"MathOverflow"},
   9: {message:"MathUnderflow"},
   10: {message:"StorageMissing"},
-  11: {message:"InvalidAdminTransfer"}
+  11: {message:"InvalidAdminTransfer"},
+  12: {message:"InvalidTokenizerTransfer"}
 }
 
 export interface Client {
@@ -213,6 +214,9 @@ export interface Client {
   /**
    * Construct and simulate a set_tokenizer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    * Updates the trusted Tokenizer contract address.
+   * Initiates a two-step update of the trusted Tokenizer contract address
+   * (SEC-06: instant reassignment is a centralization risk on a
+   * single-key admin, so this now requires a second confirming call).
    */
   set_tokenizer: ({new_tokenizer}: {new_tokenizer: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
@@ -233,6 +237,12 @@ export interface Client {
    * Initiates a two-step admin transfer to a new address.
    */
   transfer_admin: ({new_admin}: {new_admin: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a accept_tokenizer transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Confirms a pending Tokenizer address change, requiring admin auth again.
+   */
+  accept_tokenizer: (options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
 }
 export class Client extends ContractClient {
@@ -266,15 +276,16 @@ export class Client extends ContractClient {
         "AAAAAAAAAbNUcmFuc2ZlcnMgdG9rZW5zIGZyb20gdGhlIGNhbGxlciB0byBhIHJlY2lwaWVudC4KCk5vdGU6IFRyYW5zZmVycyBpbnRlbnRpb25hbGx5IGJ5cGFzcyB0aGUgYHBhdXNlYCBtZWNoYW5pc20gdG8gcHJlc2VydmUKc2Vjb25kYXJ5IG1hcmtldCBsaXF1aWRpdHkgYXMgYW4gZXNjYXBlIHZhbHZlIGR1cmluZyBwcm90b2NvbCBlbWVyZ2VuY2llcy4KCiMgQXJndW1lbnRzCiogYGZyb21gIC0gVGhlIGNhbGxlciBzZW5kaW5nIHRoZSB0b2tlbnMgKHJlcXVpcmVzIGF1dGgpLgoqIGB0b2AgLSBUaGUgcmVjaXBpZW50IG9mIHRoZSB0b2tlbnMuCiogYGFtb3VudGAgLSBUaGUgYW1vdW50IHRvIHRyYW5zZmVyLgoKIyBFcnJvcnMKUmV0dXJucyBgSW52YWxpZEFtb3VudGAsIGBJbnN1ZmZpY2llbnRCYWxhbmNlYCwgYE1hdGhPdmVyZmxvd2AsIG9yIGBNYXRoVW5kZXJmbG93YC4AAAAACHRyYW5zZmVyAAAAAwAAAAAAAAAEZnJvbQAAABMAAAAAAAAAAnRvAAAAAAATAAAAAAAAAAZhbW91bnQAAAAAAAsAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlUHRFcnJvcgAA",
         "AAAAAAAAAC1SZXR1cm5zIHRoZSBhcHByb3ZlZCBhbGxvd2FuY2UgZm9yIGEgc3BlbmRlci4AAAAAAAAJYWxsb3dhbmNlAAAAAAAAAgAAAAAAAAAEZnJvbQAAABMAAAAAAAAAB3NwZW5kZXIAAAAAEwAAAAEAAAAL",
         "AAAAAAAAAC5SZXR1cm5zIHRydWUgaWYgaXNzdWFuY2UvcmVkZW1wdGlvbiBpcyBwYXVzZWQuAAAAAAAJaXNfcGF1c2VkAAAAAAAAAAAAAAEAAAAB",
-        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAABwAAAAAAAAAAAAAABUFkbWluAAAAAAAAAAAAAAAAAAAMUGVuZGluZ0FkbWluAAAAAAAAAAAAAAAJVG9rZW5pemVyAAAAAAAAAAAAAAAAAAALVG90YWxTdXBwbHkAAAAAAAAAAAAAAAAGUGF1c2VkAAAAAAABAAAAAAAAAAdCYWxhbmNlAAAAAAEAAAATAAAAAQAAAAAAAAAJQWxsb3dhbmNlAAAAAAAAAgAAABMAAAAT",
+        "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAACAAAAAAAAAAAAAAABUFkbWluAAAAAAAAAAAAAAAAAAAMUGVuZGluZ0FkbWluAAAAAAAAAAAAAAAJVG9rZW5pemVyAAAAAAAAAAAAAAAAAAAQUGVuZGluZ1Rva2VuaXplcgAAAAAAAAAAAAAAC1RvdGFsU3VwcGx5AAAAAAAAAAAAAAAABlBhdXNlZAAAAAAAAQAAAAAAAAAHQmFsYW5jZQAAAAABAAAAEwAAAAEAAAAAAAAACUFsbG93YW5jZQAAAAAAAAIAAAATAAAAEw==",
         "AAAAAAAAARBJbml0aWFsaXplcyB0aGUgTm92YWlyZSBQcmluY2lwYWwgVG9rZW4gKFBUKS4KCiMgQXJndW1lbnRzCiogYGFkbWluYCAtIFByb3RvY29sIGFkbWluaXN0cmF0b3IgcmVzcG9uc2libGUgZm9yIHBhdXNpbmcgYW5kIHVwZ3JhZGVzLgoqIGB0b2tlbml6ZXJgIC0gVGhlIGV4Y2x1c2l2ZSBhdXRob3JpdHkgYWxsb3dlZCB0byBtaW50IGFuZCBidXJuIFBUIHRva2Vucy4KCiMgRXJyb3JzClJldHVybnMgYEFscmVhZHlJbml0aWFsaXplZGAgaWYgY2FsbGVkIG1vcmUgdGhhbiBvbmNlLgAAAAppbml0aWFsaXplAAAAAAACAAAAAAAAAAVhZG1pbgAAAAAAABMAAAAAAAAACXRva2VuaXplcgAAAAAAABMAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlUHRFcnJvcgAA",
         "AAAAAAAAAEpBY2NlcHRzIGEgcGVuZGluZyBhZG1pbiB0cmFuc2ZlciwgZmluYWxpemluZyB0aGUgY2hhbmdlIG9mIGFkbWluaXN0cmF0aW9uLgAAAAAADGFjY2VwdF9hZG1pbgAAAAAAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlUHRFcnJvcgAA",
         "AAAAAAAAADVSZXR1cm5zIHRoZSB0b3RhbCBzdXBwbHkgb2YgUFQgdG9rZW5zIGluIGNpcmN1bGF0aW9uLgAAAAAAAAx0b3RhbF9zdXBwbHkAAAAAAAAAAQAAAAs=",
         "AAAAAQAAAAAAAAAAAAAAClB0TWV0YWRhdGEAAAAAAAUAAAAAAAAABWFkbWluAAAAAAAAEwAAAAAAAAAJaXNfcGF1c2VkAAAAAAAAAQAAAAAAAAAJdG9rZW5pemVyAAAAAAAAEwAAAAAAAAAMdG90YWxfc3VwcGx5AAAACwAAAAAAAAAHdmVyc2lvbgAAAAAE",
-        "AAAAAAAAAC9VcGRhdGVzIHRoZSB0cnVzdGVkIFRva2VuaXplciBjb250cmFjdCBhZGRyZXNzLgAAAAANc2V0X3Rva2VuaXplcgAAAAAAAAEAAAAAAAAADW5ld190b2tlbml6ZXIAAAAAAAATAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAOTm92YWlyZVB0RXJyb3IAAA==",
+        "AAAAAAAAAPNVcGRhdGVzIHRoZSB0cnVzdGVkIFRva2VuaXplciBjb250cmFjdCBhZGRyZXNzLgpJbml0aWF0ZXMgYSB0d28tc3RlcCB1cGRhdGUgb2YgdGhlIHRydXN0ZWQgVG9rZW5pemVyIGNvbnRyYWN0IGFkZHJlc3MKKFNFQy0wNjogaW5zdGFudCByZWFzc2lnbm1lbnQgaXMgYSBjZW50cmFsaXphdGlvbiByaXNrIG9uIGEKc2luZ2xlLWtleSBhZG1pbiwgc28gdGhpcyBub3cgcmVxdWlyZXMgYSBzZWNvbmQgY29uZmlybWluZyBjYWxsKS4AAAAADXNldF90b2tlbml6ZXIAAAAAAAABAAAAAAAAAA1uZXdfdG9rZW5pemVyAAAAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVQdEVycm9yAAA=",
         "AAAAAAAAAP9UcmFuc2ZlcnMgdG9rZW5zIGZyb20gb25lIGFkZHJlc3MgdG8gYW5vdGhlciB1c2luZyBhbiBhbGxvd2FuY2UuCgojIEFyZ3VtZW50cwoqIGBzcGVuZGVyYCAtIFRoZSBhZGRyZXNzIGluaXRpYXRpbmcgdGhlIHRyYW5zZmVyIChyZXF1aXJlcyBhdXRoKS4KKiBgZnJvbWAgLSBUaGUgb3duZXIgb2YgdGhlIHRva2Vucy4KKiBgdG9gIC0gVGhlIHJlY2lwaWVudCBvZiB0aGUgdG9rZW5zLgoqIGBhbW91bnRgIC0gVGhlIGFtb3VudCB0byB0cmFuc2Zlci4AAAAADXRyYW5zZmVyX2Zyb20AAAAAAAAEAAAAAAAAAAdzcGVuZGVyAAAAABMAAAAAAAAABGZyb20AAAATAAAAAAAAAAJ0bwAAAAAAEwAAAAAAAAAGYW1vdW50AAAAAAALAAAAAQAAA+kAAAPtAAAAAAAAB9AAAAAOTm92YWlyZVB0RXJyb3IAAA==",
         "AAAAAAAAADVJbml0aWF0ZXMgYSB0d28tc3RlcCBhZG1pbiB0cmFuc2ZlciB0byBhIG5ldyBhZGRyZXNzLgAAAAAAAA50cmFuc2Zlcl9hZG1pbgAAAAAAAQAAAAAAAAAJbmV3X2FkbWluAAAAAAAAEwAAAAEAAAPpAAAD7QAAAAAAAAfQAAAADk5vdmFpcmVQdEVycm9yAAA=",
-        "AAAABAAAAAAAAAAAAAAADk5vdmFpcmVQdEVycm9yAAAAAAALAAAAAAAAABJBbHJlYWR5SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAADk5vdEluaXRpYWxpemVkAAAAAAACAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAADAAAAAAAAAAZQYXVzZWQAAAAAAAQAAAAAAAAADUludmFsaWRBbW91bnQAAAAAAAAFAAAAAAAAABNJbnN1ZmZpY2llbnRCYWxhbmNlAAAAAAYAAAAAAAAAFUluc3VmZmljaWVudEFsbG93YW5jZQAAAAAAAAcAAAAAAAAADE1hdGhPdmVyZmxvdwAAAAgAAAAAAAAADU1hdGhVbmRlcmZsb3cAAAAAAAAJAAAAAAAAAA5TdG9yYWdlTWlzc2luZwAAAAAACgAAAAAAAAAUSW52YWxpZEFkbWluVHJhbnNmZXIAAAAL" ]),
+        "AAAAAAAAAEhDb25maXJtcyBhIHBlbmRpbmcgVG9rZW5pemVyIGFkZHJlc3MgY2hhbmdlLCByZXF1aXJpbmcgYWRtaW4gYXV0aCBhZ2Fpbi4AAAAQYWNjZXB0X3Rva2VuaXplcgAAAAAAAAABAAAD6QAAA+0AAAAAAAAH0AAAAA5Ob3ZhaXJlUHRFcnJvcgAA",
+        "AAAABAAAAAAAAAAAAAAADk5vdmFpcmVQdEVycm9yAAAAAAAMAAAAAAAAABJBbHJlYWR5SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAADk5vdEluaXRpYWxpemVkAAAAAAACAAAAAAAAAAxVbmF1dGhvcml6ZWQAAAADAAAAAAAAAAZQYXVzZWQAAAAAAAQAAAAAAAAADUludmFsaWRBbW91bnQAAAAAAAAFAAAAAAAAABNJbnN1ZmZpY2llbnRCYWxhbmNlAAAAAAYAAAAAAAAAFUluc3VmZmljaWVudEFsbG93YW5jZQAAAAAAAAcAAAAAAAAADE1hdGhPdmVyZmxvdwAAAAgAAAAAAAAADU1hdGhVbmRlcmZsb3cAAAAAAAAJAAAAAAAAAA5TdG9yYWdlTWlzc2luZwAAAAAACgAAAAAAAAAUSW52YWxpZEFkbWluVHJhbnNmZXIAAAALAAAAAAAAABhJbnZhbGlkVG9rZW5pemVyVHJhbnNmZXIAAAAM" ]),
       options
     )
   }
@@ -298,6 +309,7 @@ export class Client extends ContractClient {
         total_supply: this.txFromJSON<i128>,
         set_tokenizer: this.txFromJSON<Result<void>>,
         transfer_from: this.txFromJSON<Result<void>>,
-        transfer_admin: this.txFromJSON<Result<void>>
+        transfer_admin: this.txFromJSON<Result<void>>,
+        accept_tokenizer: this.txFromJSON<Result<void>>
   }
 }
