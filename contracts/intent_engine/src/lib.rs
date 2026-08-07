@@ -505,16 +505,103 @@ mod tests {
     use super::*;
     use soroban_sdk::{
         testutils::{Address as _, Ledger},
-        token, Address, Env,
+        token, Address, Env, Map,
     };
 
     use marketplace::{NovaireMarketplace, NovaireMarketplaceClient as RealMarketplaceClient};
     use maturity_engine::{MaturityEngine, MaturityEngineClient as RealMaturityEngineClient};
     use pt_token::{PtToken, PtTokenClient as RealPtClient};
-    use sy_wrapper::{SyWrapper, SyWrapperClient as RealSyWrapperClient};
+    use sy_wrapper::{Positions, Request, SyWrapper, SyWrapperClient as RealSyWrapperClient};
     use tokenizer::{Tokenizer, TokenizerClient as RealTokenizerClient};
     use vault::{Vault, VaultClient as RealVaultClient};
     use yt_token::{YtToken, YtTokenClient as RealYtClient};
+
+    // Minimal stand-in for the real Blend Capital Pool contract, implementing just enough
+    // of `submit`/`get_positions` for sy_wrapper's `deposit`/`withdraw` to be exercised
+    // here. `sy_wrapper`'s own richer `MockBlendPool` (in `audit_tests`) is
+    // `#[cfg(test)]`-gated and so isn't part of its compiled dev-dependency surface.
+    #[soroban_sdk::contracttype]
+    #[derive(Clone)]
+    enum PoolDataKey {
+        Underlying,
+        Supply(Address),
+    }
+
+    #[soroban_sdk::contract]
+    pub struct MockBlendPool;
+
+    #[soroban_sdk::contractimpl]
+    impl MockBlendPool {
+        pub fn init(env: Env, underlying: Address) {
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Underlying, &underlying);
+        }
+
+        pub fn submit(
+            env: Env,
+            from: Address,
+            spender: Address,
+            to: Address,
+            requests: soroban_sdk::Vec<Request>,
+        ) -> Positions {
+            let underlying: Address = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Underlying)
+                .unwrap();
+            let token_client = token::Client::new(&env, &underlying);
+            let this = env.current_contract_address();
+
+            let mut supply: i128 = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Supply(from.clone()))
+                .unwrap_or(0);
+
+            for req in requests.iter() {
+                if req.request_type == 0 {
+                    token_client.transfer_from(&this, &spender, &this, &req.amount);
+                    supply += req.amount;
+                } else if req.request_type == 1 {
+                    let amt = if req.amount > supply {
+                        supply
+                    } else {
+                        req.amount
+                    };
+                    token_client.transfer(&this, &to, &amt);
+                    supply -= amt;
+                }
+            }
+
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Supply(from), &supply);
+
+            Self::positions_for(&env, supply)
+        }
+
+        pub fn get_positions(env: Env, address: Address) -> Positions {
+            let supply: i128 = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Supply(address))
+                .unwrap_or(0);
+            Self::positions_for(&env, supply)
+        }
+
+        fn positions_for(env: &Env, supply: i128) -> Positions {
+            let mut supply_map = Map::new(env);
+            if supply > 0 {
+                supply_map.set(1u32, supply);
+            }
+            Positions {
+                collateral: Map::new(env),
+                liabilities: Map::new(env),
+                supply: supply_map,
+            }
+        }
+    }
 
     fn setup_env() -> (
         Env,
@@ -544,7 +631,10 @@ mod tests {
         let vault_contract_id = env.register(Vault, ());
         let vault_client = RealVaultClient::new(&env, &vault_contract_id);
 
-        sy_client.initialize(&admin, &underlying_token, &vault_contract_id);
+        let pool_id = env.register(MockBlendPool, ());
+        MockBlendPoolClient::new(&env, &pool_id).init(&underlying_token);
+
+        sy_client.initialize(&admin, &underlying_token, &pool_id);
         vault_client.initialize(&admin, &sy_contract_id, &underlying_token);
 
         let pt_contract_id = env.register(PtToken, ());

@@ -564,8 +564,96 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, token, Address, Env};
-    use sy_wrapper::{SyWrapper, SyWrapperClient as OriginalSyWrapperClient};
+    use soroban_sdk::{testutils::Address as _, token, Address, Env, Map};
+    use sy_wrapper::{Positions, Request, SyWrapper, SyWrapperClient as OriginalSyWrapperClient};
+
+    // Minimal stand-in for the real Blend Capital Pool contract, implementing just enough
+    // of `submit` for sy_wrapper's `deposit`/`withdraw` to be exercised here: a
+    // single-asset, non-collateralized Supply ledger keyed by the calling contract's
+    // address. `sy_wrapper`'s own richer `MockBlendPool` (in `audit_tests`) is
+    // `#[cfg(test)]`-gated and so isn't part of its compiled dev-dependency surface.
+    #[soroban_sdk::contracttype]
+    #[derive(Clone)]
+    enum PoolDataKey {
+        Underlying,
+        Supply(Address),
+    }
+
+    #[soroban_sdk::contract]
+    pub struct MockBlendPool;
+
+    #[soroban_sdk::contractimpl]
+    impl MockBlendPool {
+        pub fn init(env: Env, underlying: Address) {
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Underlying, &underlying);
+        }
+
+        pub fn submit(
+            env: Env,
+            from: Address,
+            spender: Address,
+            to: Address,
+            requests: soroban_sdk::Vec<Request>,
+        ) -> Positions {
+            let underlying: Address = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Underlying)
+                .unwrap();
+            let token_client = token::Client::new(&env, &underlying);
+            let this = env.current_contract_address();
+
+            let mut supply: i128 = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Supply(from.clone()))
+                .unwrap_or(0);
+
+            for req in requests.iter() {
+                if req.request_type == 0 {
+                    token_client.transfer_from(&this, &spender, &this, &req.amount);
+                    supply += req.amount;
+                } else if req.request_type == 1 {
+                    let amt = if req.amount > supply {
+                        supply
+                    } else {
+                        req.amount
+                    };
+                    token_client.transfer(&this, &to, &amt);
+                    supply -= amt;
+                }
+            }
+
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Supply(from), &supply);
+
+            Self::positions_for(&env, supply)
+        }
+
+        pub fn get_positions(env: Env, address: Address) -> Positions {
+            let supply: i128 = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Supply(address))
+                .unwrap_or(0);
+            Self::positions_for(&env, supply)
+        }
+
+        fn positions_for(env: &Env, supply: i128) -> Positions {
+            let mut supply_map = Map::new(env);
+            if supply > 0 {
+                supply_map.set(1u32, supply);
+            }
+            Positions {
+                collateral: Map::new(env),
+                liabilities: Map::new(env),
+                supply: supply_map,
+            }
+        }
+    }
 
     #[test]
     fn test_vault_flow() {
@@ -576,7 +664,6 @@ mod tests {
         let admin = Address::generate(&env);
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
-        let yield_source = Address::generate(&env);
 
         // 2. Setup Mock Token
         let token_admin = Address::generate(&env);
@@ -589,6 +676,11 @@ mod tests {
         // Mint initial balances
         token_admin_client.mint(&alice, &2000);
         token_admin_client.mint(&bob, &2000);
+
+        // 2b. Deploy and Initialize the mock Blend pool SY Wrapper supplies into.
+        let pool_id = env.register(MockBlendPool, ());
+        MockBlendPoolClient::new(&env, &pool_id).init(&token_contract);
+        let yield_source = pool_id;
 
         // 3. Deploy and Initialize SY Wrapper
         let sy_contract_id = env.register(SyWrapper, ());

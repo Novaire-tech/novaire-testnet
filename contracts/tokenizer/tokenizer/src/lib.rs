@@ -1,5 +1,7 @@
 #![no_std]
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Symbol,
+};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -122,27 +124,40 @@ mod storage {
     }
 
     pub fn get_address(env: &Env, key: DataKey) -> Result<Address, NovaireTokenizerError> {
-        env.storage().instance().get(&key).ok_or(NovaireTokenizerError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&key)
+            .ok_or(NovaireTokenizerError::StorageMissing)
     }
 
     pub fn get_u32(env: &Env, key: DataKey) -> Result<u32, NovaireTokenizerError> {
-        env.storage().instance().get(&key).ok_or(NovaireTokenizerError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&key)
+            .ok_or(NovaireTokenizerError::StorageMissing)
     }
 
     pub fn get_i128(env: &Env, key: DataKey) -> Result<i128, NovaireTokenizerError> {
-        env.storage().instance().get(&key).ok_or(NovaireTokenizerError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&key)
+            .ok_or(NovaireTokenizerError::StorageMissing)
     }
 
     pub fn set_i128(env: &Env, key: DataKey, val: i128) {
         env.storage().instance().set(&key, &val);
     }
-    
+
     pub fn get_settlement_rate(env: &Env) -> Option<i128> {
-        env.storage().instance().get(&DataKey::SettlementExchangeRate)
+        env.storage()
+            .instance()
+            .get(&DataKey::SettlementExchangeRate)
     }
-    
+
     pub fn set_settlement_rate(env: &Env, val: i128) {
-        env.storage().instance().set(&DataKey::SettlementExchangeRate, &val);
+        env.storage()
+            .instance()
+            .set(&DataKey::SettlementExchangeRate, &val);
     }
 
     /// Delegates to MaturityEngine (the canonical epoch clock) instead of
@@ -175,16 +190,15 @@ mod storage {
 }
 
 /// # Novaire Tokenizer
-/// 
-/// The economic coordinator of the Novaire protocol. 
-/// Orchestrates the issuance of PT and YT tokens against deposited Vault shares, 
+///
+/// The economic coordinator of the Novaire protocol.
+/// Orchestrates the issuance of PT and YT tokens against deposited Vault shares,
 /// manages the Epoch State Machine, and guarantees principal redemptions.
 #[contract]
 pub struct Tokenizer;
 
 #[contractimpl]
 impl Tokenizer {
-    
     /// Initializes the Tokenizer with its critical dependencies.
     pub fn initialize(
         env: Env,
@@ -209,12 +223,20 @@ impl Tokenizer {
         env.storage().instance().set(&DataKey::Vault, &vault);
         env.storage().instance().set(&DataKey::PtToken, &pt_token);
         env.storage().instance().set(&DataKey::YtToken, &yt_token);
-        env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
-        env.storage().instance().set(&DataKey::MaturityLedger, &maturity_ledger);
-        env.storage().instance().set(&DataKey::MaturityEngine, &maturity_engine);
-        env.storage().instance().set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::SyWrapper, &sy_wrapper);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityLedger, &maturity_ledger);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityEngine, &maturity_engine);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
         env.storage().instance().set(&DataKey::EpochId, &1u32);
-        
+
         storage::set_i128(&env, DataKey::EpochStartIndex, epoch_start_index);
         storage::set_i128(&env, DataKey::TotalPtMinted, 0i128);
         storage::set_i128(&env, DataKey::LastRecordedSurplus, 0i128);
@@ -225,7 +247,11 @@ impl Tokenizer {
     /// Mints PT and YT tokens identically in exchange for Vault Shares.
     ///
     /// Requires Epoch State: `Open`
-    pub fn mint_pt_yt(env: Env, user: Address, sy_shares: i128) -> Result<(i128, i128), NovaireTokenizerError> {
+    pub fn mint_pt_yt(
+        env: Env,
+        user: Address,
+        sy_shares: i128,
+    ) -> Result<(i128, i128), NovaireTokenizerError> {
         user.require_auth();
 
         if sy_shares <= 0 {
@@ -275,8 +301,12 @@ impl Tokenizer {
         let epoch_start_index = storage::get_i128(&env, DataKey::EpochStartIndex)?;
         let mut structural_margin_raw: i128 = 0;
         if exchange_rate > epoch_start_index {
-            let index_delta = exchange_rate.checked_sub(epoch_start_index).ok_or(NovaireTokenizerError::MathUnderflow)?;
-            structural_margin_raw = index_delta.checked_mul(sy_shares).ok_or(NovaireTokenizerError::MathOverflow)?;
+            let index_delta = exchange_rate
+                .checked_sub(epoch_start_index)
+                .ok_or(NovaireTokenizerError::MathUnderflow)?;
+            structural_margin_raw = index_delta
+                .checked_mul(sy_shares)
+                .ok_or(NovaireTokenizerError::MathOverflow)?;
             let historical_yield = structural_margin_raw / 1_000_000_000;
             if historical_yield > 0 {
                 yt_client.add_accrued_yield(&user, &historical_yield);
@@ -289,31 +319,40 @@ impl Tokenizer {
         // Derived arithmetically from the pre-mint surplus plus this mint's own
         // known contribution (sy_shares * (exchange_rate - epoch_start_index)),
         // instead of a second `compute_surplus_raw` cross-contract round-trip.
-        let post_mint_surplus_raw = pre_mint_surplus_raw.checked_add(structural_margin_raw).ok_or(NovaireTokenizerError::MathOverflow)?;
-        env.storage().instance().set(&DataKey::LastRecordedSurplus, &post_mint_surplus_raw);
+        let post_mint_surplus_raw = pre_mint_surplus_raw
+            .checked_add(structural_margin_raw)
+            .ok_or(NovaireTokenizerError::MathOverflow)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::LastRecordedSurplus, &post_mint_surplus_raw);
 
         // 4. Update Internal Accounting
         let mut total_pt_minted = storage::get_i128(&env, DataKey::TotalPtMinted)?;
-        total_pt_minted = total_pt_minted.checked_add(sy_shares).ok_or(NovaireTokenizerError::MathOverflow)?;
+        total_pt_minted = total_pt_minted
+            .checked_add(sy_shares)
+            .ok_or(NovaireTokenizerError::MathOverflow)?;
         storage::set_i128(&env, DataKey::TotalPtMinted, total_pt_minted);
 
-        env.events().publish((Symbol::new(&env, "tokenizer_minted"), user), (sy_shares, sy_shares, sy_shares));
-        
+        env.events().publish(
+            (Symbol::new(&env, "tokenizer_minted"), user),
+            (sy_shares, sy_shares, sy_shares),
+        );
+
         Self::assert_invariant(env.clone())?;
         Ok((sy_shares, sy_shares))
     }
 
     /// Claims accrued yield for a user by withdrawing the physical underlying asset.
-    /// 
+    ///
     /// Requires Epoch State: `Open`, `Matured`, or `Settled`.
     pub fn claim_yield(env: Env, user: Address) -> Result<i128, NovaireTokenizerError> {
         user.require_auth();
-        
+
         let state = storage::get_epoch_state(&env)?;
-        
+
         let sy_wrapper_addr = storage::get_address(&env, DataKey::SyWrapper)?;
         let sy_client = SyWrapperClient::new(&env, &sy_wrapper_addr);
-        
+
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let yt_client = YtTokenClient::new(&env, &yt_token_addr);
 
@@ -326,7 +365,7 @@ impl Tokenizer {
                 // mint_pt_yt) before checkpointing the claimant.
                 pre_claim_surplus_raw = Some(Self::refresh_yield_index_and_get_surplus(&env)?);
                 sy_client.get_exchange_rate()
-            },
+            }
             EpochState::Settled => {
                 // Post-settlement: use the locked settlement rate
                 storage::get_settlement_rate(&env).ok_or(NovaireTokenizerError::StorageMissing)?
@@ -334,9 +373,11 @@ impl Tokenizer {
         };
 
         // Checkpoint the user so their internal math catches up to the global index
-        yt_client.try_checkpoint_user(&user).map_err(|_| NovaireTokenizerError::MathUnderflow)?;
+        yt_client
+            .try_checkpoint_user(&user)
+            .map_err(|_| NovaireTokenizerError::MathUnderflow)?;
         let claimable = yt_client.claimable_yield(&user);
-        
+
         if claimable <= 0 {
             return Err(NovaireTokenizerError::InvalidAmount);
         }
@@ -345,7 +386,10 @@ impl Tokenizer {
         yt_client.reset_claimable(&user);
 
         // Convert scaled yield (1e9) to exact Vault Shares using the active exchange rate
-        let shares_to_withdraw = claimable.checked_mul(1_000_000_000).ok_or(NovaireTokenizerError::MathOverflow)? / exchange_rate;
+        let shares_to_withdraw = claimable
+            .checked_mul(1_000_000_000)
+            .ok_or(NovaireTokenizerError::MathOverflow)?
+            / exchange_rate;
 
         // Withdraw underlying physical assets via the Vault
         let vault_addr = storage::get_address(&env, DataKey::Vault)?;
@@ -371,7 +415,8 @@ impl Tokenizer {
                 }
             )
         ]);
-        let actual_underlying = vault_client.withdraw_for(&env.current_contract_address(), &user, &shares_to_withdraw);
+        let actual_underlying =
+            vault_client.withdraw_for(&env.current_contract_address(), &user, &shares_to_withdraw);
 
         // Record the post-withdrawal (now lower) surplus baseline so the next
         // accumulator refresh measures organic growth from this correctly-reduced
@@ -382,12 +427,21 @@ impl Tokenizer {
         // state, where no further refresh will ever read this baseline again (the
         // accumulator is frozen at settlement).
         if let Some(pre_claim_surplus_raw) = pre_claim_surplus_raw {
-            let withdrawn_raw = shares_to_withdraw.checked_mul(exchange_rate).ok_or(NovaireTokenizerError::MathOverflow)?;
-            let post_claim_surplus_raw = pre_claim_surplus_raw.checked_sub(withdrawn_raw).ok_or(NovaireTokenizerError::MathUnderflow)?;
-            env.storage().instance().set(&DataKey::LastRecordedSurplus, &post_claim_surplus_raw);
+            let withdrawn_raw = shares_to_withdraw
+                .checked_mul(exchange_rate)
+                .ok_or(NovaireTokenizerError::MathOverflow)?;
+            let post_claim_surplus_raw = pre_claim_surplus_raw
+                .checked_sub(withdrawn_raw)
+                .ok_or(NovaireTokenizerError::MathUnderflow)?;
+            env.storage()
+                .instance()
+                .set(&DataKey::LastRecordedSurplus, &post_claim_surplus_raw);
         }
 
-        env.events().publish((Symbol::new(&env, "tokenizer_claimed"), user), (actual_underlying, shares_to_withdraw));
+        env.events().publish(
+            (Symbol::new(&env, "tokenizer_claimed"), user),
+            (actual_underlying, shares_to_withdraw),
+        );
         Self::assert_invariant(env.clone())?;
         Ok(actual_underlying)
     }
@@ -403,7 +457,7 @@ impl Tokenizer {
         if state == EpochState::Open {
             return Err(NovaireTokenizerError::EpochNotMatured);
         }
-        
+
         // State is Matured. We now transition to Settled.
         let sy_wrapper_addr = storage::get_address(&env, DataKey::SyWrapper)?;
         let sy_client = SyWrapperClient::new(&env, &sy_wrapper_addr);
@@ -430,7 +484,10 @@ impl Tokenizer {
         maturity_engine_client.settle_epoch(&maturity_engine_epoch_id);
 
         let epoch_id = storage::get_u32(&env, DataKey::EpochId)?;
-        env.events().publish((Symbol::new(&env, "tokenizer_settled"),), (epoch_id, settlement_rate));
+        env.events().publish(
+            (Symbol::new(&env, "tokenizer_settled"),),
+            (epoch_id, settlement_rate),
+        );
 
         Self::assert_invariant(env.clone())?;
         Ok(())
@@ -439,7 +496,11 @@ impl Tokenizer {
     /// Redeems PT for guaranteed principal physical underlying assets.
     ///
     /// Requires Epoch State: `Settled`. (Post-maturity, post-settlement).
-    pub fn redeem_pt(env: Env, user: Address, pt_amount: i128) -> Result<i128, NovaireTokenizerError> {
+    pub fn redeem_pt(
+        env: Env,
+        user: Address,
+        pt_amount: i128,
+    ) -> Result<i128, NovaireTokenizerError> {
         user.require_auth();
 
         if storage::get_epoch_state(&env)? != EpochState::Settled {
@@ -452,7 +513,7 @@ impl Tokenizer {
 
         let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
-        
+
         let user_pt_balance = pt_client.balance(&user);
         if user_pt_balance < pt_amount {
             return Err(NovaireTokenizerError::InsufficientBalance);
@@ -467,8 +528,12 @@ impl Tokenizer {
         // This fully protects PT holders from post-settlement crashes in the SY Wrapper.
         // We eliminate intermediate scaling division to preserve perfect mathematical precision.
         let epoch_start_index = storage::get_i128(&env, DataKey::EpochStartIndex)?;
-        let settlement_rate = storage::get_settlement_rate(&env).ok_or(NovaireTokenizerError::StorageMissing)?;
-        let shares_to_withdraw = pt_amount.checked_mul(epoch_start_index).ok_or(NovaireTokenizerError::MathOverflow)? / settlement_rate;
+        let settlement_rate =
+            storage::get_settlement_rate(&env).ok_or(NovaireTokenizerError::StorageMissing)?;
+        let shares_to_withdraw = pt_amount
+            .checked_mul(epoch_start_index)
+            .ok_or(NovaireTokenizerError::MathOverflow)?
+            / settlement_rate;
 
         // 4. Withdraw physical assets via Vault
         let vault_addr = storage::get_address(&env, DataKey::Vault)?;
@@ -491,9 +556,13 @@ impl Tokenizer {
                 }
             )
         ]);
-        let actual_underlying = vault_client.withdraw_for(&env.current_contract_address(), &user, &shares_to_withdraw);
+        let actual_underlying =
+            vault_client.withdraw_for(&env.current_contract_address(), &user, &shares_to_withdraw);
 
-        env.events().publish((Symbol::new(&env, "tokenizer_redeemed"), user), (pt_amount, actual_underlying));
+        env.events().publish(
+            (Symbol::new(&env, "tokenizer_redeemed"), user),
+            (pt_amount, actual_underlying),
+        );
         Self::assert_invariant(env.clone())?;
         Ok(actual_underlying)
     }
@@ -544,15 +613,21 @@ impl Tokenizer {
 
         let current_exchange_rate = match storage::get_settlement_rate(env) {
             Some(rate) => rate, // If settled, the backing required is locked to the settlement rate.
-            None => sy_client.get_exchange_rate()
+            None => sy_client.get_exchange_rate(),
         };
 
         let epoch_start_index = storage::get_i128(env, DataKey::EpochStartIndex)?;
 
-        let pt_liability_raw = pt_outstanding.checked_mul(epoch_start_index).ok_or(NovaireTokenizerError::MathOverflow)?;
-        let assets_held_raw = sy_shares_held.checked_mul(current_exchange_rate).ok_or(NovaireTokenizerError::MathOverflow)?;
+        let pt_liability_raw = pt_outstanding
+            .checked_mul(epoch_start_index)
+            .ok_or(NovaireTokenizerError::MathOverflow)?;
+        let assets_held_raw = sy_shares_held
+            .checked_mul(current_exchange_rate)
+            .ok_or(NovaireTokenizerError::MathOverflow)?;
 
-        assets_held_raw.checked_sub(pt_liability_raw).ok_or(NovaireTokenizerError::MathUnderflow)
+        assets_held_raw
+            .checked_sub(pt_liability_raw)
+            .ok_or(NovaireTokenizerError::MathUnderflow)
     }
 
     /// Records the current raw surplus as the baseline for the next reward-per-YT
@@ -562,7 +637,9 @@ impl Tokenizer {
     /// misattributed as distributable organic growth.
     fn record_surplus_baseline(env: Env) -> Result<(), NovaireTokenizerError> {
         let surplus = Self::compute_surplus_raw(&env)?;
-        env.storage().instance().set(&DataKey::LastRecordedSurplus, &surplus);
+        env.storage()
+            .instance()
+            .set(&DataKey::LastRecordedSurplus, &surplus);
         Ok(())
     }
 
@@ -578,7 +655,11 @@ impl Tokenizer {
     /// YtToken) from within its own entry points. This getter breaks that cycle.
     pub fn get_surplus_snapshot(env: Env) -> Result<(i128, i128), NovaireTokenizerError> {
         let current = Self::compute_surplus_raw(&env)?;
-        let last: i128 = env.storage().instance().get(&DataKey::LastRecordedSurplus).unwrap_or(0i128);
+        let last: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LastRecordedSurplus)
+            .unwrap_or(0i128);
         Ok((current, last))
     }
 
@@ -609,16 +690,26 @@ impl Tokenizer {
         let old_index = yt_client.get_yield_index();
 
         let current_surplus_raw = Self::compute_surplus_raw(&env)?;
-        let last_surplus_raw: i128 = env.storage().instance().get(&DataKey::LastRecordedSurplus).unwrap_or(0i128);
+        let last_surplus_raw: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LastRecordedSurplus)
+            .unwrap_or(0i128);
 
         if total_yt_supply > 0 && current_surplus_raw > last_surplus_raw {
-            let delta_surplus_raw = current_surplus_raw.checked_sub(last_surplus_raw).ok_or(NovaireTokenizerError::MathUnderflow)?;
+            let delta_surplus_raw = current_surplus_raw
+                .checked_sub(last_surplus_raw)
+                .ok_or(NovaireTokenizerError::MathUnderflow)?;
             let delta_surplus_underlying = delta_surplus_raw / 1_000_000_000;
             if delta_surplus_underlying > 0 {
                 let delta_reward_per_yt = delta_surplus_underlying
-                    .checked_mul(1_000_000_000).ok_or(NovaireTokenizerError::MathOverflow)?
-                    .checked_div(total_yt_supply).ok_or(NovaireTokenizerError::MathUnderflow)?;
-                return old_index.checked_add(delta_reward_per_yt).ok_or(NovaireTokenizerError::MathOverflow);
+                    .checked_mul(1_000_000_000)
+                    .ok_or(NovaireTokenizerError::MathOverflow)?
+                    .checked_div(total_yt_supply)
+                    .ok_or(NovaireTokenizerError::MathUnderflow)?;
+                return old_index
+                    .checked_add(delta_reward_per_yt)
+                    .ok_or(NovaireTokenizerError::MathOverflow);
             }
         }
         Ok(old_index)
@@ -643,23 +734,35 @@ impl Tokenizer {
         let old_index = yt_client.get_yield_index();
 
         let current_surplus_raw = Self::compute_surplus_raw(env)?;
-        let last_surplus_raw: i128 = env.storage().instance().get(&DataKey::LastRecordedSurplus).unwrap_or(0i128);
+        let last_surplus_raw: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::LastRecordedSurplus)
+            .unwrap_or(0i128);
 
         if total_yt_supply > 0 && current_surplus_raw > last_surplus_raw {
-            let delta_surplus_raw = current_surplus_raw.checked_sub(last_surplus_raw).ok_or(NovaireTokenizerError::MathUnderflow)?;
+            let delta_surplus_raw = current_surplus_raw
+                .checked_sub(last_surplus_raw)
+                .ok_or(NovaireTokenizerError::MathUnderflow)?;
             let delta_surplus_underlying = delta_surplus_raw / 1_000_000_000;
             if delta_surplus_underlying > 0 {
                 let delta_reward_per_yt = delta_surplus_underlying
-                    .checked_mul(1_000_000_000).ok_or(NovaireTokenizerError::MathOverflow)?
-                    .checked_div(total_yt_supply).ok_or(NovaireTokenizerError::MathUnderflow)?;
-                let new_index = old_index.checked_add(delta_reward_per_yt).ok_or(NovaireTokenizerError::MathOverflow)?;
+                    .checked_mul(1_000_000_000)
+                    .ok_or(NovaireTokenizerError::MathOverflow)?
+                    .checked_div(total_yt_supply)
+                    .ok_or(NovaireTokenizerError::MathUnderflow)?;
+                let new_index = old_index
+                    .checked_add(delta_reward_per_yt)
+                    .ok_or(NovaireTokenizerError::MathOverflow)?;
                 if new_index > old_index {
                     yt_client.update_yield_index(&new_index);
                 }
             }
         }
 
-        env.storage().instance().set(&DataKey::LastRecordedSurplus, &current_surplus_raw);
+        env.storage()
+            .instance()
+            .set(&DataKey::LastRecordedSurplus, &current_surplus_raw);
         Ok(current_surplus_raw)
     }
 
@@ -683,10 +786,9 @@ impl Tokenizer {
         let yt_outstanding = yt_client.total_supply();
 
         // INVARIANT 1: PT supply strictly equals YT supply during the Open phase.
-        if storage::get_epoch_state(&env)? == EpochState::Open
-            && pt_outstanding != yt_outstanding {
-                return Err(NovaireTokenizerError::InvariantViolated);
-            }
+        if storage::get_epoch_state(&env)? == EpochState::Open && pt_outstanding != yt_outstanding {
+            return Err(NovaireTokenizerError::InvariantViolated);
+        }
 
         // INVARIANT 2: Tokenizer must hold enough Vault Shares to mathematically
         // satisfy the outstanding PT principal guarantee (surplus >= 0).
@@ -704,13 +806,99 @@ impl Tokenizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, testutils::Ledger, token, Address, Env};
-    
-    use pt_token::{PtToken, PtTokenClient as RealPtClient};
-    use yt_token::{YtToken, YtTokenClient as RealYtClient};
-    use vault::{Vault, VaultClient as RealVaultClient};
-    use sy_wrapper::{SyWrapper, SyWrapperClient as RealSyWrapperClient};
+    use soroban_sdk::{testutils::Address as _, testutils::Ledger, token, Address, Env, Map};
+
     use maturity_engine::{MaturityEngine, MaturityEngineClient as RealMaturityEngineClient};
+    use pt_token::{PtToken, PtTokenClient as RealPtClient};
+    use sy_wrapper::{Positions, Request, SyWrapper, SyWrapperClient as RealSyWrapperClient};
+    use vault::{Vault, VaultClient as RealVaultClient};
+    use yt_token::{YtToken, YtTokenClient as RealYtClient};
+
+    // Minimal stand-in for the real Blend Capital Pool contract, implementing just enough
+    // of `submit`/`get_positions` for sy_wrapper's `deposit`/`withdraw` to be exercised
+    // here. `sy_wrapper`'s own richer `MockBlendPool` (in `audit_tests`) is
+    // `#[cfg(test)]`-gated and so isn't part of its compiled dev-dependency surface.
+    #[soroban_sdk::contracttype]
+    #[derive(Clone)]
+    enum PoolDataKey {
+        Underlying,
+        Supply(Address),
+    }
+
+    #[soroban_sdk::contract]
+    pub struct MockBlendPool;
+
+    #[soroban_sdk::contractimpl]
+    impl MockBlendPool {
+        pub fn init(env: Env, underlying: Address) {
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Underlying, &underlying);
+        }
+
+        pub fn submit(
+            env: Env,
+            from: Address,
+            spender: Address,
+            to: Address,
+            requests: soroban_sdk::Vec<Request>,
+        ) -> Positions {
+            let underlying: Address = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Underlying)
+                .unwrap();
+            let token_client = token::Client::new(&env, &underlying);
+            let this = env.current_contract_address();
+
+            let mut supply: i128 = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Supply(from.clone()))
+                .unwrap_or(0);
+
+            for req in requests.iter() {
+                if req.request_type == 0 {
+                    token_client.transfer_from(&this, &spender, &this, &req.amount);
+                    supply += req.amount;
+                } else if req.request_type == 1 {
+                    let amt = if req.amount > supply {
+                        supply
+                    } else {
+                        req.amount
+                    };
+                    token_client.transfer(&this, &to, &amt);
+                    supply -= amt;
+                }
+            }
+
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Supply(from), &supply);
+            Self::positions_for(&env, supply)
+        }
+
+        pub fn get_positions(env: Env, address: Address) -> Positions {
+            let supply: i128 = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Supply(address))
+                .unwrap_or(0);
+            Self::positions_for(&env, supply)
+        }
+
+        fn positions_for(env: &Env, supply: i128) -> Positions {
+            let mut supply_map = Map::new(env);
+            if supply > 0 {
+                supply_map.set(1u32, supply);
+            }
+            Positions {
+                collateral: Map::new(env),
+                liabilities: Map::new(env),
+                supply: supply_map,
+            }
+        }
+    }
 
     #[test]
     fn test_tokenizer_state_machine() {
@@ -719,14 +907,19 @@ mod tests {
 
         let admin = Address::generate(&env);
         let user = Address::generate(&env);
-        let yield_source = Address::generate(&env);
 
         let token_admin = Address::generate(&env);
-        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+        let token_contract = env
+            .register_stellar_asset_contract_v2(token_admin.clone())
+            .address();
         let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
         let _token_client = token::Client::new(&env, &token_contract);
 
         token_admin_client.mint(&user, &2000);
+
+        let pool_id = env.register(MockBlendPool, ());
+        MockBlendPoolClient::new(&env, &pool_id).init(&token_contract);
+        let yield_source = pool_id;
 
         let sy_contract_id = env.register(SyWrapper, ());
         let sy_client = RealSyWrapperClient::new(&env, &sy_contract_id);
@@ -753,7 +946,14 @@ mod tests {
         let maturity_epoch_id = maturity_engine_client.open_epoch(&maturity_ledger);
 
         pt_client.initialize(&admin, &tokenizer_contract_id);
-        yt_client.initialize(&admin, &tokenizer_contract_id, &maturity_ledger, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
+        yt_client.initialize(
+            &admin,
+            &tokenizer_contract_id,
+            &maturity_ledger,
+            &sy_contract_id,
+            &maturity_engine_id,
+            &maturity_epoch_id,
+        );
 
         tokenizer_client.initialize(
             &admin,
@@ -771,7 +971,7 @@ mod tests {
 
         // STATE: OPEN
         assert_eq!(tokenizer_client.get_epoch_state(), EpochState::Open as u32);
-        
+
         // 1. Minting Allowed in Open
         tokenizer_client.mint_pt_yt(&user, &1000);
         assert_eq!(pt_client.balance(&user), 1000);
@@ -800,7 +1000,10 @@ mod tests {
             sequence_number: 100,
             ..env.ledger().get()
         });
-        assert_eq!(tokenizer_client.get_epoch_state(), EpochState::Matured as u32);
+        assert_eq!(
+            tokenizer_client.get_epoch_state(),
+            EpochState::Matured as u32
+        );
 
         // 4. Minting Forbidden in Matured
         let res = tokenizer_client.try_mint_pt_yt(&user, &100);
@@ -812,9 +1015,12 @@ mod tests {
 
         // 6. Settle Epoch Allowed in Matured
         tokenizer_client.settle_epoch();
-        
+
         // STATE: SETTLED
-        assert_eq!(tokenizer_client.get_epoch_state(), EpochState::Settled as u32);
+        assert_eq!(
+            tokenizer_client.get_epoch_state(),
+            EpochState::Settled as u32
+        );
 
         // 7. Settle Epoch Forbidden if already Settled
         let res = tokenizer_client.try_settle_epoch();
