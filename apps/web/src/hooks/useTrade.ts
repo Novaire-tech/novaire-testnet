@@ -22,6 +22,8 @@ export interface TradeQuote {
   minimumReceived: number;
   priceImpact: number;
   slippage: number;
+  /** Set when trade size is large relative to thin YT depth (near-par pool or early-epoch small pool). Non-blocking. */
+  warning?: string;
 }
 
 function parseTradeError(e: any): string {
@@ -182,10 +184,11 @@ export function useTrade() {
         const tx = await client.swap_pt_for_underlying({ seller: address, pt_in: amountInStroops, min_underlying_out: 1n });
         outStroops = unwrapResult(tx.result) || 0n;
       } else if (action === 'Buy' && asset === 'YT') {
-        const tx = await client.swap_underlying_for_yt({ buyer: address, underlying_in: amountInStroops, min_yt_out: 1n });
+        // Read-only curve quote: no auth/state-mutation simulation needed, matches execution exactly.
+        const tx = await client.quote_underlying_for_yt({ underlying_in: amountInStroops });
         outStroops = unwrapResult(tx.result) || 0n;
       } else if (action === 'Sell' && asset === 'YT') {
-        const tx = await client.swap_yt_for_underlying({ seller: address, yt_in: amountInStroops, min_underlying_out: 1n });
+        const tx = await client.quote_yt_for_underlying({ yt_in: amountInStroops });
         outStroops = unwrapResult(tx.result) || 0n;
       }
 
@@ -198,6 +201,7 @@ export function useTrade() {
       
       // Calculate price impact (rough estimation)
       let priceImpact = 0;
+      let largeTradeWarning: string | undefined;
       if (marketData) {
         if (action === 'Buy' && asset === 'PT') {
           const expectedPrice = amountIn / expectedOutput;
@@ -207,6 +211,19 @@ export function useTrade() {
           const expectedPrice = expectedOutput / amountIn;
           // Sell: worse price is lower, so expected - market will be negative
           priceImpact = ((expectedPrice - marketData.ptPrice) / marketData.ptPrice) * 100;
+        } else if (action === 'Buy' && asset === 'YT') {
+          const expectedPrice = amountIn / expectedOutput;
+          priceImpact = marketData.ytPrice > 0 ? ((marketData.ytPrice - expectedPrice) / marketData.ytPrice) * 100 : 0;
+        } else if (action === 'Sell' && asset === 'YT') {
+          const expectedPrice = expectedOutput / amountIn;
+          priceImpact = marketData.ytPrice > 0 ? ((expectedPrice - marketData.ytPrice) / marketData.ytPrice) * 100 : 0;
+        }
+
+        // Thin YT depth (near-par pools, or a small/young pool near its MINIMUM_LIQUIDITY
+        // floor) makes large-relative-size YT trades genuinely fragile — this is correct
+        // AMM behavior, not a bug, but worth flagging before the user submits.
+        if (asset === 'YT' && Math.abs(priceImpact) > 10) {
+          largeTradeWarning = 'Large price impact for this trade size — YT liquidity is thin right now. Consider a smaller amount.';
         }
       }
 
@@ -214,7 +231,8 @@ export function useTrade() {
         expectedOutput,
         minimumReceived,
         priceImpact,
-        slippage: slippagePercent
+        slippage: slippagePercent,
+        warning: largeTradeWarning
       });
     } catch (e: any) {
       setQuote(null);

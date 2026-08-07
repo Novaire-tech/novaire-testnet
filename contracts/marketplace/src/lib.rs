@@ -464,6 +464,16 @@ impl NovaireMarketplace {
     /// donate YT depth to the pool. It mirrors `add_liquidity`'s minimum-liquidity floor to
     /// keep `swap_yt_for_underlying`'s downstream math (which assumes reserves stay above
     /// dust) safe.
+    ///
+    /// Sizing note for LPs: on a near-par pool (real PT discount much smaller than
+    /// `SWAP_FEE_NUM`/`SWAP_FEE_DEN`), the fee dominates the tiny genuine YT price and any
+    /// fee-based AMM quotes thin YT depth for a given contribution — this isn't fixable by
+    /// changing this function, it's inherent to trading a near-zero spread through a
+    /// fee-based curve. Size `yt_amount` generously on near-par epochs, and expect
+    /// disproportionately large `swap_underlying_for_yt`/`swap_yt_for_underlying` slippage
+    /// against a small `add_yt_liquidity` contribution early in an epoch (`a_pool` starts at
+    /// 0 and the curve is only as deep as the `MINIMUM_LIQUIDITY` floor until real depth
+    /// accrues) — this is correct AMM behavior, not a defect.
     pub fn add_yt_liquidity(
         env: Env,
         provider: Address,

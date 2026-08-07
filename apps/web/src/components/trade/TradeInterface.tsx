@@ -266,6 +266,12 @@ export function TradeInterface() {
         </div>
       )}
 
+      {!quoteError && quote?.warning && (
+        <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/20 rounded-xl text-orange-400 text-sm">
+          {quote.warning}
+        </div>
+      )}
+
       {/* Trade Info / Slippage */}
       <div className="mt-6 flex flex-col gap-3 px-2 z-10 relative">
         <div className="flex justify-between items-center text-sm">
