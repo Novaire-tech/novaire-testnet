@@ -104,12 +104,12 @@ Unlike `transfer_admin`/`accept_admin` (correctly two-step throughout the codeba
 
 ### Informational
 
-**SEC-08 — Rollover cross-contract deltas silently floor to zero**
+**SEC-08 — Rollover cross-contract deltas silently floor to zero — FIXED**
 `contracts/rollover/src/lib.rs:451-452, 463, 470`
-`core::cmp::max(0, ...)` clamps on `yt_proceeds`/`pt_growth`/`new_pt` deltas floor anomalous negative results to 0 instead of reverting with an explicit error. `assert_invariant` (L562-586) would still catch a resulting real custody mismatch, but a same-magnitude accounting bug elsewhere that happens to still balance custody could be masked here rather than failing loudly.
+`core::cmp::max(0, ...)` clamps on `yt_proceeds`/`pt_growth`/`new_pt` deltas floor anomalous negative results to 0 instead of reverting with an explicit error. `assert_invariant` (L562-586) would still catch a resulting real custody mismatch, but a same-magnitude accounting bug elsewhere that happens to still balance custody could be masked here rather than failing loudly. Replaced with `checked_sub(...).ok_or(NovaireRolloverError::MathOverflow)?` so any anomalous negative delta reverts explicitly instead of silently flooring.
 
-**SEC-09 — Stale test snapshot with no corresponding test for rollover's keeper gate**
-`contracts/rollover/test_snapshots/test/test_unauthorized_keeper.1.json` exists with no corresponding test function in `contracts/rollover/src/test.rs`. The keeper-vs-permissionless access-control boundary at `rollover/src/lib.rs:360-362` (`current_ledger <= grace_expiration` requires keeper) is one of only two privileged code paths in the contract and currently has no live test exercising it.
+**SEC-09 — Stale test snapshot with no corresponding test for rollover's keeper gate — FIXED**
+`contracts/rollover/test_snapshots/test/test_unauthorized_keeper.1.json` exists with no corresponding test function in `contracts/rollover/src/test.rs`. The keeper-vs-permissionless access-control boundary at `rollover/src/lib.rs:360-362` (`current_ledger <= grace_expiration` requires keeper) is one of only two privileged code paths in the contract and currently has no live test exercising it. Added `test_execute_rollover_keeper_vs_permissionless_boundary`, which exercises all three phases (inside grace, exactly at `grace_expiration`, and one ledger past it) and asserts on `env.auths()` that keeper authorization is required in the first two and absent in the third.
 
 **SEC-10 — Full trust in external Blend Capital pool, no independent sanity bound**
 `contracts/sy_wrapper/src/lib.rs:147-155` (`pool_supplied_value`)
@@ -145,8 +145,8 @@ Neither file contains a `#[cfg(test)]` module. All confidence in these contracts
 | SEC-05 | record_surplus_baseline_pub unauthenticated | Low | Low | None demonstrated |
 | SEC-06 | Single-step tokenizer/sy_wrapper reassignment | Low | Requires admin key compromise | High if admin compromised |
 | SEC-07 | Rollover TTL helpers don't self-bump | Low | Low | None (liveness only) |
-| SEC-08 | Rollover deltas floor to zero | Informational | Low | None (invariant check backstops) |
-| SEC-09 | Missing keeper-gate test | Informational | N/A | Test-hygiene only |
+| SEC-08 | Rollover deltas floor to zero | Informational | Low | None (invariant check backstops) — **FIXED** |
+| SEC-09 | Missing keeper-gate test | Informational | N/A | Test-hygiene only — **FIXED** |
 | SEC-10 | Full trust in Blend pool | Informational/Trust | Depends on third party | High if Blend pool compromised |
 | SEC-11 | sy_wrapper deposit CEI ordering | Informational | Very low | None demonstrated |
 | SEC-12 | Dead `_maturity_ledger` param | Informational | N/A | None |

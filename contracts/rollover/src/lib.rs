@@ -448,8 +448,13 @@ impl AutonomousRollover {
         );
 
         let balance_after = underlying_client.balance(&contract_addr);
+        // `balance_before` is 0 by the contract's own zero-custody invariant, so
+        // `balance_before - underlying_redeemed` is always <= 0 in the normal
+        // case; flooring at 0 here reflects that, it is not an anomaly.
         let expected_balance = core::cmp::max(0, balance_before - underlying_redeemed);
-        let yt_proceeds = core::cmp::max(0, balance_after - expected_balance);
+        let yt_proceeds = balance_after
+            .checked_sub(expected_balance)
+            .ok_or(NovaireRolloverError::MathOverflow)?;
 
         if yt_proceeds > 0 {
             underlying_client.transfer(&contract_addr, &user, &yt_proceeds);
@@ -460,14 +465,19 @@ impl AutonomousRollover {
             .protocol_yield_earned
             .checked_add(yt_proceeds)
             .ok_or(NovaireRolloverError::MathOverflow)?;
-        let pt_growth = core::cmp::max(0, underlying_redeemed - position.initial_principal);
+        let pt_growth = underlying_redeemed
+            .checked_sub(position.initial_principal)
+            .ok_or(NovaireRolloverError::MathOverflow)?;
         position.realized_pnl = pt_growth
             .checked_add(position.protocol_yield_earned)
             .ok_or(NovaireRolloverError::MathOverflow)?;
 
         // 5. Update position
         let old_pt = position.pt_balance;
-        let new_pt = core::cmp::max(0, intent_record.total_pt_held - pt_held_before);
+        let new_pt = intent_record
+            .total_pt_held
+            .checked_sub(pt_held_before)
+            .ok_or(NovaireRolloverError::MathOverflow)?;
         position.pt_balance = new_pt;
         position.current_epoch_maturity = next_epoch.maturity_ledger;
         position.last_rolled_ledger = current_ledger;

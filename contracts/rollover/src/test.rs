@@ -491,3 +491,95 @@ fn test_invariant_catches_pt_custody_mismatch() {
     // invariant rather than silently accept the drifted balance.
     rollover.exit_rollover(&user);
 }
+
+#[test]
+fn test_execute_rollover_keeper_vs_permissionless_boundary() {
+    // `execute_rollover` must require the registered keeper's authorization
+    // while inside the post-maturity grace period (inclusive of its exact
+    // expiration ledger), and become callable by anyone with no auth at all
+    // once that grace period has strictly passed — this is the liveness
+    // guarantee described in SECURITY.md's Access Control section. `env.auths()`
+    // records every `require_auth()` actually invoked during the prior call,
+    // even under `mock_all_auths`, so it lets us observe which branch ran
+    // without having to hand-construct the full cross-contract auth tree.
+    let (
+        env,
+        keeper,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &6000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+    let tokenizer_contract_id = pt_client.metadata().tokenizer;
+
+    // grace_period is 17280 ledgers (set in setup_env's `initialize` call).
+    let grace_period: u32 = 17280;
+
+    // The mock contracts' instance storage isn't TTL-managed the way the real
+    // contracts' is (that's exercised elsewhere, e.g. SEC-02/SEC-07); bump it
+    // manually here so the large ledger jumps below (needed to reach
+    // `grace_expiration`, which is 17280 ledgers out) don't spuriously archive
+    // it and mask the access-control behavior under test.
+    let bump_mock_instance_ttl = |addr: &Address| {
+        env.as_contract(addr, || {
+            env.storage().instance().extend_ttl(150_000, 200_000);
+        });
+    };
+    bump_mock_instance_ttl(&tokenizer_contract_id);
+    bump_mock_instance_ttl(&intent_engine_contract_id);
+    bump_mock_instance_ttl(&factory_contract_id);
+
+    // A single position is rolled forward through all three phases below —
+    // each `execute_rollover` call re-matures the same position onto the next
+    // epoch, so there's no need to exit and re-register between phases.
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    let pt_balance = pt_client.balance(&user);
+    rollover.register_rollover(&user, &pt_balance, &1000, &0, &0);
+
+    // --- Inside the grace period: keeper authorization is required. ---
+    mock_factory_client.set_next_maturity(&50_000);
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001, // just past maturity (1000), deep inside grace.
+        ..env.ledger().get()
+    });
+    rollover.execute_rollover(&user); // position now matures at 50_000.
+    assert!(
+        env.auths().iter().any(|(addr, _)| addr == &keeper),
+        "keeper authorization must be requested while inside the grace period"
+    );
+
+    // --- Exactly at grace expiration: still keeper-gated (inclusive boundary). ---
+    mock_factory_client.set_next_maturity(&100_000);
+    let grace_expiration = 50_000u32.checked_add(grace_period).unwrap();
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: grace_expiration,
+        ..env.ledger().get()
+    });
+    rollover.execute_rollover(&user); // position now matures at 100_000.
+    assert!(
+        env.auths().iter().any(|(addr, _)| addr == &keeper),
+        "keeper authorization must still be requested exactly at grace_expiration"
+    );
+
+    // --- One ledger past grace expiration: permissionless, no auth requested. ---
+    mock_factory_client.set_next_maturity(&200_000);
+    let next_grace_expiration = 100_000u32.checked_add(grace_period).unwrap();
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: next_grace_expiration + 1,
+        ..env.ledger().get()
+    });
+    rollover.execute_rollover(&user);
+    let auths = env.auths();
+    assert!(
+        !auths.iter().any(|(addr, _)| addr == &keeper),
+        "keeper authorization must not be requested (debug: {:?})",
+        auths
+    );
+}
