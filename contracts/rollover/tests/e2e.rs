@@ -313,7 +313,6 @@ fn test_novaire_end_to_end_integration() {
         &1000,
         &0,
         &0,
-        &maturity_ledger,
         &100,
     );
     assert_eq!(alice_intent.total_deposited_amount, 1000);
@@ -386,7 +385,7 @@ fn test_novaire_end_to_end_integration() {
     let carol = Address::generate(&env);
     token_admin_client.mint(&carol, &2000);
 
-    intent_engine_client.execute_fixed_yield_intent(&carol, &2000, &0, &0, &maturity_ledger, &100);
+    intent_engine_client.execute_fixed_yield_intent(&carol, &2000, &0, &0, &100);
     let carol_pt = pt_client.balance(&carol);
 
     let epoch_2_maturity: u32 = 3_000;

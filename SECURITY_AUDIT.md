@@ -120,9 +120,9 @@ The SY exchange-rate computation sums the entire `supply` map from `BlendPoolCli
 `contracts/sy_wrapper/src/lib.rs:226-274`
 The external Blend `submit` call (L267) executes before final state commits (L269-274), a CEI-pattern deviation. `withdraw`'s ordering is correct (state decremented before the external call). Low practical risk on Soroban (no reentrancy vector via standard SAC tokens confirmed), but `deposit` should mirror `withdraw`'s ordering for defense-in-depth. `total_shares`/`total_underlying` are now committed before `pool_client.submit(...)`, matching `withdraw`'s CEI ordering.
 
-**SEC-12 — Unused `_maturity_ledger` parameter in Intent Engine**
+**SEC-12 — Unused `_maturity_ledger` parameter in Intent Engine — FIXED**
 `contracts/intent_engine/src/lib.rs:225`
-`execute_fixed_yield_intent` accepts `_maturity_ledger: u32`, never read or validated. Not an authorization bypass (the wired contract set is fixed at `initialize` — no per-call epoch selection exists), but dead/misleading API surface: a caller might assume passing a stale value has an effect.
+`execute_fixed_yield_intent` accepts `_maturity_ledger: u32`, never read or validated. Not an authorization bypass (the wired contract set is fixed at `initialize` — no per-call epoch selection exists), but dead/misleading API surface: a caller might assume passing a stale value has an effect. Parameter removed from `execute_fixed_yield_intent` and every call site (`rollover`, `integration_tests` test harness, unit/e2e tests).
 
 **SEC-13 — `add_accrued_yield` silently no-ops on zero amount — FIXED**
 `contracts/tokenizer/yt_token/src/lib.rs:547`
@@ -149,7 +149,7 @@ Neither file contains a `#[cfg(test)]` module. All confidence in these contracts
 | SEC-09 | Missing keeper-gate test | Informational | N/A | Test-hygiene only — **FIXED** |
 | SEC-10 | Full trust in Blend pool | Informational/Trust | Depends on third party | High if Blend pool compromised |
 | SEC-11 | sy_wrapper deposit CEI ordering | Informational | Very low | None demonstrated — **FIXED** |
-| SEC-12 | Dead `_maturity_ledger` param | Informational | N/A | None |
+| SEC-12 | Dead `_maturity_ledger` param | Informational | N/A | None — **FIXED** |
 | SEC-13 | add_accrued_yield no-op on zero | Informational | N/A | None — **FIXED** |
 | SEC-14 | pt_token/yt_token zero unit tests | Process | N/A | Increases risk of undetected regressions |
 

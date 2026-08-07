@@ -22,7 +22,6 @@ impl MockIntentEngine {
         usdc_amount: i128,
         min_implied_rate: i128,
         _min_underlying_out: i128,
-        _maturity_ledger: u32,
         _yt_sale_percentage: u32,
     ) -> CumulativeIntentRecord {
         let pt_token_addr: Address = env
@@ -242,7 +241,7 @@ fn test_register_and_execute_rollover() {
 
     // Give Intent Engine a valid twap. The market needs liquidity.
     // We already added 1M PT and 1M U liquidity. TWAP is 1.
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
 
     let initial_pt = pt_client.balance(&user);
     assert!(initial_pt > 0);
@@ -283,7 +282,7 @@ fn test_exit_rollover() {
     token_admin.mint(&user, &2000);
 
     let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
 
     let initial_pt = pt_client.balance(&user);
     rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
@@ -302,8 +301,8 @@ fn test_register_rollover_rejects_double_registration() {
     token_admin.mint(&user, &4000);
 
     let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
 
     let total_pt = pt_client.balance(&user);
     let first_amount = total_pt / 2;
@@ -347,7 +346,7 @@ fn test_next_epoch_not_set() {
     token_admin.mint(&user, &2000);
 
     let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
 
     let initial_pt = pt_client.balance(&user);
     rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
@@ -376,7 +375,7 @@ fn test_rollover_position_ttl_extended_on_write() {
     token_admin.mint(&user, &2000);
 
     let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
     let initial_pt = pt_client.balance(&user);
 
     rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
@@ -398,7 +397,7 @@ fn test_rollover_position_survives_long_maturity_gap() {
     token_admin.mint(&user, &2000);
 
     let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
     let initial_pt = pt_client.balance(&user);
 
     rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
@@ -441,7 +440,7 @@ fn test_pt_custody_matches_tracked_total_across_lifecycle() {
     token_admin.mint(&user, &2000);
 
     let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
     let initial_pt = pt_client.balance(&user);
 
     // After register: actual on-chain PT custody must equal tracked total_pt_held.
@@ -478,7 +477,7 @@ fn test_invariant_catches_pt_custody_mismatch() {
     token_admin.mint(&user, &2000);
 
     let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
     let initial_pt = pt_client.balance(&user);
 
     rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
@@ -539,7 +538,7 @@ fn test_execute_rollover_keeper_vs_permissionless_boundary() {
     // A single position is rolled forward through all three phases below —
     // each `execute_rollover` call re-matures the same position onto the next
     // epoch, so there's no need to exit and re-register between phases.
-    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
     let pt_balance = pt_client.balance(&user);
     rollover.register_rollover(&user, &pt_balance, &1000, &0, &0);
 

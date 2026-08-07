@@ -36,7 +36,6 @@ pub trait IntentEngineInterface {
         usdc_amount: i128,
         min_implied_rate: i128,
         min_underlying_out: i128,
-        maturity_ledger: u32,
         yt_sale_percentage: u32,
     ) -> CumulativeIntentRecord;
 
@@ -443,7 +442,6 @@ impl AutonomousRollover {
             &underlying_redeemed,
             &min_implied_rate,
             &position.min_underlying_out,
-            &next_epoch.maturity_ledger,
             &100,
         );
 

@@ -233,7 +233,7 @@ impl<'a> Protocol<'a> {
         &self, user: &Address, usdc: i128, min_rate: i128, yt_pct: u32,
     ) {
         let _ = self.intent_engine.try_execute_fixed_yield_intent(
-            user, &usdc, &min_rate, &1, &self.maturity_ledger, &yt_pct,
+            user, &usdc, &min_rate, &1, &yt_pct,
         );
     }
     pub fn execute_yield_speculation_intent(

@@ -224,7 +224,6 @@ impl IntentEngine {
         usdc_amount: i128,
         min_implied_rate: i128,
         min_underlying_out: i128,
-        _maturity_ledger: u32,
         yt_sale_percentage: u32,
     ) -> Result<CumulativeIntentRecord, NovaireIntentError> {
         user.require_auth();
@@ -748,7 +747,6 @@ mod tests {
             &10_000,
             &current_twap,
             &0,
-            &1000,
             &100,
         );
 
@@ -783,7 +781,7 @@ mod tests {
         token_admin.mint(&user, &10_000);
 
         let imp_rate = 2_000_000_000; // Impossible rate
-        intent_engine.execute_fixed_yield_intent(&user, &10_000, &imp_rate, &0, &1000, &100);
+        intent_engine.execute_fixed_yield_intent(&user, &10_000, &imp_rate, &0, &100);
     }
 
     #[test]
@@ -795,7 +793,7 @@ mod tests {
 
         intent_engine.pause();
 
-        intent_engine.execute_fixed_yield_intent(&user, &10_000, &1, &0, &1000, &100);
+        intent_engine.execute_fixed_yield_intent(&user, &10_000, &1, &0, &100);
     }
 
     #[test]
@@ -803,7 +801,7 @@ mod tests {
     fn test_zero_amount() {
         let (env, _, _, intent_engine, _, _, _, _, _) = setup_env();
         let user = Address::generate(&env);
-        intent_engine.execute_fixed_yield_intent(&user, &0, &1, &0, &1000, &100);
+        intent_engine.execute_fixed_yield_intent(&user, &0, &1, &0, &100);
     }
 
     #[test]
