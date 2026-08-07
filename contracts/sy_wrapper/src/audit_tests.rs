@@ -432,3 +432,167 @@ fn test_deposit_zero_amount_rejected() {
     let res = s.client.try_deposit(&s.user1, &0);
     assert!(res.is_err());
 }
+
+// ==========================================
+// 5. ADVERSARIAL / DISHONEST YIELD-SOURCE SCENARIOS
+// ==========================================
+//
+// `sy_wrapper` fully trusts the yield source's reported position value (see
+// SECURITY.md "Known Risks" #1), bounded only by `refresh_rate`'s 10%-per-call
+// increase ratchet and the fact that the recorded rate can never decrease on
+// its own. These tests drive that trust boundary with a pool that lies about
+// its reported supply independently of what it actually holds, to verify the
+// ratchet is the real backstop it's documented to be.
+
+/// A `MockBlendPool` variant whose `get_positions` reports an arbitrary,
+/// directly-set supply that has no relationship to the real underlying the
+/// pool actually holds — modeling a compromised or buggy external yield
+/// source that misreports its position, honestly or maliciously.
+///
+/// Nested in its own module: `#[contractimpl]` generates fixed-name items
+/// (e.g. `__submit`, `__get_positions`) at the enclosing module scope, which
+/// collide with `MockBlendPool`'s own `submit`/`get_positions` if defined
+/// side by side — the module boundary is what disambiguates them, since
+/// `sy_wrapper`'s `BlendPoolClient` still invokes cross-contract calls by the
+/// unqualified entrypoint name (`submit`, `get_positions`) regardless of
+/// which Rust module the impl lives in.
+mod dishonest_pool {
+    use super::*;
+
+    #[contract]
+    pub struct DishonestBlendPool;
+
+    #[contractimpl]
+    impl DishonestBlendPool {
+        pub fn set_reported_supply(env: Env, address: Address, supply: i128) {
+            env.storage().instance().set(&PoolDataKey::Supply(address), &supply);
+        }
+
+        pub fn get_positions(env: Env, address: Address) -> Positions {
+            let supply: i128 = env.storage().instance()
+                .get(&PoolDataKey::Supply(address))
+                .unwrap_or(0);
+            let mut supply_map = Map::new(&env);
+            if supply > 0 {
+                supply_map.set(1u32, supply);
+            }
+            Positions {
+                collateral: Map::new(&env),
+                liabilities: Map::new(&env),
+                supply: supply_map,
+            }
+        }
+
+        // Only ever needs to accept the deposit's Supply request; a dishonest
+        // pool doesn't need to model Withdraw for these tests since they
+        // never withdraw.
+        pub fn submit(env: Env, from: Address, spender: Address, _to: Address, requests: Vec<Request>) -> Positions {
+            let underlying: Address = env.storage().instance().get(&PoolDataKey::Underlying).unwrap();
+            let token_client = token::Client::new(&env, &underlying);
+            let this = env.current_contract_address();
+            for req in requests.iter() {
+                if req.request_type == 0 {
+                    token_client.transfer_from(&this, &spender, &this, &req.amount);
+                }
+            }
+            Self::get_positions(env, from)
+        }
+
+        pub fn init(env: Env, underlying: Address) {
+            env.storage().instance().set(&PoolDataKey::Underlying, &underlying);
+        }
+    }
+}
+use dishonest_pool::{DishonestBlendPool, DishonestBlendPoolClient};
+
+fn setup_with_dishonest_pool() -> (AuditSetup, DishonestBlendPoolClient<'static>) {
+    let mut s = setup();
+    let dishonest_pool_id = s.env.register(DishonestBlendPool, ());
+    let dishonest_client = DishonestBlendPoolClient::new(&s.env, &dishonest_pool_id);
+    dishonest_client.init(&s.token_contract);
+
+    // `YieldSource` is set once at `initialize` with no rotation function (see
+    // SECURITY.md "Known Risks" #1), so exercising a dishonest source means
+    // deploying a fresh sy_wrapper wired to it from the start rather than
+    // swapping the pool under a live instance.
+    let contract_id = s.env.register(SyWrapper, ());
+    let client = SyWrapperClient::new(&s.env, &contract_id);
+    client.initialize(&s.admin, &s.token_contract, &dishonest_pool_id);
+    s.contract_id = contract_id;
+    s.client = client;
+    s.yield_source = dishonest_pool_id;
+    (s, dishonest_client)
+}
+
+#[test]
+fn test_dishonest_pool_inflated_report_clamped_to_ten_percent_ratchet() {
+    // Real deposits establish an honest baseline.
+    let (s, dishonest_pool) = setup_with_dishonest_pool();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+    assert_eq!(s.client.get_exchange_rate(), 1_000_000_000);
+
+    // A dishonest/compromised pool now reports 1000x the real position (9,000,000
+    // instead of the real 9,000 actually supplied) — no matching underlying was
+    // ever minted into the pool to back this. If sy_wrapper trusted this report
+    // outright, the exchange rate would instantly jump 1000x.
+    dishonest_pool.set_reported_supply(&s.contract_id, &9_000_000);
+
+    let res = s.client.try_refresh_rate();
+    assert!(res.is_ok(), "refresh_rate must clamp rather than revert (H5 fix)");
+
+    // The rate-of-change ratchet must cap the increase at 10%, regardless of how
+    // large the reported figure is.
+    let new_rate = s.client.get_exchange_rate();
+    assert_eq!(
+        new_rate, 1_100_000_000,
+        "a single dishonest report must never move the rate by more than 10%"
+    );
+}
+
+#[test]
+fn test_dishonest_pool_persistent_lying_still_bounded_per_call() {
+    // Even if the dishonest pool keeps lying on every single call, repeated
+    // `refresh_rate` calls can still only ratchet the rate up 10% per call —
+    // there is no way to "catch up" to an inflated figure faster by calling
+    // more often within the same ledger state.
+    let (s, dishonest_pool) = setup_with_dishonest_pool();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    dishonest_pool.set_reported_supply(&s.contract_id, &100_000_000);
+
+    let mut prev_rate = s.client.get_exchange_rate();
+    for _ in 0..5 {
+        s.client.refresh_rate();
+        let rate = s.client.get_exchange_rate();
+        assert!(rate <= prev_rate * 110 / 100, "rate grew more than 10% in a single call");
+        assert!(rate >= prev_rate, "rate must be monotonic non-decreasing");
+        prev_rate = rate;
+    }
+}
+
+#[test]
+fn test_dishonest_pool_underreport_does_not_decrease_rate() {
+    // A dishonest pool that suddenly under-reports its position (e.g. to mask a
+    // theft, or simply a buggy report) must not be able to silently haircut
+    // everyone's exchange rate — only the admin-gated `mark_loss` can ever lower
+    // `TotalUnderlying`. `refresh_rate` seeing a lower actual balance is a no-op.
+    let (s, dishonest_pool) = setup_with_dishonest_pool();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+    let rate_before = s.client.get_exchange_rate();
+
+    dishonest_pool.set_reported_supply(&s.contract_id, &1);
+
+    s.client.refresh_rate();
+    assert_eq!(
+        s.client.get_exchange_rate(),
+        rate_before,
+        "refresh_rate must never silently decrease the rate on an under-report"
+    );
+
+    // The honest recourse for a real loss remains available and admin-gated.
+    let loss = s.client.mark_loss();
+    assert!(loss > 0, "mark_loss is the only sanctioned path to record a real loss");
+}

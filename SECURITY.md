@@ -192,11 +192,11 @@ All items below are **outstanding** as of this document's publication (none have
 - [ ] SEC-12 — Remove or wire up the unused `_maturity_ledger` parameter in `intent_engine.execute_fixed_yield_intent`.
 - [ ] SEC-13 — Make `yt_token.add_accrued_yield` explicitly reject (or explicitly no-op with a comment) on zero amount, for convention consistency.
 - [ ] SEC-14 — Add unit test suites for `pt_token` and `yt_token`.
-- [ ] Add adversarial/dishonest-yield-source test scenarios to `sy_wrapper`'s test suite.
-- [ ] Add a boundary test at exactly `grace_expiration` in `rollover`.
-- [ ] Add a test for `tokenizer.mint_pt_yt` with `sy_shares <= 0`.
-- [ ] Add a dedicated test for `tokenizer`'s late-minter `add_accrued_yield` historical-credit path.
-- [ ] Align `soroban-sdk` dependency versions across all workspace crates (22.0.0 vs 22.0.11 skew).
+- [x] Add adversarial/dishonest-yield-source test scenarios to `sy_wrapper`'s test suite. *(Fixed: `contracts/sy_wrapper/src/audit_tests.rs` — dishonest-pool inflated-report clamp, persistent-lying bound, and under-report tests.)*
+- [x] Add a boundary test at exactly `grace_expiration` in `rollover`. *(Already covered by `test_execute_rollover_keeper_vs_permissionless_boundary` in `contracts/rollover/src/test.rs`, verified.)*
+- [x] Add a test for `tokenizer.mint_pt_yt` with `sy_shares <= 0`. *(Fixed: `contracts/tokenizer/tokenizer/src/lib.rs` — `test_mint_pt_yt_rejects_non_positive_sy_shares`.)*
+- [x] Add a dedicated test for `tokenizer`'s late-minter `add_accrued_yield` historical-credit path. *(Fixed: `contracts/tokenizer/tokenizer/src/lib.rs` — `test_mint_pt_yt_late_minter_gets_historical_yield_credit`.)*
+- [x] Align `soroban-sdk` dependency versions across all workspace crates (22.0.0 vs 22.0.11 skew). *(Fixed: all workspace `Cargo.toml`s now pin `22.0.11`.)*
 - [ ] Replace the placeholder security contact email and PGP key above before mainnet launch.
 
 Full findings, code citations, and risk matrix: see [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md).

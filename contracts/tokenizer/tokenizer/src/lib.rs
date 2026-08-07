@@ -1181,4 +1181,52 @@ mod tests {
         let res = h.tokenizer_client.try_redeem_pt(&other_user, &1);
         assert!(res.is_err());
     }
+
+    #[test]
+    fn test_mint_pt_yt_rejects_non_positive_sy_shares() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+
+        let res = h.tokenizer_client.try_mint_pt_yt(&h.user, &0);
+        assert!(res.is_err());
+        let res = h.tokenizer_client.try_mint_pt_yt(&h.user, &-1);
+        assert!(res.is_err());
+
+        // Neither rejected call should have moved any shares or minted any tokens.
+        assert_eq!(h.pt_client.balance(&h.user), 0);
+        assert_eq!(h.yt_client.balance(&h.user), 0);
+    }
+
+    #[test]
+    fn test_mint_pt_yt_late_minter_gets_historical_yield_credit() {
+        // A late minter deposits after the exchange rate has already grown past
+        // `epoch_start_index`. They pay principal at the current (grown) rate but
+        // are only liable for `epoch_start_index`, so `mint_pt_yt` must credit them
+        // the intrinsic difference immediately via `add_accrued_yield` (M2 fix),
+        // rather than requiring a later `claim_yield`/index-refresh round trip.
+        let h = setup(4000, 100);
+
+        // Early minter establishes the epoch's `epoch_start_index` baseline.
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+
+        // Grow the exchange rate 10% via organic yield before the late minter arrives.
+        h.token_admin_client.mint(&h.sy_client.address, &200);
+        h.sy_client.harvest_yield();
+
+        let late_user = Address::generate(&h.env);
+        h.token_admin_client.mint(&late_user, &2000);
+        h.vault_client.deposit(&late_user, &2000);
+
+        assert_eq!(h.yt_client.claimable_yield(&late_user), 0);
+        h.tokenizer_client.mint_pt_yt(&late_user, &1000);
+
+        // The late minter must be credited a positive historical-yield amount at
+        // mint time, funded entirely by their own above-baseline deposit.
+        let credited = h.yt_client.claimable_yield(&late_user);
+        assert!(
+            credited > 0,
+            "late minter must receive an immediate historical-yield credit, got {credited}"
+        );
+    }
 }
