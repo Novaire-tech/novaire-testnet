@@ -159,12 +159,21 @@ impl InvariantEngine {
             &format!("IE holds {} underlying", protocol.underlying_token.balance(ie)));
     }
 
-    /// INV-9: Rollover contract PT custody (holds no YT).
+    /// INV-9: Rollover contract PT custody.
     pub fn check_rollover_custody(protocol: &Protocol, r: &mut InvariantReport) {
         let yt_client = TokenClient::new(&protocol.env, &protocol.yt_token.address);
-        r.record("INV-9 Rollover holds no YT",
+        r.record("INV-9a Rollover holds no YT",
             yt_client.balance(&protocol.rollover.address) == 0,
             &format!("Rollover holds {} YT", yt_client.balance(&protocol.rollover.address)));
+
+        // Independently cross-check actual on-chain PT balance against the
+        // rollover contract's own tracked total_pt_held accounting figure.
+        let pt_client = TokenClient::new(&protocol.env, &protocol.pt_token.address);
+        let actual_pt  = pt_client.balance(&protocol.rollover.address);
+        let tracked_pt = protocol.rollover.total_pt_held();
+        r.record("INV-9b Rollover PT custody == tracked total_pt_held",
+            actual_pt == tracked_pt,
+            &format!("actual_pt={actual_pt} != tracked_pt={tracked_pt}"));
     }
 
     /// INV-10: No negative quantities anywhere.

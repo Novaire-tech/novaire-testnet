@@ -109,6 +109,7 @@ pub struct EpochRecord {
     pub epoch_id: u32,
     pub maturity_ledger: u32,
     pub created_ledger: u32,
+    pub pt_token: Address,
 }
 
 #[contract]
@@ -125,14 +126,16 @@ impl MockFactory {
             epoch_id: 2,
             maturity_ledger,
             created_ledger: 0,
+            pt_token: Self::pt_token(&env),
         }
     }
 
-    pub fn get_epoch_by_maturity(_env: Env, maturity_ledger: u32) -> EpochRecord {
+    pub fn get_epoch_by_maturity(env: Env, maturity_ledger: u32) -> EpochRecord {
         EpochRecord {
             epoch_id: 1,
             maturity_ledger,
             created_ledger: 0,
+            pt_token: Self::pt_token(&env),
         }
     }
 
@@ -146,6 +149,7 @@ impl MockFactory {
             epoch_id: 2,
             maturity_ledger,
             created_ledger: 0,
+            pt_token: Self::pt_token(&env),
         }
     }
 
@@ -154,6 +158,19 @@ impl MockFactory {
             &soroban_sdk::Symbol::new(&env, "next_maturity"),
             &maturity_ledger,
         );
+    }
+
+    pub fn set_pt_token(env: Env, pt_token: Address) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
+    }
+
+    fn pt_token(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::Symbol::new(env, "pt_token"))
+            .unwrap()
     }
 }
 
@@ -257,6 +274,7 @@ fn test_novaire_end_to_end_integration() {
     );
 
     let factory_contract_id = env.register(MockFactory, ());
+    MockFactoryClient::new(&env, &factory_contract_id).set_pt_token(&pt_contract_id);
 
     let rollover_contract_id = env.register(AutonomousRollover, ());
     let rollover_client = AutonomousRolloverClient::new(&env, &rollover_contract_id);
@@ -507,6 +525,7 @@ fn test_novaire_end_to_end_integration() {
 
     let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
     mock_factory_client.set_next_maturity(&epoch_2_maturity);
+    mock_factory_client.set_pt_token(&pt2_id);
 
     // Simulate Keeper executing the rollover!
     rollover_client.execute_rollover(&carol);

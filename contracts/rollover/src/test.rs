@@ -46,6 +46,18 @@ impl MockIntentEngine {
             .instance()
             .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
     }
+
+    pub fn get_user_intent(env: Env, user: Address) -> CumulativeIntentRecord {
+        env.storage()
+            .persistent()
+            .get(&(soroban_sdk::Symbol::new(&env, "cum"), user))
+            .unwrap_or(CumulativeIntentRecord {
+                total_deposited_amount: 0,
+                total_pt_held: 0,
+                total_yt_sold: 0,
+                total_underlying_received: 0,
+            })
+    }
 }
 
 #[contract]
@@ -62,14 +74,16 @@ impl MockFactory {
             epoch_id: 2,
             maturity_ledger,
             created_ledger: 0,
+            pt_token: Self::pt_token(&env),
         }
     }
 
-    pub fn get_epoch_by_maturity(_env: Env, maturity_ledger: u32) -> EpochRecord {
+    pub fn get_epoch_by_maturity(env: Env, maturity_ledger: u32) -> EpochRecord {
         EpochRecord {
             epoch_id: 1,
             maturity_ledger,
             created_ledger: 0,
+            pt_token: Self::pt_token(&env),
         }
     }
 
@@ -83,6 +97,7 @@ impl MockFactory {
             epoch_id: 2,
             maturity_ledger,
             created_ledger: 0,
+            pt_token: Self::pt_token(&env),
         }
     }
 
@@ -91,6 +106,19 @@ impl MockFactory {
             &soroban_sdk::Symbol::new(&env, "next_maturity"),
             &maturity_ledger,
         );
+    }
+
+    pub fn set_pt_token(env: Env, pt_token: Address) {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
+    }
+
+    fn pt_token(env: &Env) -> Address {
+        env.storage()
+            .instance()
+            .get(&soroban_sdk::Symbol::new(env, "pt_token"))
+            .unwrap()
     }
 }
 
@@ -157,6 +185,8 @@ fn setup_env() -> (
     });
 
     let factory_contract_id = env.register(MockFactory, ());
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+    mock_factory_client.set_pt_token(&pt_contract_id);
 
     let rollover_contract_id = env.register(AutonomousRollover, ());
     let rollover_client = AutonomousRolloverClient::new(&env, &rollover_contract_id);
@@ -393,4 +423,71 @@ fn test_rollover_position_survives_long_maturity_gap() {
         env.storage().persistent().get_ttl(&key)
     });
     assert!(ttl >= PERSISTENT_BUMP_AMOUNT - 1);
+}
+
+#[test]
+fn test_pt_custody_matches_tracked_total_across_lifecycle() {
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &2000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    let initial_pt = pt_client.balance(&user);
+
+    // After register: actual on-chain PT custody must equal tracked total_pt_held.
+    rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
+    assert_eq!(
+        pt_client.balance(&rollover.address),
+        rollover.total_pt_held()
+    );
+
+    // After a roll: custody and tracked total move together.
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+    mock_factory_client.set_next_maturity(&2000);
+    rollover.execute_rollover(&user);
+    assert_eq!(
+        pt_client.balance(&rollover.address),
+        rollover.total_pt_held()
+    );
+
+    // After exit: both drain back to zero together.
+    rollover.exit_rollover(&user);
+    assert_eq!(pt_client.balance(&rollover.address), 0);
+    assert_eq!(rollover.total_pt_held(), 0);
+}
+
+#[test]
+#[should_panic(expected = "Error(Contract, #13)")]
+fn test_invariant_catches_pt_custody_mismatch() {
+    let (env, _, _, rollover, pt_client, token_admin, intent_engine_contract_id, _) = setup_env();
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &2000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    let initial_pt = pt_client.balance(&user);
+
+    rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
+
+    // Simulate PT silently entering custody out-of-band (e.g. a bug elsewhere
+    // crediting the contract's PT balance without updating total_pt_held).
+    pt_client.mint(&rollover.address, &1);
+
+    // The next state-changing call must trip the independent PT custody
+    // invariant rather than silently accept the drifted balance.
+    rollover.exit_rollover(&user);
 }

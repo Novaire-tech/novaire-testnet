@@ -39,6 +39,8 @@ pub trait IntentEngineInterface {
         maturity_ledger: u32,
         yt_sale_percentage: u32,
     ) -> CumulativeIntentRecord;
+
+    fn get_user_intent(env: Env, user: Address) -> CumulativeIntentRecord;
 }
 
 #[contracttype]
@@ -47,6 +49,7 @@ pub struct EpochRecord {
     pub epoch_id: u32,
     pub maturity_ledger: u32,
     pub created_ledger: u32,
+    pub pt_token: Address,
 }
 
 #[soroban_sdk::contractclient(name = "FactoryClient")]
@@ -417,6 +420,24 @@ impl AutonomousRollover {
             ),
         ]);
 
+        // `CumulativeIntentRecord::total_pt_held` is a running total keyed by the
+        // caller address across every intent ever executed by it on this intent
+        // engine, not the delta from this single call. Since rollover calls in as
+        // itself (not the end user), that total aggregates PT across every
+        // position ever rolled through this intent engine — using it directly
+        // would attribute other positions' PT to this one whenever more than one
+        // position rolls through the same epoch's intent engine. Snapshot the
+        // cumulative total before the call and diff against it afterward instead,
+        // which stays correct across epochs even though the PT token itself
+        // rotates each epoch (unlike a balance-based diff, which would need to
+        // track the current epoch's PT token address).
+        let pt_held_before = intent_engine_client
+            .try_get_user_intent(&contract_addr)
+            .ok()
+            .and_then(|r| r.ok())
+            .map(|record| record.total_pt_held)
+            .unwrap_or(0);
+
         let intent_record = intent_engine_client.execute_fixed_yield_intent(
             &contract_addr,
             &underlying_redeemed,
@@ -446,12 +467,18 @@ impl AutonomousRollover {
 
         // 5. Update position
         let old_pt = position.pt_balance;
-        let new_pt = intent_record.total_pt_held;
+        let new_pt = core::cmp::max(0, intent_record.total_pt_held - pt_held_before);
         position.pt_balance = new_pt;
         position.current_epoch_maturity = next_epoch.maturity_ledger;
         position.last_rolled_ledger = current_ledger;
 
         storage::set_position(&env, &user, &position);
+
+        // Each epoch mints a fresh PT token contract; track the currently held
+        // one so custody can be verified against the right token going forward.
+        env.storage()
+            .instance()
+            .set(&DataKey::PtToken, &next_epoch.pt_token);
 
         let current_total = storage::get_total_pt_held(&env);
         let new_total = current_total
@@ -515,6 +542,10 @@ impl AutonomousRollover {
         storage::get_position(&env, &user)
     }
 
+    pub fn total_pt_held(env: Env) -> i128 {
+        storage::get_total_pt_held(&env)
+    }
+
     pub fn update_keeper(env: Env, new_keeper: Address) -> Result<(), NovaireRolloverError> {
         let admin = storage::get_address(&env, DataKey::Admin)?;
         admin.require_auth();
@@ -531,9 +562,22 @@ impl AutonomousRollover {
     fn assert_invariant(env: &Env) -> Result<(), NovaireRolloverError> {
         let contract_addr = env.current_contract_address();
 
+        // Treasury consistency: rollover never warehouses underlying between ops.
         if let Ok(underlying_addr) = storage::get_address(env, DataKey::UnderlyingToken) {
             let underlying_client = UnderlyingTokenClient::new(env, &underlying_addr);
             if underlying_client.balance(&contract_addr) > 0 {
+                return Err(NovaireRolloverError::InvariantViolation);
+            }
+        }
+
+        // PT custody conservation: actual on-chain PT balance must equal the
+        // internally tracked total_pt_held accounting figure, independently of
+        // per-position bookkeeping.
+        if let Ok(pt_addr) = storage::get_address(env, DataKey::PtToken) {
+            let pt_client = PtTokenClient::new(env, &pt_addr);
+            let actual_pt = pt_client.balance(&contract_addr);
+            let tracked_pt = storage::get_total_pt_held(env);
+            if actual_pt != tracked_pt {
                 return Err(NovaireRolloverError::InvariantViolation);
             }
         }
