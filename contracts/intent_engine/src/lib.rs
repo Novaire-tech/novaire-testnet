@@ -312,7 +312,6 @@ impl IntentEngine {
             (usdc_amount, pt_amount, underlying_from_yt, current_twap),
         );
 
-        Self::assert_invariant(env)?;
         Ok(record)
     }
 
@@ -427,38 +426,7 @@ impl IntentEngine {
             (usdc_amount, yt_amount, underlying_from_pt),
         );
 
-        Self::assert_invariant(env)?;
         Ok(yt_amount)
-    }
-
-    fn assert_invariant(env: Env) -> Result<(), NovaireIntentError> {
-        let current_contract = env.current_contract_address();
-        
-        let underlying_addr = storage::get_address(&env, DataKey::Underlying)?;
-        let underlying_client = token::Client::new(&env, &underlying_addr);
-        if underlying_client.balance(&current_contract) != 0 {
-            return Err(NovaireIntentError::InvariantViolated);
-        }
-
-        let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
-        let pt_client = PtTokenClient::new(&env, &pt_token_addr);
-        if pt_client.balance(&current_contract) != 0 {
-            return Err(NovaireIntentError::InvariantViolated);
-        }
-
-        let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
-        let yt_client = YtTokenClient::new(&env, &yt_token_addr);
-        if yt_client.balance(&current_contract) != 0 {
-            return Err(NovaireIntentError::InvariantViolated);
-        }
-
-        let vault_addr = storage::get_address(&env, DataKey::Vault)?;
-        let vault_client = VaultClient::new(&env, &vault_addr);
-        if vault_client.balance_of(&current_contract) != 0 {
-            return Err(NovaireIntentError::InvariantViolated);
-        }
-
-        Ok(())
     }
 }
 

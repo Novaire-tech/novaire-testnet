@@ -20,10 +20,14 @@ export function assertFreighterExtensionVendored(): void {
 // Chromium session with the extension loaded via --load-extension, so the
 // real-wallet spec needs its own persistent context rather than the shared
 // `chromium` Playwright project.
+// Overridable so CI/other machines can point at wherever Brave is installed.
+const BRAVE_EXECUTABLE_PATH = process.env.BRAVE_EXECUTABLE_PATH || '/usr/bin/brave-browser';
+
 export async function launchWithFreighter(): Promise<BrowserContext> {
   assertFreighterExtensionVendored();
   return chromium.launchPersistentContext('', {
     headless: false,
+    executablePath: BRAVE_EXECUTABLE_PATH,
     args: [
       `--disable-extensions-except=${FREIGHTER_EXTENSION_PATH}`,
       `--load-extension=${FREIGHTER_EXTENSION_PATH}`,

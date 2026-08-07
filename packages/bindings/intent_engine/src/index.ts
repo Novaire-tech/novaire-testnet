@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CBEHGEZADWQMTAAPOWPVMZMQSGPM5B34L4YVVLRCG5QDJS7BWVPMBT7K",
+    contractId: "CBQCZ2GSXWNYXVYOUWDXWSOGMS32E5ZPXGVCDFL4WXAGYO5ZAA6YRJ7R",
   }
 } as const
 
