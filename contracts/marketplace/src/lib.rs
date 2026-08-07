@@ -61,6 +61,12 @@ pub trait SyWrapperInterface {
     fn get_exchange_rate(env: Env) -> i128;
 }
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const PERSISTENT_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+
 mod storage {
     use super::*;
 
@@ -69,23 +75,50 @@ mod storage {
     }
 
     pub fn get_address(env: &Env, key: DataKey) -> Result<Address, NovaireMarketError> {
-        env.storage().instance().get(&key).ok_or(NovaireMarketError::StorageMissing)
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        env.storage()
+            .instance()
+            .get(&key)
+            .ok_or(NovaireMarketError::StorageMissing)
     }
 
     pub fn get_u32(env: &Env, key: DataKey) -> Result<u32, NovaireMarketError> {
-        env.storage().instance().get(&key).ok_or(NovaireMarketError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&key)
+            .ok_or(NovaireMarketError::StorageMissing)
     }
 
     pub fn get_i128(env: &Env, key: DataKey) -> Result<i128, NovaireMarketError> {
-        env.storage().instance().get(&key).ok_or(NovaireMarketError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&key)
+            .ok_or(NovaireMarketError::StorageMissing)
     }
-    
+
     pub fn get_lp_balance(env: &Env, provider: &Address) -> i128 {
-        env.storage().persistent().get(&DataKey::LpBalance(provider.clone())).unwrap_or(0)
+        let key = DataKey::LpBalance(provider.clone());
+        let balance = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        balance
     }
 
     pub fn set_lp_balance(env: &Env, provider: &Address, balance: i128) {
-        env.storage().persistent().set(&DataKey::LpBalance(provider.clone()), &balance);
+        let key = DataKey::LpBalance(provider.clone());
+        env.storage().persistent().set(&key, &balance);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     pub fn set_i128(env: &Env, key: DataKey, val: i128) {
@@ -94,7 +127,9 @@ mod storage {
 }
 
 fn integer_sqrt(val: i128) -> i128 {
-    if val <= 0 { return 0; }
+    if val <= 0 {
+        return 0;
+    }
     let mut z = (val + 1) / 2;
     let mut y = val;
     while z < y {
@@ -110,27 +145,42 @@ fn compute_a_pool(env: &Env, maturity: u32, x: i128, y: i128) -> Result<i128, No
 
     if current >= maturity {
         // Return a very large number simulating infinity for 1:1 constant sum
-        return x.checked_add(y).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_mul(1_000_000_000).ok_or(NovaireMarketError::MathOverflow);
+        return x
+            .checked_add(y)
+            .ok_or(NovaireMarketError::MathOverflow)?
+            .checked_mul(1_000_000_000)
+            .ok_or(NovaireMarketError::MathOverflow);
     }
 
-    let t_rem = (maturity.checked_sub(current).ok_or(NovaireMarketError::MathOverflow)?) as i128;
-    let t_tot = (maturity.checked_sub(created).ok_or(NovaireMarketError::MathOverflow)?) as i128;
-    
+    let t_rem = (maturity
+        .checked_sub(current)
+        .ok_or(NovaireMarketError::MathOverflow)?) as i128;
+    let t_tot = (maturity
+        .checked_sub(created)
+        .ok_or(NovaireMarketError::MathOverflow)?) as i128;
+
     if t_rem <= 0 {
         return Ok(1_000_000_000_000_000);
     }
 
     // base_A = ((t_tot - t_rem) * 1_000_000) / t_rem;
-    let elapsed = t_tot.checked_sub(t_rem).ok_or(NovaireMarketError::MathOverflow)?;
-    let base_a = elapsed.checked_mul(1_000_000).ok_or(NovaireMarketError::MathOverflow)?
-        .checked_div(t_rem).ok_or(NovaireMarketError::MathOverflow)?;
+    let elapsed = t_tot
+        .checked_sub(t_rem)
+        .ok_or(NovaireMarketError::MathOverflow)?;
+    let base_a = elapsed
+        .checked_mul(1_000_000)
+        .ok_or(NovaireMarketError::MathOverflow)?
+        .checked_div(t_rem)
+        .ok_or(NovaireMarketError::MathOverflow)?;
 
     let sum = x.checked_add(y).ok_or(NovaireMarketError::MathOverflow)?;
     let avg = sum.checked_div(2).ok_or(NovaireMarketError::MathOverflow)?;
 
-    let a_pool = base_a.checked_mul(avg).ok_or(NovaireMarketError::MathOverflow)?
-        .checked_div(1_000_000).ok_or(NovaireMarketError::MathOverflow)?;
+    let a_pool = base_a
+        .checked_mul(avg)
+        .ok_or(NovaireMarketError::MathOverflow)?
+        .checked_div(1_000_000)
+        .ok_or(NovaireMarketError::MathOverflow)?;
 
     Ok(a_pool)
 }
@@ -138,29 +188,45 @@ fn compute_a_pool(env: &Env, maturity: u32, x: i128, y: i128) -> Result<i128, No
 fn compute_k(a_pool: i128, x: i128, y: i128) -> Result<i128, NovaireMarketError> {
     // k = A_pool * (x + y) + x * y
     let sum = x.checked_add(y).ok_or(NovaireMarketError::MathOverflow)?;
-    let part1 = a_pool.checked_mul(sum).ok_or(NovaireMarketError::MathOverflow)?;
+    let part1 = a_pool
+        .checked_mul(sum)
+        .ok_or(NovaireMarketError::MathOverflow)?;
     let part2 = x.checked_mul(y).ok_or(NovaireMarketError::MathOverflow)?;
-    part1.checked_add(part2).ok_or(NovaireMarketError::MathOverflow)
+    part1
+        .checked_add(part2)
+        .ok_or(NovaireMarketError::MathOverflow)
 }
 
 fn get_y(a_pool: i128, k: i128, x_new: i128) -> Result<i128, NovaireMarketError> {
     // y_new = (k - A_pool * x_new) / (A_pool + x_new)
-    let ax = a_pool.checked_mul(x_new).ok_or(NovaireMarketError::MathOverflow)?;
+    let ax = a_pool
+        .checked_mul(x_new)
+        .ok_or(NovaireMarketError::MathOverflow)?;
     if k < ax {
         return Ok(0); // Depleted
     }
     let num = k.checked_sub(ax).ok_or(NovaireMarketError::MathOverflow)?;
-    let den = a_pool.checked_add(x_new).ok_or(NovaireMarketError::MathOverflow)?;
+    let den = a_pool
+        .checked_add(x_new)
+        .ok_or(NovaireMarketError::MathOverflow)?;
     num.checked_div(den).ok_or(NovaireMarketError::MathOverflow)
 }
 
 fn get_spot_price(a_pool: i128, x: i128, y: i128) -> Result<i128, NovaireMarketError> {
     // P = (A_pool + y) / (A_pool + x) scaled to 1e9
-    let num = a_pool.checked_add(y).ok_or(NovaireMarketError::MathOverflow)?;
-    let den = a_pool.checked_add(x).ok_or(NovaireMarketError::MathOverflow)?;
-    if den == 0 { return Ok(1_000_000_000); }
-    num.checked_mul(1_000_000_000).ok_or(NovaireMarketError::MathOverflow)?
-        .checked_div(den).ok_or(NovaireMarketError::MathOverflow)
+    let num = a_pool
+        .checked_add(y)
+        .ok_or(NovaireMarketError::MathOverflow)?;
+    let den = a_pool
+        .checked_add(x)
+        .ok_or(NovaireMarketError::MathOverflow)?;
+    if den == 0 {
+        return Ok(1_000_000_000);
+    }
+    num.checked_mul(1_000_000_000)
+        .ok_or(NovaireMarketError::MathOverflow)?
+        .checked_div(den)
+        .ok_or(NovaireMarketError::MathOverflow)
 }
 
 const MINIMUM_LIQUIDITY: i128 = 1000;
@@ -217,7 +283,9 @@ fn simulate_pt_sale_proceeds(
     if virtual_pt_in == 0 {
         return Ok(0);
     }
-    let new_pt = pt_reserves.checked_add(virtual_pt_in).ok_or(NovaireMarketError::MathOverflow)?;
+    let new_pt = pt_reserves
+        .checked_add(virtual_pt_in)
+        .ok_or(NovaireMarketError::MathOverflow)?;
     let new_under = get_y(a_pool, k, new_pt)?;
     Ok(underlying_reserves.checked_sub(new_under).unwrap_or(0))
 }
@@ -229,8 +297,12 @@ fn net_cost_for_yt(
     underlying_reserves: i128,
     virtual_pt_in: i128,
 ) -> Result<i128, NovaireMarketError> {
-    let proceeds = simulate_pt_sale_proceeds(a_pool, k, pt_reserves, underlying_reserves, virtual_pt_in)?;
-    Ok(virtual_pt_in.checked_sub(proceeds).unwrap_or(virtual_pt_in).max(0))
+    let proceeds =
+        simulate_pt_sale_proceeds(a_pool, k, pt_reserves, underlying_reserves, virtual_pt_in)?;
+    Ok(virtual_pt_in
+        .checked_sub(proceeds)
+        .unwrap_or(virtual_pt_in)
+        .max(0))
 }
 
 /// Solves `net_cost_for_yt(p) == underlying_in` for the largest `p` with
@@ -249,8 +321,11 @@ fn solve_yt_out_for_underlying_in(
     // proceeds(p) < underlying_reserves always (can't extract more than the
     // pool holds), so net_cost(p) > p - underlying_reserves, giving a safe
     // upper bound with slack.
-    let mut hi: i128 = underlying_in.checked_add(underlying_reserves).ok_or(NovaireMarketError::MathOverflow)?
-        .checked_add(1_000_000).ok_or(NovaireMarketError::MathOverflow)?;
+    let mut hi: i128 = underlying_in
+        .checked_add(underlying_reserves)
+        .ok_or(NovaireMarketError::MathOverflow)?
+        .checked_add(1_000_000)
+        .ok_or(NovaireMarketError::MathOverflow)?;
 
     if net_cost_for_yt(a_pool, k, pt_reserves, underlying_reserves, hi)? < underlying_in {
         // Degenerate/near-empty pool: even the generous upper bound can't
@@ -262,9 +337,15 @@ fn solve_yt_out_for_underlying_in(
         if lo >= hi {
             break;
         }
-        let mid = lo.checked_add(hi.checked_sub(lo).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_add(1).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_div(2).ok_or(NovaireMarketError::MathOverflow)?)
+        let mid = lo
+            .checked_add(
+                hi.checked_sub(lo)
+                    .ok_or(NovaireMarketError::MathOverflow)?
+                    .checked_add(1)
+                    .ok_or(NovaireMarketError::MathOverflow)?
+                    .checked_div(2)
+                    .ok_or(NovaireMarketError::MathOverflow)?,
+            )
             .ok_or(NovaireMarketError::MathOverflow)?;
         let cost = net_cost_for_yt(a_pool, k, pt_reserves, underlying_reserves, mid)?;
         if cost <= underlying_in {
@@ -279,8 +360,11 @@ fn solve_yt_out_for_underlying_in(
 /// Protocol fee applied once, as a plain output haircut, to the fee-free
 /// curve-derived YT quantity solved above.
 fn apply_output_fee(amount: i128) -> Result<i128, NovaireMarketError> {
-    amount.checked_mul(SWAP_FEE_NUM).ok_or(NovaireMarketError::MathOverflow)?
-        .checked_div(SWAP_FEE_DEN).ok_or(NovaireMarketError::MathOverflow)
+    amount
+        .checked_mul(SWAP_FEE_NUM)
+        .ok_or(NovaireMarketError::MathOverflow)?
+        .checked_div(SWAP_FEE_DEN)
+        .ok_or(NovaireMarketError::MathOverflow)
 }
 
 /// Sell-side YT pricing: the dual of the buy side, using the *current* (live)
@@ -308,7 +392,9 @@ fn compute_yt_sell_proceeds(
     underlying_reserves: i128,
     yt_in: i128,
 ) -> Result<i128, NovaireMarketError> {
-    let target_pt = pt_reserves.checked_sub(yt_in).ok_or(NovaireMarketError::MathOverflow)?;
+    let target_pt = pt_reserves
+        .checked_sub(yt_in)
+        .ok_or(NovaireMarketError::MathOverflow)?;
     // target_pt == 0 is a valid (if extreme) edge in general: get_y(a, k, 0)
     // = k / a is a well-defined, finite "cost to buy back every last PT
     // unit" — very expensive due to scarcity, but not undefined. The one
@@ -325,7 +411,9 @@ fn compute_yt_sell_proceeds(
     let new_under_needed = get_y(a_pool, k, target_pt)?;
     // Fee-free curve cost (see `simulate_pt_sale_proceeds` for why the fee
     // is deliberately kept out of the curve simulation itself).
-    let cost = new_under_needed.checked_sub(underlying_reserves).unwrap_or(0);
+    let cost = new_under_needed
+        .checked_sub(underlying_reserves)
+        .unwrap_or(0);
     let fair_value = yt_in.checked_sub(cost).unwrap_or(0).max(0);
     apply_output_fee(fair_value)
 }
@@ -354,19 +442,36 @@ impl NovaireMarketplace {
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::PtToken, &pt_token);
         env.storage().instance().set(&DataKey::YtToken, &yt_token);
-        env.storage().instance().set(&DataKey::Underlying, &underlying);
-        env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
-        env.storage().instance().set(&DataKey::Tokenizer, &tokenizer);
-        env.storage().instance().set(&DataKey::MaturityLedger, &maturity_ledger);
-        env.storage().instance().set(&DataKey::MaturityEngine, &maturity_engine);
-        env.storage().instance().set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
-        env.storage().instance().set(&DataKey::CreatedLedger, &env.ledger().sequence());
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::Underlying, &underlying);
+        env.storage()
+            .instance()
+            .set(&DataKey::SyWrapper, &sy_wrapper);
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &tokenizer);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityLedger, &maturity_ledger);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityEngine, &maturity_engine);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::CreatedLedger, &env.ledger().sequence());
+
         storage::set_i128(&env, DataKey::PtReserves, 0);
         storage::set_i128(&env, DataKey::UnderlyingReserves, 0);
         storage::set_i128(&env, DataKey::YtReserves, 0);
         storage::set_i128(&env, DataKey::TotalLpShares, 0);
         storage::set_i128(&env, DataKey::ImpliedRateTwap, 0);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         Ok(())
     }
@@ -398,12 +503,16 @@ impl NovaireMarketplace {
 
         let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
         let underlying_addr = storage::get_address(&env, DataKey::Underlying)?;
-        
+
         let pt_client = token::Client::new(&env, &pt_token_addr);
         let underlying_client = token::Client::new(&env, &underlying_addr);
 
         pt_client.transfer(&provider, &env.current_contract_address(), &pt_amount);
-        underlying_client.transfer(&provider, &env.current_contract_address(), &underlying_amount);
+        underlying_client.transfer(
+            &provider,
+            &env.current_contract_address(),
+            &underlying_amount,
+        );
 
         let mut pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
         let mut underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
@@ -411,12 +520,18 @@ impl NovaireMarketplace {
 
         let lp_shares;
         if total_lp_shares == 0 {
-            let initial_lp = integer_sqrt(pt_amount.checked_mul(underlying_amount).ok_or(NovaireMarketError::MathOverflow)?);
+            let initial_lp = integer_sqrt(
+                pt_amount
+                    .checked_mul(underlying_amount)
+                    .ok_or(NovaireMarketError::MathOverflow)?,
+            );
             if initial_lp <= MINIMUM_LIQUIDITY {
                 return Err(NovaireMarketError::InsufficientLiquidity);
             }
-            lp_shares = initial_lp.checked_sub(MINIMUM_LIQUIDITY).ok_or(NovaireMarketError::MathOverflow)?;
-            
+            lp_shares = initial_lp
+                .checked_sub(MINIMUM_LIQUIDITY)
+                .ok_or(NovaireMarketError::MathOverflow)?;
+
             // Permanently lock MINIMUM_LIQUIDITY by minting to the contract's own address
             storage::set_lp_balance(&env, &env.current_contract_address(), MINIMUM_LIQUIDITY);
             // We also need to add MINIMUM_LIQUIDITY to total_lp_shares, which happens below:
@@ -426,23 +541,41 @@ impl NovaireMarketplace {
             // we can set lp_shares = initial_lp - MINIMUM_LIQUIDITY, and manually add MINIMUM_LIQUIDITY to total_lp_shares here.
             total_lp_shares = MINIMUM_LIQUIDITY;
         } else {
-            let pt_ratio = pt_amount.checked_mul(total_lp_shares).ok_or(NovaireMarketError::MathOverflow)?
-                .checked_div(pt_reserves).ok_or(NovaireMarketError::MathOverflow)?;
-            let underlying_ratio = underlying_amount.checked_mul(total_lp_shares).ok_or(NovaireMarketError::MathOverflow)?
-                .checked_div(underlying_reserves).ok_or(NovaireMarketError::MathOverflow)?;
+            let pt_ratio = pt_amount
+                .checked_mul(total_lp_shares)
+                .ok_or(NovaireMarketError::MathOverflow)?
+                .checked_div(pt_reserves)
+                .ok_or(NovaireMarketError::MathOverflow)?;
+            let underlying_ratio = underlying_amount
+                .checked_mul(total_lp_shares)
+                .ok_or(NovaireMarketError::MathOverflow)?
+                .checked_div(underlying_reserves)
+                .ok_or(NovaireMarketError::MathOverflow)?;
             lp_shares = pt_ratio.min(underlying_ratio);
         }
 
-        pt_reserves = pt_reserves.checked_add(pt_amount).ok_or(NovaireMarketError::MathOverflow)?;
-        underlying_reserves = underlying_reserves.checked_add(underlying_amount).ok_or(NovaireMarketError::MathOverflow)?;
-        total_lp_shares = total_lp_shares.checked_add(lp_shares).ok_or(NovaireMarketError::MathOverflow)?;
+        pt_reserves = pt_reserves
+            .checked_add(pt_amount)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        underlying_reserves = underlying_reserves
+            .checked_add(underlying_amount)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        total_lp_shares = total_lp_shares
+            .checked_add(lp_shares)
+            .ok_or(NovaireMarketError::MathOverflow)?;
 
         storage::set_i128(&env, DataKey::PtReserves, pt_reserves);
         storage::set_i128(&env, DataKey::UnderlyingReserves, underlying_reserves);
         storage::set_i128(&env, DataKey::TotalLpShares, total_lp_shares);
 
         let current_lp = storage::get_lp_balance(&env, &provider);
-        storage::set_lp_balance(&env, &provider, current_lp.checked_add(lp_shares).ok_or(NovaireMarketError::MathOverflow)?);
+        storage::set_lp_balance(
+            &env,
+            &provider,
+            current_lp
+                .checked_add(lp_shares)
+                .ok_or(NovaireMarketError::MathOverflow)?,
+        );
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "add_liquidity"), provider),
@@ -489,7 +622,9 @@ impl NovaireMarketplace {
         yt_client.transfer(&provider, &env.current_contract_address(), &yt_amount);
 
         let mut yt_reserves = storage::get_i128(&env, DataKey::YtReserves).unwrap_or(0);
-        yt_reserves = yt_reserves.checked_add(yt_amount).ok_or(NovaireMarketError::MathOverflow)?;
+        yt_reserves = yt_reserves
+            .checked_add(yt_amount)
+            .ok_or(NovaireMarketError::MathOverflow)?;
         storage::set_i128(&env, DataKey::YtReserves, yt_reserves);
 
         env.events().publish(
@@ -521,24 +656,47 @@ impl NovaireMarketplace {
         let mut yt_reserves = storage::get_i128(&env, DataKey::YtReserves).unwrap_or(0);
         let mut total_lp_shares = storage::get_i128(&env, DataKey::TotalLpShares)?;
 
-        let pt_out = lp_shares.checked_mul(pt_reserves).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_div(total_lp_shares).ok_or(NovaireMarketError::MathOverflow)?;
-        let underlying_out = lp_shares.checked_mul(underlying_reserves).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_div(total_lp_shares).ok_or(NovaireMarketError::MathOverflow)?;
-        let yt_out = lp_shares.checked_mul(yt_reserves).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_div(total_lp_shares).ok_or(NovaireMarketError::MathOverflow)?;
+        let pt_out = lp_shares
+            .checked_mul(pt_reserves)
+            .ok_or(NovaireMarketError::MathOverflow)?
+            .checked_div(total_lp_shares)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        let underlying_out = lp_shares
+            .checked_mul(underlying_reserves)
+            .ok_or(NovaireMarketError::MathOverflow)?
+            .checked_div(total_lp_shares)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        let yt_out = lp_shares
+            .checked_mul(yt_reserves)
+            .ok_or(NovaireMarketError::MathOverflow)?
+            .checked_div(total_lp_shares)
+            .ok_or(NovaireMarketError::MathOverflow)?;
 
-        if (pt_reserves.checked_sub(pt_out).unwrap_or(0) < 1000 || underlying_reserves.checked_sub(underlying_out).unwrap_or(0) < 1000)
-            && total_lp_shares > lp_shares {
-                return Err(NovaireMarketError::BelowMinimumLiquidity);
-            }
+        if (pt_reserves.checked_sub(pt_out).unwrap_or(0) < 1000
+            || underlying_reserves.checked_sub(underlying_out).unwrap_or(0) < 1000)
+            && total_lp_shares > lp_shares
+        {
+            return Err(NovaireMarketError::BelowMinimumLiquidity);
+        }
 
-        pt_reserves = pt_reserves.checked_sub(pt_out).ok_or(NovaireMarketError::MathOverflow)?;
-        underlying_reserves = underlying_reserves.checked_sub(underlying_out).ok_or(NovaireMarketError::MathOverflow)?;
-        total_lp_shares = total_lp_shares.checked_sub(lp_shares).ok_or(NovaireMarketError::MathOverflow)?;
+        pt_reserves = pt_reserves
+            .checked_sub(pt_out)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        underlying_reserves = underlying_reserves
+            .checked_sub(underlying_out)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        total_lp_shares = total_lp_shares
+            .checked_sub(lp_shares)
+            .ok_or(NovaireMarketError::MathOverflow)?;
 
         yt_reserves = yt_reserves.checked_sub(yt_out).unwrap_or(0);
-        storage::set_lp_balance(&env, &provider, current_lp.checked_sub(lp_shares).ok_or(NovaireMarketError::MathOverflow)?);
+        storage::set_lp_balance(
+            &env,
+            &provider,
+            current_lp
+                .checked_sub(lp_shares)
+                .ok_or(NovaireMarketError::MathOverflow)?,
+        );
         storage::set_i128(&env, DataKey::PtReserves, pt_reserves);
         storage::set_i128(&env, DataKey::UnderlyingReserves, underlying_reserves);
         storage::set_i128(&env, DataKey::YtReserves, yt_reserves);
@@ -547,14 +705,18 @@ impl NovaireMarketplace {
         let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
         let underlying_addr = storage::get_address(&env, DataKey::Underlying)?;
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
-        
+
         let pt_client = token::Client::new(&env, &pt_token_addr);
         let underlying_client = token::Client::new(&env, &underlying_addr);
 
         pt_client.transfer(&env.current_contract_address(), &provider, &pt_out);
         underlying_client.transfer(&env.current_contract_address(), &provider, &underlying_out);
         if yt_out > 0 {
-            token::Client::new(&env, &yt_token_addr).transfer(&env.current_contract_address(), &provider, &yt_out);
+            token::Client::new(&env, &yt_token_addr).transfer(
+                &env.current_contract_address(),
+                &provider,
+                &yt_out,
+            );
         }
 
         env.events().publish(
@@ -586,8 +748,14 @@ impl NovaireMarketplace {
         let a_pool = compute_a_pool(&env, maturity, underlying_reserves, pt_reserves)?;
         let k = compute_k(a_pool, underlying_reserves, pt_reserves)?;
 
-        let underlying_in_after_fee = underlying_in.checked_mul(997).ok_or(NovaireMarketError::MathOverflow)?.checked_div(1000).ok_or(NovaireMarketError::MathOverflow)?;
-        let new_underlying = underlying_reserves.checked_add(underlying_in_after_fee).ok_or(NovaireMarketError::MathOverflow)?;
+        let underlying_in_after_fee = underlying_in
+            .checked_mul(997)
+            .ok_or(NovaireMarketError::MathOverflow)?
+            .checked_div(1000)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        let new_underlying = underlying_reserves
+            .checked_add(underlying_in_after_fee)
+            .ok_or(NovaireMarketError::MathOverflow)?;
 
         let new_pt = get_y(a_pool, k, new_underlying)?;
         let pt_out = pt_reserves.checked_sub(new_pt).unwrap_or(0);
@@ -603,12 +771,24 @@ impl NovaireMarketplace {
         // Fix H3: Update TWAP using the PRE-SWAP spot price for the elapsed interval
         Self::update_twap(&env, a_pool, pt_reserves, underlying_reserves)?;
 
-        storage::set_i128(&env, DataKey::PtReserves, pt_reserves.checked_sub(pt_out).ok_or(NovaireMarketError::MathOverflow)?);
-        storage::set_i128(&env, DataKey::UnderlyingReserves, underlying_reserves.checked_add(underlying_in).ok_or(NovaireMarketError::MathOverflow)?);
+        storage::set_i128(
+            &env,
+            DataKey::PtReserves,
+            pt_reserves
+                .checked_sub(pt_out)
+                .ok_or(NovaireMarketError::MathOverflow)?,
+        );
+        storage::set_i128(
+            &env,
+            DataKey::UnderlyingReserves,
+            underlying_reserves
+                .checked_add(underlying_in)
+                .ok_or(NovaireMarketError::MathOverflow)?,
+        );
 
         let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
         let underlying_addr = storage::get_address(&env, DataKey::Underlying)?;
-        
+
         let pt_client = token::Client::new(&env, &pt_token_addr);
         let underlying_client = token::Client::new(&env, &underlying_addr);
 
@@ -644,8 +824,14 @@ impl NovaireMarketplace {
         let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
         let k = compute_k(a_pool, pt_reserves, underlying_reserves)?;
 
-        let pt_in_after_fee = pt_in.checked_mul(997).ok_or(NovaireMarketError::MathOverflow)?.checked_div(1000).ok_or(NovaireMarketError::MathOverflow)?;
-        let new_pt = pt_reserves.checked_add(pt_in_after_fee).ok_or(NovaireMarketError::MathOverflow)?;
+        let pt_in_after_fee = pt_in
+            .checked_mul(997)
+            .ok_or(NovaireMarketError::MathOverflow)?
+            .checked_div(1000)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        let new_pt = pt_reserves
+            .checked_add(pt_in_after_fee)
+            .ok_or(NovaireMarketError::MathOverflow)?;
 
         let new_underlying = get_y(a_pool, k, new_pt)?;
         let underlying_out = underlying_reserves.checked_sub(new_underlying).unwrap_or(0);
@@ -661,12 +847,24 @@ impl NovaireMarketplace {
         // Fix H3: Update TWAP using the PRE-SWAP spot price for the elapsed interval
         Self::update_twap(&env, a_pool, pt_reserves, underlying_reserves)?;
 
-        storage::set_i128(&env, DataKey::PtReserves, pt_reserves.checked_add(pt_in).ok_or(NovaireMarketError::MathOverflow)?);
-        storage::set_i128(&env, DataKey::UnderlyingReserves, underlying_reserves.checked_sub(underlying_out).ok_or(NovaireMarketError::MathOverflow)?);
+        storage::set_i128(
+            &env,
+            DataKey::PtReserves,
+            pt_reserves
+                .checked_add(pt_in)
+                .ok_or(NovaireMarketError::MathOverflow)?,
+        );
+        storage::set_i128(
+            &env,
+            DataKey::UnderlyingReserves,
+            underlying_reserves
+                .checked_sub(underlying_out)
+                .ok_or(NovaireMarketError::MathOverflow)?,
+        );
 
         let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
         let underlying_addr = storage::get_address(&env, DataKey::Underlying)?;
-        
+
         let pt_client = token::Client::new(&env, &pt_token_addr);
         let underlying_client = token::Client::new(&env, &underlying_addr);
 
@@ -708,7 +906,13 @@ impl NovaireMarketplace {
         // lag to arbitrage.
         let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
         let k = compute_k(a_pool, pt_reserves, underlying_reserves)?;
-        let raw_yt_out = solve_yt_out_for_underlying_in(a_pool, k, pt_reserves, underlying_reserves, underlying_in)?;
+        let raw_yt_out = solve_yt_out_for_underlying_in(
+            a_pool,
+            k,
+            pt_reserves,
+            underlying_reserves,
+            underlying_in,
+        )?;
         let actual_yt_out = apply_output_fee(raw_yt_out)?;
 
         if actual_yt_out <= 0 {
@@ -723,7 +927,9 @@ impl NovaireMarketplace {
             return Err(NovaireMarketError::InsufficientLiquidity);
         }
 
-        yt_reserves = yt_reserves.checked_sub(actual_yt_out).ok_or(NovaireMarketError::MathOverflow)?;
+        yt_reserves = yt_reserves
+            .checked_sub(actual_yt_out)
+            .ok_or(NovaireMarketError::MathOverflow)?;
         storage::set_i128(&env, DataKey::YtReserves, yt_reserves);
 
         // TWAP retained purely as an analytics/oracle signal (see
@@ -733,12 +939,17 @@ impl NovaireMarketplace {
         Self::update_twap(&env, twap_a_pool, pt_reserves, underlying_reserves)?;
 
         // C1 fix: credit underlying reserves with incoming amount
-        storage::set_i128(&env, DataKey::UnderlyingReserves,
-            underlying_reserves.checked_add(underlying_in).ok_or(NovaireMarketError::MathOverflow)?);
+        storage::set_i128(
+            &env,
+            DataKey::UnderlyingReserves,
+            underlying_reserves
+                .checked_add(underlying_in)
+                .ok_or(NovaireMarketError::MathOverflow)?,
+        );
 
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let underlying_addr = storage::get_address(&env, DataKey::Underlying)?;
-        
+
         let yt_client = token::Client::new(&env, &yt_token_addr);
         let underlying_client = token::Client::new(&env, &underlying_addr);
 
@@ -762,7 +973,13 @@ impl NovaireMarketplace {
     ) -> Result<i128, NovaireMarketError> {
         seller.require_auth();
         if yt_in <= 0 || min_underlying_out < 0 {
-            env.events().publish((soroban_sdk::Symbol::new(&env, "diag"), soroban_sdk::Symbol::new(&env, "zero_input")), yt_in);
+            env.events().publish(
+                (
+                    soroban_sdk::Symbol::new(&env, "diag"),
+                    soroban_sdk::Symbol::new(&env, "zero_input"),
+                ),
+                yt_in,
+            );
             return Err(NovaireMarketError::ZeroInput);
         }
 
@@ -778,35 +995,51 @@ impl NovaireMarketplace {
         // buying back the paired PT leg from that exact curve.
         let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
         let k = compute_k(a_pool, pt_reserves, underlying_reserves)?;
-        let actual_underlying_out = compute_yt_sell_proceeds(a_pool, k, pt_reserves, underlying_reserves, yt_in)?;
+        let actual_underlying_out =
+            compute_yt_sell_proceeds(a_pool, k, pt_reserves, underlying_reserves, yt_in)?;
 
         if actual_underlying_out <= 0 || actual_underlying_out > underlying_reserves {
             return Err(NovaireMarketError::InsufficientLiquidity);
         }
         if actual_underlying_out < min_underlying_out {
-            env.events().publish((soroban_sdk::Symbol::new(&env, "diag_slip"), actual_underlying_out, min_underlying_out), 0);
+            env.events().publish(
+                (
+                    soroban_sdk::Symbol::new(&env, "diag_slip"),
+                    actual_underlying_out,
+                    min_underlying_out,
+                ),
+                0,
+            );
             return Err(NovaireMarketError::SlippageExceeded);
         }
 
         let mut yt_reserves = storage::get_i128(&env, DataKey::YtReserves).unwrap_or(0);
-        yt_reserves = yt_reserves.checked_add(yt_in).ok_or(NovaireMarketError::MathOverflow)?;
+        yt_reserves = yt_reserves
+            .checked_add(yt_in)
+            .ok_or(NovaireMarketError::MathOverflow)?;
         storage::set_i128(&env, DataKey::YtReserves, yt_reserves);
 
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let underlying_addr = storage::get_address(&env, DataKey::Underlying)?;
-        
+
         let yt_client = token::Client::new(&env, &yt_token_addr);
         let underlying_client = token::Client::new(&env, &underlying_addr);
 
         yt_client.transfer(&seller, &env.current_contract_address(), &yt_in);
-        underlying_client.transfer(&env.current_contract_address(), &seller, &actual_underlying_out);
+        underlying_client.transfer(
+            &env.current_contract_address(),
+            &seller,
+            &actual_underlying_out,
+        );
 
         // TWAP retained purely as an analytics/oracle signal — no longer
         // part of the YT execution pricing path.
         let twap_a_pool = compute_a_pool(&env, maturity, underlying_reserves, pt_reserves)?;
         Self::update_twap(&env, twap_a_pool, pt_reserves, underlying_reserves)?;
 
-        let new_underlying_reserves = underlying_reserves.checked_sub(actual_underlying_out).ok_or(NovaireMarketError::MathOverflow)?;
+        let new_underlying_reserves = underlying_reserves
+            .checked_sub(actual_underlying_out)
+            .ok_or(NovaireMarketError::MathOverflow)?;
         storage::set_i128(&env, DataKey::UnderlyingReserves, new_underlying_reserves);
 
         Self::assert_invariant(&env)?;
@@ -821,17 +1054,25 @@ impl NovaireMarketplace {
     pub fn claim_amm_yield(env: Env) -> Result<i128, NovaireMarketError> {
         let tokenizer_addr = storage::get_address(&env, DataKey::Tokenizer)?;
         let tokenizer_client = TokenizerClient::new(&env, &tokenizer_addr);
-        
+
         let claimed = tokenizer_client.claim_yield(&env.current_contract_address());
-        
+
         if claimed > 0 {
             let mut underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
-            underlying_reserves = underlying_reserves.checked_add(claimed).ok_or(NovaireMarketError::MathOverflow)?;
+            underlying_reserves = underlying_reserves
+                .checked_add(claimed)
+                .ok_or(NovaireMarketError::MathOverflow)?;
             storage::set_i128(&env, DataKey::UnderlyingReserves, underlying_reserves);
-            
-            env.events().publish((soroban_sdk::Symbol::new(&env, "amm_yield"), env.current_contract_address()), claimed);
+
+            env.events().publish(
+                (
+                    soroban_sdk::Symbol::new(&env, "amm_yield"),
+                    env.current_contract_address(),
+                ),
+                claimed,
+            );
         }
-        
+
         Self::assert_invariant(&env)?;
         Ok(claimed)
     }
@@ -848,7 +1089,8 @@ impl NovaireMarketplace {
         let stored_twap = storage::get_i128(&env, DataKey::ImpliedRateTwap).unwrap_or(0);
         if stored_twap == 0 {
             let pt_reserves = storage::get_i128(&env, DataKey::PtReserves).unwrap_or(0);
-            let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves).unwrap_or(0);
+            let underlying_reserves =
+                storage::get_i128(&env, DataKey::UnderlyingReserves).unwrap_or(0);
             let maturity = storage::get_u32(&env, DataKey::MaturityLedger)?;
             let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
             return get_spot_price(a_pool, pt_reserves, underlying_reserves);
@@ -897,7 +1139,10 @@ impl NovaireMarketplace {
     /// useful for frontends/routers to preview size-dependent slippage
     /// before submitting a swap. Mirrors `swap_underlying_for_yt`'s pricing
     /// exactly (same curve, same fee), but touches no state.
-    pub fn quote_underlying_for_yt(env: Env, underlying_in: i128) -> Result<i128, NovaireMarketError> {
+    pub fn quote_underlying_for_yt(
+        env: Env,
+        underlying_in: i128,
+    ) -> Result<i128, NovaireMarketError> {
         if underlying_in <= 0 {
             return Err(NovaireMarketError::ZeroInput);
         }
@@ -906,7 +1151,13 @@ impl NovaireMarketplace {
         let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
         let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
         let k = compute_k(a_pool, pt_reserves, underlying_reserves)?;
-        let raw_yt_out = solve_yt_out_for_underlying_in(a_pool, k, pt_reserves, underlying_reserves, underlying_in)?;
+        let raw_yt_out = solve_yt_out_for_underlying_in(
+            a_pool,
+            k,
+            pt_reserves,
+            underlying_reserves,
+            underlying_in,
+        )?;
         apply_output_fee(raw_yt_out)
     }
 
@@ -931,16 +1182,23 @@ impl NovaireMarketplace {
         Ok((pt, under, yt))
     }
 
-    fn update_twap(env: &Env, a_pool: i128, pt_reserves: i128, underlying_reserves: i128) -> Result<(), NovaireMarketError> {
+    fn update_twap(
+        env: &Env,
+        a_pool: i128,
+        pt_reserves: i128,
+        underlying_reserves: i128,
+    ) -> Result<(), NovaireMarketError> {
         let current_spot = get_spot_price(a_pool, pt_reserves, underlying_reserves)?;
         let current_ledger = env.ledger().sequence();
         let last_ledger = storage::get_u32(env, DataKey::LastTwapLedger).unwrap_or(0);
-        
+
         let old_twap = storage::get_i128(env, DataKey::ImpliedRateTwap).unwrap_or(0);
 
         if old_twap == 0 || last_ledger == 0 {
             storage::set_i128(env, DataKey::ImpliedRateTwap, current_spot);
-            env.storage().instance().set(&DataKey::LastTwapLedger, &current_ledger);
+            env.storage()
+                .instance()
+                .set(&DataKey::LastTwapLedger, &current_ledger);
             return Ok(());
         }
 
@@ -951,13 +1209,19 @@ impl NovaireMarketplace {
         let elapsed = current_ledger.saturating_sub(last_ledger) as i128;
         let weight_old = 20i128;
         let weight_new = elapsed.min(weight_old);
-        
-        let new_twap = old_twap.checked_mul(weight_old.checked_sub(weight_new).unwrap_or(0)).unwrap_or(0)
-            .checked_add(current_spot.checked_mul(weight_new).unwrap_or(0)).unwrap_or(0)
-            .checked_div(weight_old).unwrap_or(0);
+
+        let new_twap = old_twap
+            .checked_mul(weight_old.checked_sub(weight_new).unwrap_or(0))
+            .unwrap_or(0)
+            .checked_add(current_spot.checked_mul(weight_new).unwrap_or(0))
+            .unwrap_or(0)
+            .checked_div(weight_old)
+            .unwrap_or(0);
 
         storage::set_i128(env, DataKey::ImpliedRateTwap, new_twap);
-        env.storage().instance().set(&DataKey::LastTwapLedger, &current_ledger);
+        env.storage()
+            .instance()
+            .set(&DataKey::LastTwapLedger, &current_ledger);
         Ok(())
     }
 
@@ -965,19 +1229,19 @@ impl NovaireMarketplace {
         let pt = storage::get_i128(env, DataKey::PtReserves)?;
         let under = storage::get_i128(env, DataKey::UnderlyingReserves)?;
         let total_lp = storage::get_i128(env, DataKey::TotalLpShares)?;
-        
+
         if (pt == 0 && under > 0) || (under == 0 && pt > 0) {
             return Err(NovaireMarketError::InsufficientLiquidity); // 2
         }
         if total_lp == 0 && (pt > 0 || under > 0) {
             return Err(NovaireMarketError::ZeroInput); // 3
         }
-        
+
         let pt_token_addr = storage::get_address(env, DataKey::PtToken)?;
         let underlying_addr = storage::get_address(env, DataKey::Underlying)?;
         let pt_client = token::Client::new(env, &pt_token_addr);
         let underlying_client = token::Client::new(env, &underlying_addr);
-        
+
         let contract_addr = env.current_contract_address();
         let actual_pt = pt_client.balance(&contract_addr);
         let actual_underlying = underlying_client.balance(&contract_addr);
@@ -993,28 +1257,38 @@ impl NovaireMarketplace {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, Env,
+    };
 
-    use sy_wrapper::{SyWrapper, SyWrapperClient as RealSyWrapperClient};
-    use pt_token::{PtToken, PtTokenClient as RealPtClient};
-    use yt_token::{YtToken, YtTokenClient as RealYtClient};
-    use vault::{Vault, VaultClient as RealVaultClient};
     use maturity_engine::{MaturityEngine, MaturityEngineClient as RealMaturityEngineClient};
+    use pt_token::{PtToken, PtTokenClient as RealPtClient};
+    use sy_wrapper::{SyWrapper, SyWrapperClient as RealSyWrapperClient};
+    use vault::{Vault, VaultClient as RealVaultClient};
+    use yt_token::{YtToken, YtTokenClient as RealYtClient};
 
     // ── CONSTANTS ────────────────────────────────────────────────────────────
     const CREATED_AT: u32 = 10;
     const MATURITY_AT: u32 = 1_000;
     // PT > underlying → PT is abundant (cheap) → spot price < 1e9 (discounted), economically correct
-    const BOOTSTRAP_PT: i128 = 1_000_000_000;    // same as face value
-    const BOOTSTRAP_UNDER: i128 = 999_500_000;   // 0.05% less than PT → tiny discount
-    const SCALE: i128 = 1_000_000_000;            // 1e9 fixed-point face value
+    const BOOTSTRAP_PT: i128 = 1_000_000_000; // same as face value
+    const BOOTSTRAP_UNDER: i128 = 999_500_000; // 0.05% less than PT → tiny discount
+    const SCALE: i128 = 1_000_000_000; // 1e9 fixed-point face value
 
     // ── SHARED SETUP ─────────────────────────────────────────────────────────
-    fn setup_env() -> (Env, Address, Address, Address, NovaireMarketplaceClient<'static>, RealSyWrapperClient<'static>, token::StellarAssetClient<'static>) {
+    fn setup_env() -> (
+        Env,
+        Address,
+        Address,
+        Address,
+        NovaireMarketplaceClient<'static>,
+        RealSyWrapperClient<'static>,
+        token::StellarAssetClient<'static>,
+    ) {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
 
@@ -1053,7 +1327,14 @@ mod tests {
         });
 
         let maturity_epoch_id = maturity_engine_client.open_epoch(&MATURITY_AT);
-        yt_client.initialize(&admin, &Address::generate(&env), &1_000, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
+        yt_client.initialize(
+            &admin,
+            &Address::generate(&env),
+            &1_000,
+            &sy_contract_id,
+            &maturity_engine_id,
+            &maturity_epoch_id,
+        );
 
         market_client.initialize(
             &admin,
@@ -1067,7 +1348,15 @@ mod tests {
             &maturity_epoch_id,
         );
 
-        (env, admin, underlying_token, pt_contract_id, market_client, sy_client, token_admin_client)
+        (
+            env,
+            admin,
+            underlying_token,
+            pt_contract_id,
+            market_client,
+            sy_client,
+            token_admin_client,
+        )
     }
 
     /// Seed bootstrap-equivalent liquidity and return the provider address.
@@ -1100,11 +1389,24 @@ mod tests {
         assert_eq!(yt0, 0, "Fresh market must have 0 YT reserves");
 
         // Seed exactly once with bootstrap values.
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         let (pt, under, _yt) = market_client.get_reserves();
-        assert_eq!(pt, BOOTSTRAP_PT, "PT reserves must exactly match bootstrap seed");
-        assert_eq!(under, BOOTSTRAP_UNDER, "Underlying reserves must exactly match bootstrap seed");
+        assert_eq!(
+            pt, BOOTSTRAP_PT,
+            "PT reserves must exactly match bootstrap seed"
+        );
+        assert_eq!(
+            under, BOOTSTRAP_UNDER,
+            "Underlying reserves must exactly match bootstrap seed"
+        );
     }
 
     // ── TEST 2: TWAP equals Spot Price immediately after bootstrap ───────────
@@ -1112,7 +1414,14 @@ mod tests {
     #[test]
     fn test_2_twap_equals_spot_at_bootstrap() {
         let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         // Advance one ledger so a swap can update the TWAP.
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
@@ -1132,7 +1441,13 @@ mod tests {
 
         // Fix H3: The TWAP now records the PRE-SWAP spot price for the elapsed interval, not the POST-SWAP spot price.
         let diff = (twap - spot_before).abs();
-        assert!(diff <= 3, "TWAP ({}) must equal pre-swap spot price ({}) on first initialization (diff={})", twap, spot_before, diff);
+        assert!(
+            diff <= 3,
+            "TWAP ({}) must equal pre-swap spot price ({}) on first initialization (diff={})",
+            twap,
+            spot_before,
+            diff
+        );
     }
 
     // ── TEST 3: TWAP ≤ Face Value invariant ─────────────────────────────────
@@ -1140,7 +1455,14 @@ mod tests {
     #[test]
     fn test_3_twap_below_face_value() {
         let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: CREATED_AT + 1,
@@ -1152,7 +1474,10 @@ mod tests {
 
         let twap = market_client.get_twap_rate();
         assert!(twap > 0, "TWAP must be positive");
-        assert!(twap <= SCALE, "TWAP must be <= face value (1e9) — inverse price bug re-emerged");
+        assert!(
+            twap <= SCALE,
+            "TWAP must be <= face value (1e9) — inverse price bug re-emerged"
+        );
 
         let spot = market_client.get_pt_price();
         assert!(spot > 0, "Spot Price must be positive");
@@ -1164,7 +1489,14 @@ mod tests {
     #[test]
     fn test_4_ema_converges_toward_spot() {
         let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: CREATED_AT + 1,
@@ -1196,7 +1528,14 @@ mod tests {
     #[test]
     fn test_5_same_ledger_twap_idempotent() {
         let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: 50,
@@ -1211,7 +1550,10 @@ mod tests {
         market_client.swap_underlying_for_pt(&buyer, &1_000, &1);
         let twap_second = market_client.get_twap_rate();
 
-        assert_eq!(twap_first, twap_second, "TWAP must not change for same-ledger swaps");
+        assert_eq!(
+            twap_first, twap_second,
+            "TWAP must not change for same-ledger swaps"
+        );
     }
 
     // ── TEST 6: Flash-loan manipulation resistance ───────────────────────────
@@ -1219,7 +1561,14 @@ mod tests {
     #[test]
     fn test_6_flash_loan_twap_resistance() {
         let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: 100,
@@ -1250,7 +1599,10 @@ mod tests {
             twap_after_attack - twap_baseline
         };
         // TWAP shift <= 100% of baseline is a generous upper bound; real EMA bound is 5%.
-        assert!(twap_delta <= twap_baseline, "TWAP moved more than 100% from baseline — EMA broken");
+        assert!(
+            twap_delta <= twap_baseline,
+            "TWAP moved more than 100% from baseline — EMA broken"
+        );
         assert!(spot_after_attack > 0 && spot_after_attack <= SCALE);
         assert!(twap_after_attack > 0 && twap_after_attack <= SCALE);
     }
@@ -1260,13 +1612,20 @@ mod tests {
     #[test]
     fn test_6b_h3_twap_temporal_ordering_regression() {
         let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: 100,
             ..env.ledger().get()
         });
-        
+
         let baseline_buyer = Address::generate(&env);
         token_admin_client.mint(&baseline_buyer, &100_000_000);
         market_client.swap_underlying_for_pt(&baseline_buyer, &1_000, &1);
@@ -1278,8 +1637,8 @@ mod tests {
             ..env.ledger().get()
         });
 
-        // The pre-swap spot price at sequence 120 will be slightly different from sequence 100 
-        // because the YieldSpace A-pool depends on time to maturity. 
+        // The pre-swap spot price at sequence 120 will be slightly different from sequence 100
+        // because the YieldSpace A-pool depends on time to maturity.
         // We capture it right before the attack to verify TWAP accurately captures the PRE-swap price.
         let spot_baseline = market_client.get_pt_price();
 
@@ -1287,7 +1646,7 @@ mod tests {
         let pt_client = pt_token::PtTokenClient::new(&env, &pt_token);
         pt_client.mint(&attacker, &100_000_000);
         token_admin_client.mint(&attacker, &100_000_000);
-        
+
         // Attacker dumps massive amount of PT to crash spot price
         market_client.swap_pt_for_underlying(&attacker, &50_000_000, &1);
 
@@ -1297,16 +1656,27 @@ mod tests {
         // The H3 fix ensures the TWAP captures the PRE-SWAP spot price for the elapsed 20 ledgers.
         // Since no trades happened for 20 ledgers, the pre-swap spot price is exactly the spot_baseline!
         // Therefore, twap_after_attack must exactly equal spot_baseline, and NOT spot_after_attack.
-        
+
         // Allow tiny rounding difference (±3)
         let diff = (twap_after_attack - spot_baseline).abs();
-        assert!(diff <= 3, "H3 FIX FAILED: TWAP ({}) did not capture pre-swap spot price ({})", twap_after_attack, spot_baseline);
-        
+        assert!(
+            diff <= 3,
+            "H3 FIX FAILED: TWAP ({}) did not capture pre-swap spot price ({})",
+            twap_after_attack,
+            spot_baseline
+        );
+
         // Ensure the post-swap spot price is severely manipulated (to prove the attack happened)
-        assert!(spot_after_attack < spot_baseline - 100_000, "Spot price was not manipulated enough");
-        
+        assert!(
+            spot_after_attack < spot_baseline - 100_000,
+            "Spot price was not manipulated enough"
+        );
+
         // Ensure the TWAP did NOT collapse to the manipulated spot price
-        assert!(twap_after_attack > spot_after_attack + 100_000, "H3 VULNERABILITY: TWAP collapsed to manipulated spot price!");
+        assert!(
+            twap_after_attack > spot_after_attack + 100_000,
+            "H3 VULNERABILITY: TWAP collapsed to manipulated spot price!"
+        );
     }
 
     // ── TEST 7: No reciprocal pricing regression ─────────────────────────────
@@ -1314,7 +1684,14 @@ mod tests {
     #[test]
     fn test_7_no_reciprocal_twap_regression() {
         let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         let buyer = Address::generate(&env);
         token_admin_client.mint(&buyer, &2_000_000_000);
@@ -1336,7 +1713,9 @@ mod tests {
             assert!(
                 twap <= SCALE,
                 "Iteration {}: TWAP = {} exceeded SCALE = {} — reciprocal price bug re-emerged!",
-                i, twap, SCALE
+                i,
+                twap,
+                SCALE
             );
             assert!(twap > 0, "Iteration {}: TWAP must be positive", i);
         }
@@ -1347,7 +1726,14 @@ mod tests {
     #[test]
     fn test_8_twap_and_spot_directional_agreement() {
         let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: 500,
@@ -1386,7 +1772,8 @@ mod tests {
 
         let buyer = Address::generate(&env);
         token_admin_client.mint(&buyer, &1_000_000);
-        market_client.swap_underlying_for_pt(&buyer, &1_000_000, &2_000_000_000); // Impossible
+        market_client.swap_underlying_for_pt(&buyer, &1_000_000, &2_000_000_000);
+        // Impossible
     }
 
     // ── TEST 10: Near-maturity pricing converges toward 1:1 ─────────────────
@@ -1405,8 +1792,14 @@ mod tests {
         });
 
         let pt_price = market_client.get_pt_price();
-        assert!(pt_price > 900_000_000, "Near maturity PT price must be close to face value");
-        assert!(pt_price <= SCALE, "Near maturity PT price must not exceed face value");
+        assert!(
+            pt_price > 900_000_000,
+            "Near maturity PT price must be close to face value"
+        );
+        assert!(
+            pt_price <= SCALE,
+            "Near maturity PT price must not exceed face value"
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -1414,7 +1807,15 @@ mod tests {
     // ══════════════════════════════════════════════════════════════════════════
 
     /// Extended setup that also returns the YT token address.
-    fn setup_env_with_yt() -> (Env, Address, Address, Address, Address, NovaireMarketplaceClient<'static>, token::StellarAssetClient<'static>) {
+    fn setup_env_with_yt() -> (
+        Env,
+        Address,
+        Address,
+        Address,
+        Address,
+        NovaireMarketplaceClient<'static>,
+        token::StellarAssetClient<'static>,
+    ) {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
 
@@ -1453,7 +1854,14 @@ mod tests {
         });
 
         let maturity_epoch_id = maturity_engine_client.open_epoch(&MATURITY_AT);
-        yt_client.initialize(&admin, &Address::generate(&env), &1_000, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
+        yt_client.initialize(
+            &admin,
+            &Address::generate(&env),
+            &1_000,
+            &sy_contract_id,
+            &maturity_engine_id,
+            &maturity_epoch_id,
+        );
 
         market_client.initialize(
             &admin,
@@ -1467,7 +1875,15 @@ mod tests {
             &maturity_epoch_id,
         );
 
-        (env, admin, underlying_token, pt_contract_id, yt_contract_id, market_client, token_admin_client)
+        (
+            env,
+            admin,
+            underlying_token,
+            pt_contract_id,
+            yt_contract_id,
+            market_client,
+            token_admin_client,
+        )
     }
 
     /// Seed YT reserves by having a seller swap YT into the marketplace.
@@ -1490,8 +1906,16 @@ mod tests {
     // ── C1-TEST 1: YT purchase updates underlying and PT reserves ────────────
     #[test]
     fn test_c1_yt_purchase_updates_reserves() {
-        let (env, _, _underlying_token, pt_token, yt_token, market_client, token_admin_client) = setup_env_with_yt();
-        let _provider = bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        let (env, _, _underlying_token, pt_token, yt_token, market_client, token_admin_client) =
+            setup_env_with_yt();
+        let _provider = bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: CREATED_AT + 1,
@@ -1540,8 +1964,16 @@ mod tests {
     // ── C1-TEST 2: LP withdrawal after YT swap recovers all underlying ───────
     #[test]
     fn test_c1_lp_withdrawal_after_yt_swap() {
-        let (env, _, underlying_token, pt_token, yt_token, market_client, token_admin_client) = setup_env_with_yt();
-        let provider = bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        let (env, _, underlying_token, pt_token, yt_token, market_client, token_admin_client) =
+            setup_env_with_yt();
+        let provider = bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: CREATED_AT + 1,
@@ -1571,7 +2003,8 @@ mod tests {
         let lp_balance = env.as_contract(&market_client.address, || {
             storage::get_lp_balance(&env, &provider)
         });
-        let (_pt_out, underlying_out, _yt_out_lp) = market_client.remove_liquidity(&provider, &lp_balance);
+        let (_pt_out, underlying_out, _yt_out_lp) =
+            market_client.remove_liquidity(&provider, &lp_balance);
 
         // The withdrawn underlying must reflect the YT buyer's deposit
         assert!(
@@ -1584,8 +2017,16 @@ mod tests {
     // ── C1-TEST 3: Pricing is synchronized after YT swap ─────────────────────
     #[test]
     fn test_c1_pricing_after_yt_swap() {
-        let (env, _, _underlying_token, pt_token, yt_token, market_client, token_admin_client) = setup_env_with_yt();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        let (env, _, _underlying_token, pt_token, yt_token, market_client, token_admin_client) =
+            setup_env_with_yt();
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: CREATED_AT + 1,
@@ -1609,14 +2050,26 @@ mod tests {
         );
 
         // Price must remain valid (positive and ≤ SCALE)
-        assert!(price_after > 0, "C1: PT price out of valid range after YT swap: {}", price_after);
+        assert!(
+            price_after > 0,
+            "C1: PT price out of valid range after YT swap: {}",
+            price_after
+        );
     }
 
     // ── C1-TEST 4: Sequential PT buy + YT buy + PT sell consistency ──────────
     #[test]
     fn test_c1_sequential_swaps_reserve_consistency() {
-        let (env, _, _underlying_token, pt_token, yt_token, market_client, token_admin_client) = setup_env_with_yt();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        let (env, _, _underlying_token, pt_token, yt_token, market_client, token_admin_client) =
+            setup_env_with_yt();
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: CREATED_AT + 1,
@@ -1639,8 +2092,14 @@ mod tests {
         let (pt_r2, u_r2, yt_r2) = market_client.get_reserves();
 
         // After YT buy: underlying must have increased, PT must have increased
-        assert!(u_r2 > u_r1, "C1: Underlying reserves must increase after YT buy");
-        assert!(pt_r2 == pt_r1, "C1: PT reserves must NOT increase after YT buy without minting");
+        assert!(
+            u_r2 > u_r1,
+            "C1: Underlying reserves must increase after YT buy"
+        );
+        assert!(
+            pt_r2 == pt_r1,
+            "C1: PT reserves must NOT increase after YT buy without minting"
+        );
         assert!(yt_r2 < yt_r1, "C1: YT reserves must decrease after YT buy");
 
         // 3) Sell PT for underlying
@@ -1653,16 +2112,23 @@ mod tests {
 
         // After PT sell: PT reserves increase, underlying reserves decrease
         assert!(pt_r3 > pt_r2, "PT reserves must increase after selling PT");
-        assert!(u_r3 < u_r2, "Underlying reserves must decrease after PT sale");
+        assert!(
+            u_r3 < u_r2,
+            "Underlying reserves must decrease after PT sale"
+        );
 
         // All reserves must be positive throughout
-        assert!(pt_r3 > 0 && u_r3 > 0, "Reserves must remain positive after sequential swaps");
+        assert!(
+            pt_r3 > 0 && u_r3 > 0,
+            "Reserves must remain positive after sequential swaps"
+        );
     }
 
     // ── C1-TEST 5: Multiple LP providers + YT swap fairness ──────────────────
     #[test]
     fn test_c1_multiple_lps_yt_swap_fairness() {
-        let (env, _, _underlying_token, pt_token, yt_token, market_client, token_admin_client) = setup_env_with_yt();
+        let (env, _, _underlying_token, pt_token, yt_token, market_client, token_admin_client) =
+            setup_env_with_yt();
 
         // LP1 adds liquidity
         let lp1 = Address::generate(&env);
@@ -1702,7 +2168,10 @@ mod tests {
 
         // Both LPs had equal shares, so their underlying withdrawals should be roughly equal (allow for rounding differences)
         let diff = (u_out1 - u_out2).abs();
-        assert!(diff <= 1000, "C1: Equal LPs must receive roughly equal underlying");
+        assert!(
+            diff <= 1000,
+            "C1: Equal LPs must receive roughly equal underlying"
+        );
 
         // Each LP must get more underlying than deposited (buyer added 200,000 underlying)
         assert!(
@@ -1718,28 +2187,53 @@ mod tests {
 
     /// Deep bootstrap + large YT reserve so whale-sized trades don't hit
     /// `InsufficientLiquidity` before we can observe slippage behavior.
-    fn setup_deep_market() -> (Env, Address, Address, Address, Address, NovaireMarketplaceClient<'static>, token::StellarAssetClient<'static>) {
-        let (env, admin, underlying_token, pt_token, yt_token, market_client, token_admin_client) = setup_env_with_yt();
+    fn setup_deep_market() -> (
+        Env,
+        Address,
+        Address,
+        Address,
+        Address,
+        NovaireMarketplaceClient<'static>,
+        token::StellarAssetClient<'static>,
+    ) {
+        let (env, admin, underlying_token, pt_token, yt_token, market_client, token_admin_client) =
+            setup_env_with_yt();
         // A realistic (~20%) discount, not a near-par corner case: at a
         // near-par (~0.05%) discount the 0.3% swap fee dominates the actual
         // yield discount and produces pathological YT leverage that isn't
         // representative of normal market conditions.
         let deep_pt: i128 = 100_000_000_000;
         let deep_under: i128 = 80_000_000_000;
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, deep_pt, deep_under);
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            deep_pt,
+            deep_under,
+        );
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: CREATED_AT + 1,
             ..env.ledger().get()
         });
         seed_yt_reserves(&env, &market_client, &yt_token, 50_000_000_000);
-        (env, admin, underlying_token, pt_token, yt_token, market_client, token_admin_client)
+        (
+            env,
+            admin,
+            underlying_token,
+            pt_token,
+            yt_token,
+            market_client,
+            token_admin_client,
+        )
     }
 
     // ── YT-TEST 1: size-dependent slippage — larger trades pay a strictly
     // worse average price per YT than smaller ones ──────────────────────────
     #[test]
     fn test_yt_size_dependent_slippage() {
-        let (env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) = setup_deep_market();
+        let (env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) =
+            setup_deep_market();
 
         let small_in: i128 = 1_000;
         let medium_in: i128 = 1_000_000;
@@ -1749,12 +2243,14 @@ mod tests {
         let medium_out = market_client.quote_underlying_for_yt(&medium_in);
         let whale_out = market_client.quote_underlying_for_yt(&whale_in);
 
-        assert!(small_out > 0 && medium_out > 0 && whale_out > 0, "all quotes must be positive");
+        assert!(
+            small_out > 0 && medium_out > 0 && whale_out > 0,
+            "all quotes must be positive"
+        );
 
         // Average price paid per unit YT (scaled 1e9), must increase with size.
-        let avg_price = |underlying_in: i128, yt_out: i128| -> i128 {
-            underlying_in * 1_000_000_000 / yt_out
-        };
+        let avg_price =
+            |underlying_in: i128, yt_out: i128| -> i128 { underlying_in * 1_000_000_000 / yt_out };
         let p_small = avg_price(small_in, small_out);
         let p_medium = avg_price(medium_in, medium_out);
         let p_whale = avg_price(whale_in, whale_out);
@@ -1776,14 +2272,20 @@ mod tests {
     // ── YT-TEST 2: no negative/zero outputs across a size sweep ──────────────
     #[test]
     fn test_yt_no_negative_or_zero_price() {
-        let (_env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) = setup_deep_market();
+        let (_env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) =
+            setup_deep_market();
 
         // Buy-side quotes must always be strictly positive: even a tiny
         // underlying input still buys *some* YT under this deep-discount
         // curve (leverage on the buy side is large near maturity-far par).
         for &size in &[1_i128, 100, 10_000, 1_000_000, 100_000_000] {
             let yt_out = market_client.quote_underlying_for_yt(&size);
-            assert!(yt_out > 0, "quote for size {} must be positive, got {}", size, yt_out);
+            assert!(
+                yt_out > 0,
+                "quote for size {} must be positive, got {}",
+                size,
+                yt_out
+            );
         }
 
         // Sell-side quotes on dust-sized YT amounts (well below 1e9 scale)
@@ -1792,16 +2294,26 @@ mod tests {
         // non-dust sizes are required to be strictly positive.
         for &size in &[10_000, 1_000_000, 100_000_000] {
             let underlying_out = market_client.quote_yt_for_underlying(&size);
-            assert!(underlying_out > 0, "sell quote for size {} must be positive, got {}", size, underlying_out);
+            assert!(
+                underlying_out > 0,
+                "sell quote for size {} must be positive, got {}",
+                size,
+                underlying_out
+            );
         }
         let dust_out = market_client.quote_yt_for_underlying(&1_i128);
-        assert!(dust_out >= 0, "dust sell quote must never be negative, got {}", dust_out);
+        assert!(
+            dust_out >= 0,
+            "dust sell quote must never be negative, got {}",
+            dust_out
+        );
     }
 
     // ── YT-TEST 3: PT + YT spot prices sum to face value (1e9) ───────────────
     #[test]
     fn test_yt_pt_price_consistency() {
-        let (_env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) = setup_deep_market();
+        let (_env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) =
+            setup_deep_market();
 
         let pt_price = market_client.get_pt_price();
         let yt_price = market_client.get_yt_price();
@@ -1810,14 +2322,18 @@ mod tests {
         assert!(
             (sum - SCALE).abs() <= 2,
             "PT price ({}) + YT price ({}) = {} must equal face value ({}) within rounding",
-            pt_price, yt_price, sum, SCALE
+            pt_price,
+            yt_price,
+            sum,
+            SCALE
         );
     }
 
     // ── YT-TEST 4: buy-then-sell round trip only loses to fees, never profits ─
     #[test]
     fn test_yt_round_trip_no_free_profit() {
-        let (env, _, underlying_token, _pt_token, yt_token, market_client, token_admin_client) = setup_deep_market();
+        let (env, _, underlying_token, _pt_token, yt_token, market_client, token_admin_client) =
+            setup_deep_market();
 
         let trader = Address::generate(&env);
         let underlying_in: i128 = 10_000_000;
@@ -1827,7 +2343,10 @@ mod tests {
 
         let underlying_client = token::Client::new(&env, &underlying_token);
         let balance_after_buy = underlying_client.balance(&trader);
-        assert_eq!(balance_after_buy, 0, "trader must have spent all underlying on the buy");
+        assert_eq!(
+            balance_after_buy, 0,
+            "trader must have spent all underlying on the buy"
+        );
 
         let yt_client = yt_token::YtTokenClient::new(&env, &yt_token);
         assert_eq!(yt_client.balance(&trader), yt_out);
@@ -1837,9 +2356,13 @@ mod tests {
         assert!(
             underlying_back < underlying_in,
             "round trip must lose value to fees/slippage: paid {}, got back {}",
-            underlying_in, underlying_back
+            underlying_in,
+            underlying_back
         );
-        assert!(underlying_back > 0, "round trip must not zero out for a modest trade size");
+        assert!(
+            underlying_back > 0,
+            "round trip must not zero out for a modest trade size"
+        );
 
         let _ = env;
     }
@@ -1847,7 +2370,8 @@ mod tests {
     // ── YT-TEST 5: quote functions match actual execution exactly ────────────
     #[test]
     fn test_yt_quote_matches_execution() {
-        let (env, _, _, _pt_token, _yt_token, market_client, token_admin_client) = setup_deep_market();
+        let (env, _, _, _pt_token, _yt_token, market_client, token_admin_client) =
+            setup_deep_market();
 
         let buyer = Address::generate(&env);
         let underlying_in: i128 = 2_500_000;
@@ -1856,14 +2380,18 @@ mod tests {
         let quoted = market_client.quote_underlying_for_yt(&underlying_in);
         let actual = market_client.swap_underlying_for_yt(&buyer, &underlying_in, &1);
 
-        assert_eq!(quoted, actual, "quote must exactly match execution (no state drift between quote and swap)");
+        assert_eq!(
+            quoted, actual,
+            "quote must exactly match execution (no state drift between quote and swap)"
+        );
     }
 
     // ── YT-TEST 6: whale trade cannot be executed at the same price as a
     // trivially small trade (proves the removal of flat/oracle pricing) ──────
     #[test]
     fn test_yt_whale_trade_rejected_at_small_trade_price() {
-        let (env, _, _, _pt_token, _yt_token, market_client, token_admin_client) = setup_deep_market();
+        let (env, _, _, _pt_token, _yt_token, market_client, token_admin_client) =
+            setup_deep_market();
 
         let small_in: i128 = 1_000;
         let small_out = market_client.quote_underlying_for_yt(&small_in);
@@ -1889,8 +2417,16 @@ mod tests {
     // ── YT-TEST 7: TWAP staleness guard reverts after long idle period ───────
     #[test]
     fn test_twap_staleness_guard() {
-        let (env, _, _, pt_token, _yt_token, market_client, token_admin_client) = setup_env_with_yt();
-        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+        let (env, _, _, pt_token, _yt_token, market_client, token_admin_client) =
+            setup_env_with_yt();
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
 
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: CREATED_AT + 1,
@@ -1911,18 +2447,25 @@ mod tests {
         });
 
         let result = market_client.try_get_twap_rate_checked();
-        assert!(result.is_err(), "stale TWAP must be rejected by get_twap_rate_checked");
+        assert!(
+            result.is_err(),
+            "stale TWAP must be rejected by get_twap_rate_checked"
+        );
 
         // The raw accessor (used by existing Intent Engine callers) is
         // intentionally unaffected — no behavior change to existing consumers.
         let raw = market_client.get_twap_rate();
-        assert!(raw > 0, "raw get_twap_rate must remain available for existing callers");
+        assert!(
+            raw > 0,
+            "raw get_twap_rate must remain available for existing callers"
+        );
     }
 
     // ── YT-TEST 8: YT price tracks curve state immediately after a PT trade ──
     #[test]
     fn test_yt_price_updates_immediately_with_pt_state() {
-        let (env, _, _, pt_token, _yt_token, market_client, token_admin_client) = setup_deep_market();
+        let (env, _, _, pt_token, _yt_token, market_client, token_admin_client) =
+            setup_deep_market();
 
         let yt_price_before = market_client.get_yt_price();
 

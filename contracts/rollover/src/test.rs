@@ -1,11 +1,14 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env};
+use soroban_sdk::{
+    testutils::{storage::Persistent as _, Address as _, Ledger},
+    token, Address, Env,
+};
 
-use pt_token::{PtToken, PtTokenClient};
+use intent_engine::{CumulativeIntentRecord, IntentEngine, IntentEngineClient};
 use marketplace::{NovaireMarketplace, NovaireMarketplaceClient};
-use intent_engine::{IntentEngine, IntentEngineClient, CumulativeIntentRecord};
+use pt_token::{PtToken, PtTokenClient};
 
 use soroban_sdk::{contract, contractimpl};
 
@@ -22,7 +25,11 @@ impl MockIntentEngine {
         _maturity_ledger: u32,
         _yt_sale_percentage: u32,
     ) -> CumulativeIntentRecord {
-        let pt_token_addr: Address = env.storage().instance().get(&soroban_sdk::Symbol::new(&env, "pt_token")).unwrap();
+        let pt_token_addr: Address = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::Symbol::new(&env, "pt_token"))
+            .unwrap();
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
         pt_client.mint(&user, &usdc_amount); // Mint PT to user
 
@@ -33,9 +40,11 @@ impl MockIntentEngine {
             total_underlying_received: 0,
         }
     }
-    
+
     pub fn set_pt_token_intent(env: Env, pt_token: Address) {
-        env.storage().instance().set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
     }
 }
 
@@ -44,7 +53,11 @@ pub struct MockFactory;
 #[contractimpl]
 impl MockFactory {
     pub fn latest_epoch(env: Env) -> EpochRecord {
-        let maturity_ledger: u32 = env.storage().instance().get(&soroban_sdk::Symbol::new(&env, "next_maturity")).unwrap_or(2000);
+        let maturity_ledger: u32 = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::Symbol::new(&env, "next_maturity"))
+            .unwrap_or(2000);
         EpochRecord {
             epoch_id: 2,
             maturity_ledger,
@@ -61,16 +74,23 @@ impl MockFactory {
     }
 
     pub fn get_next_epoch(env: Env, _current_epoch_id: u32) -> EpochRecord {
-        let maturity_ledger: u32 = env.storage().instance().get(&soroban_sdk::Symbol::new(&env, "next_maturity")).unwrap_or(2000);
+        let maturity_ledger: u32 = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::Symbol::new(&env, "next_maturity"))
+            .unwrap_or(2000);
         EpochRecord {
             epoch_id: 2,
             maturity_ledger,
             created_ledger: 0,
         }
     }
-    
+
     pub fn set_next_maturity(env: Env, maturity_ledger: u32) {
-        env.storage().instance().set(&soroban_sdk::Symbol::new(&env, "next_maturity"), &maturity_ledger);
+        env.storage().instance().set(
+            &soroban_sdk::Symbol::new(&env, "next_maturity"),
+            &maturity_ledger,
+        );
     }
 }
 
@@ -79,26 +99,43 @@ pub struct MockTokenizer;
 #[contractimpl]
 impl MockTokenizer {
     pub fn redeem_pt(env: Env, to: Address, amount: i128) -> i128 {
-        let pt_token_addr: Address = env.storage().instance().get(&soroban_sdk::Symbol::new(&env, "pt_token")).unwrap();
+        let pt_token_addr: Address = env
+            .storage()
+            .instance()
+            .get(&soroban_sdk::Symbol::new(&env, "pt_token"))
+            .unwrap();
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
         pt_client.burn(&to, &amount); // Burn PT from user
         amount + 10 // Simulate some yield
     }
-    
+
     pub fn set_pt_token_tokenizer(env: Env, pt_token: Address) {
-        env.storage().instance().set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
     }
 }
 
-fn setup_env() -> (Env, Address, Address, AutonomousRolloverClient<'static>, PtTokenClient<'static>, token::StellarAssetClient<'static>, Address, Address) {
+fn setup_env() -> (
+    Env,
+    Address,
+    Address,
+    AutonomousRolloverClient<'static>,
+    PtTokenClient<'static>,
+    token::StellarAssetClient<'static>,
+    Address,
+    Address,
+) {
     let env = Env::default();
     env.mock_all_auths_allowing_non_root_auth();
 
     let admin = Address::generate(&env);
     let keeper = Address::generate(&env);
     let token_admin = Address::generate(&env);
-    
-    let underlying_token = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+
+    let underlying_token = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
     let token_admin_client = token::StellarAssetClient::new(&env, &underlying_token);
 
     let tokenizer_contract_id = env.register(MockTokenizer, ());
@@ -107,12 +144,16 @@ fn setup_env() -> (Env, Address, Address, AutonomousRolloverClient<'static>, PtT
     let pt_contract_id = env.register(PtToken, ());
     let pt_client = PtTokenClient::new(&env, &pt_contract_id);
     pt_client.initialize(&admin, &tokenizer_contract_id);
-    
+
     env.as_contract(&tokenizer_contract_id, || {
-        env.storage().instance().set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_contract_id);
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_contract_id);
     });
     env.as_contract(&intent_engine_contract_id, || {
-        env.storage().instance().set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_contract_id);
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_contract_id);
     });
 
     let factory_contract_id = env.register(MockFactory, ());
@@ -129,7 +170,7 @@ fn setup_env() -> (Env, Address, Address, AutonomousRolloverClient<'static>, PtT
         &pt_contract_id,
         &underlying_token,
         &factory_contract_id,
-        &17280
+        &17280,
     );
 
     env.ledger().set(soroban_sdk::testutils::LedgerInfo {
@@ -137,15 +178,33 @@ fn setup_env() -> (Env, Address, Address, AutonomousRolloverClient<'static>, PtT
         ..env.ledger().get()
     });
 
-    (env, keeper, underlying_token, rollover_client, pt_client, token_admin_client, intent_engine_contract_id, factory_contract_id)
+    (
+        env,
+        keeper,
+        underlying_token,
+        rollover_client,
+        pt_client,
+        token_admin_client,
+        intent_engine_contract_id,
+        factory_contract_id,
+    )
 }
 
 #[test]
 fn test_register_and_execute_rollover() {
-    let (env, _, _, rollover, pt_client, token_admin, intent_engine_contract_id, factory_contract_id) = setup_env();
-    
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+
     let user = Address::generate(&env);
-    
+
     // User gets 2000 USDC, wraps it to PT
     token_admin.mint(&user, &2000);
 
@@ -160,7 +219,7 @@ fn test_register_and_execute_rollover() {
 
     // 1. Register rollover
     rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
-    
+
     assert_eq!(pt_client.balance(&user), 0); // Contract took PT
 
     let position = rollover.get_position(&user);
@@ -244,7 +303,16 @@ fn test_register_rollover_rejects_double_registration() {
 #[test]
 #[should_panic(expected = "Error(Contract, #5)")]
 fn test_next_epoch_not_set() {
-    let (env, _, _, rollover, pt_client, token_admin, intent_engine_contract_id, factory_contract_id) = setup_env();
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
     let user = Address::generate(&env);
     token_admin.mint(&user, &2000);
 
@@ -252,15 +320,77 @@ fn test_next_epoch_not_set() {
     intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
 
     let initial_pt = pt_client.balance(&user);
-    rollover.register_rollover(&user, &initial_pt, &1000, &0, &0); 
+    rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
 
     let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
     mock_factory_client.set_next_maturity(&2000);
 
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo { sequence_number: 1001, ..env.ledger().get() });
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
     rollover.execute_rollover(&user); // successful roll
-    
+
     // next epoch maturity hasn't advanced, so latest epoch maturity <= current_ledger!
-    env.ledger().set(soroban_sdk::testutils::LedgerInfo { sequence_number: 2001, ..env.ledger().get() });
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 2001,
+        ..env.ledger().get()
+    });
     rollover.execute_rollover(&user); // fails because next_epoch is now 2000 which is <= 2001
+}
+
+#[test]
+fn test_rollover_position_ttl_extended_on_write() {
+    let (env, _, _, rollover, pt_client, token_admin, intent_engine_contract_id, _) = setup_env();
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &2000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    let initial_pt = pt_client.balance(&user);
+
+    rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
+
+    let key = DataKey::RolloverPositions(user.clone());
+    let ttl = env.as_contract(&rollover.address, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+
+    // Freshly written positions must be bumped out to (near) the full extend-to
+    // window, not left at the ledger's default minimum persistent TTL.
+    assert!(ttl >= PERSISTENT_BUMP_AMOUNT - 1);
+}
+
+#[test]
+fn test_rollover_position_survives_long_maturity_gap() {
+    let (env, _, _, rollover, pt_client, token_admin, intent_engine_contract_id, _) = setup_env();
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &2000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    let initial_pt = pt_client.balance(&user);
+
+    rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
+
+    // Jump far past the persistent lifetime threshold (e.g. a multi-month
+    // fixed-rate maturity) without touching the position in between.
+    let far_future_ledger = 1 + PERSISTENT_LIFETIME_THRESHOLD + 1000;
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: far_future_ledger,
+        ..env.ledger().get()
+    });
+
+    // The position must still be readable and unchanged: TTL management must
+    // not alter stored data, only how long it survives.
+    let position = rollover.get_position(&user);
+    assert!(position.active);
+    assert_eq!(position.pt_balance, initial_pt);
+
+    // Reading it re-bumps the TTL for the next stretch of inactivity.
+    let key = DataKey::RolloverPositions(user.clone());
+    let ttl = env.as_contract(&rollover.address, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+    assert!(ttl >= PERSISTENT_BUMP_AMOUNT - 1);
 }

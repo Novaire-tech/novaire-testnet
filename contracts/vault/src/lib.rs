@@ -1,6 +1,8 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol, IntoVal};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, token, Address, Env, IntoVal, Symbol,
+};
 
 #[soroban_sdk::contractclient(name = "SyWrapperClient")]
 pub trait SyWrapperInterface {
@@ -50,6 +52,12 @@ pub struct VaultMetadata {
 
 const VERSION: u32 = 1;
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const PERSISTENT_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+
 mod storage {
     use super::*;
 
@@ -58,42 +66,77 @@ mod storage {
     }
 
     pub fn get_admin(env: &Env) -> Result<Address, NovaireVaultError> {
-        env.storage().instance().get(&DataKey::Admin).ok_or(NovaireVaultError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NovaireVaultError::StorageMissing)
     }
-    
+
     pub fn get_pending_admin(env: &Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::PendingAdmin)
     }
 
     pub fn get_sy_wrapper(env: &Env) -> Result<Address, NovaireVaultError> {
-        env.storage().instance().get(&DataKey::SyWrapper).ok_or(NovaireVaultError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::SyWrapper)
+            .ok_or(NovaireVaultError::StorageMissing)
     }
 
     pub fn get_underlying(env: &Env) -> Result<Address, NovaireVaultError> {
-        env.storage().instance().get(&DataKey::Underlying).ok_or(NovaireVaultError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Underlying)
+            .ok_or(NovaireVaultError::StorageMissing)
     }
 
     pub fn get_total_vault_shares(env: &Env) -> i128 {
-        env.storage().instance().get(&DataKey::TotalVaultShares).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalVaultShares)
+            .unwrap_or(0)
     }
 
     pub fn set_total_vault_shares(env: &Env, shares: i128) {
-        env.storage().instance().set(&DataKey::TotalVaultShares, &shares);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalVaultShares, &shares);
     }
 
     pub fn get_user_shares(env: &Env, user: &Address) -> i128 {
-        env.storage().persistent().get(&DataKey::UserShares(user.clone())).unwrap_or(0)
+        let key = DataKey::UserShares(user.clone());
+        let shares = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        shares
     }
 
     pub fn set_user_shares(env: &Env, user: &Address, shares: i128) {
-        env.storage().persistent().set(&DataKey::UserShares(user.clone()), &shares);
+        let key = DataKey::UserShares(user.clone());
+        env.storage().persistent().set(&key, &shares);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     pub fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     pub fn require_not_paused(env: &Env) -> Result<(), NovaireVaultError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         if is_paused(env) {
             return Err(NovaireVaultError::Paused);
         }
@@ -131,10 +174,17 @@ impl Vault {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
-        env.storage().instance().set(&DataKey::Underlying, &underlying);
+        env.storage()
+            .instance()
+            .set(&DataKey::SyWrapper, &sy_wrapper);
+        env.storage()
+            .instance()
+            .set(&DataKey::Underlying, &underlying);
         storage::set_total_vault_shares(&env, 0i128);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         Ok(())
     }
@@ -144,8 +194,8 @@ impl Vault {
     // ==========================================
 
     /// Deposits underlying tokens into the Vault and mints Vault shares to the depositor.
-    /// 
-    /// Internally transfers the underlying tokens to the Vault, and then deposits them 
+    ///
+    /// Internally transfers the underlying tokens to the Vault, and then deposits them
     /// directly into the downstream SY Wrapper.
     ///
     /// # Arguments
@@ -197,17 +247,21 @@ impl Vault {
 
         // 3. Update user's vault share balance
         let mut current_user_shares = storage::get_user_shares(&env, &depositor);
-        current_user_shares = current_user_shares.checked_add(sy_shares).ok_or(NovaireVaultError::MathOverflow)?;
+        current_user_shares = current_user_shares
+            .checked_add(sy_shares)
+            .ok_or(NovaireVaultError::MathOverflow)?;
         storage::set_user_shares(&env, &depositor, current_user_shares);
 
         // 4. Update total vault shares
-        total_vault_shares = total_vault_shares.checked_add(sy_shares).ok_or(NovaireVaultError::MathOverflow)?;
+        total_vault_shares = total_vault_shares
+            .checked_add(sy_shares)
+            .ok_or(NovaireVaultError::MathOverflow)?;
         storage::set_total_vault_shares(&env, total_vault_shares);
 
         // Emit Event
         env.events().publish(
             (Symbol::new(&env, "vault_deposit"), depositor),
-            (amount, sy_shares, total_vault_shares)
+            (amount, sy_shares, total_vault_shares),
         );
 
         Ok(sy_shares)
@@ -215,7 +269,7 @@ impl Vault {
 
     /// Withdraws underlying tokens by burning Vault shares.
     ///
-    /// Internally withdraws from the downstream SY Wrapper and transfers 
+    /// Internally withdraws from the downstream SY Wrapper and transfers
     /// the underlying tokens back to the withdrawer.
     ///
     /// # Arguments
@@ -227,7 +281,11 @@ impl Vault {
     ///
     /// # Errors
     /// Returns `Paused`, `InvalidAmount`, `InsufficientShares`, `StorageMissing`, or `MathUnderflow`.
-    pub fn withdraw(env: Env, withdrawer: Address, shares: i128) -> Result<i128, NovaireVaultError> {
+    pub fn withdraw(
+        env: Env,
+        withdrawer: Address,
+        shares: i128,
+    ) -> Result<i128, NovaireVaultError> {
         withdrawer.require_auth();
         storage::require_not_paused(&env)?;
 
@@ -246,7 +304,9 @@ impl Vault {
         }
 
         // Deduct shares FIRST to prevent reentrancy / underflow
-        current_user_shares = current_user_shares.checked_sub(shares).ok_or(NovaireVaultError::MathUnderflow)?;
+        current_user_shares = current_user_shares
+            .checked_sub(shares)
+            .ok_or(NovaireVaultError::MathUnderflow)?;
         storage::set_user_shares(&env, &withdrawer, current_user_shares);
 
         // Withdraw from SY Wrapper
@@ -255,16 +315,22 @@ impl Vault {
 
         // Transfer underlying back to withdrawer
         let token_client = token::Client::new(&env, &underlying_addr);
-        token_client.transfer(&env.current_contract_address(), &withdrawer, &underlying_amount);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &withdrawer,
+            &underlying_amount,
+        );
 
         // Update total vault shares
-        total_vault_shares = total_vault_shares.checked_sub(shares).ok_or(NovaireVaultError::MathUnderflow)?;
+        total_vault_shares = total_vault_shares
+            .checked_sub(shares)
+            .ok_or(NovaireVaultError::MathUnderflow)?;
         storage::set_total_vault_shares(&env, total_vault_shares);
 
         // Emit Event
         env.events().publish(
             (Symbol::new(&env, "vault_withdraw"), withdrawer),
-            (shares, underlying_amount, total_vault_shares)
+            (shares, underlying_amount, total_vault_shares),
         );
 
         Ok(underlying_amount)
@@ -279,31 +345,38 @@ impl Vault {
     ///
     /// # Errors
     /// Returns `Paused`, `InvalidAmount`, `InsufficientShares`, `MathOverflow`, or `MathUnderflow`.
-    pub fn transfer_shares(env: Env, from: Address, to: Address, amount: i128) -> Result<(), NovaireVaultError> {
+    pub fn transfer_shares(
+        env: Env,
+        from: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), NovaireVaultError> {
         from.require_auth();
         storage::require_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(NovaireVaultError::InvalidAmount);
         }
-        
+
         let mut from_shares = storage::get_user_shares(&env, &from);
         if from_shares < amount {
             return Err(NovaireVaultError::InsufficientShares);
         }
-        from_shares = from_shares.checked_sub(amount).ok_or(NovaireVaultError::MathUnderflow)?;
+        from_shares = from_shares
+            .checked_sub(amount)
+            .ok_or(NovaireVaultError::MathUnderflow)?;
         storage::set_user_shares(&env, &from, from_shares);
-        
+
         let mut to_shares = storage::get_user_shares(&env, &to);
-        to_shares = to_shares.checked_add(amount).ok_or(NovaireVaultError::MathOverflow)?;
+        to_shares = to_shares
+            .checked_add(amount)
+            .ok_or(NovaireVaultError::MathOverflow)?;
         storage::set_user_shares(&env, &to, to_shares);
 
         // Emit Event
-        env.events().publish(
-            (Symbol::new(&env, "vault_transfer"), from, to),
-            amount
-        );
-        
+        env.events()
+            .publish((Symbol::new(&env, "vault_transfer"), from, to), amount);
+
         Ok(())
     }
 
@@ -319,7 +392,12 @@ impl Vault {
     ///
     /// # Errors
     /// Returns `Paused`, `InvalidAmount`, `InsufficientShares`, `StorageMissing`, or `MathUnderflow`.
-    pub fn withdraw_for(env: Env, withdrawer: Address, receiver: Address, shares: i128) -> Result<i128, NovaireVaultError> {
+    pub fn withdraw_for(
+        env: Env,
+        withdrawer: Address,
+        receiver: Address,
+        shares: i128,
+    ) -> Result<i128, NovaireVaultError> {
         withdrawer.require_auth();
         storage::require_not_paused(&env)?;
 
@@ -338,7 +416,9 @@ impl Vault {
         }
 
         // Deduct shares FIRST
-        current_user_shares = current_user_shares.checked_sub(shares).ok_or(NovaireVaultError::MathUnderflow)?;
+        current_user_shares = current_user_shares
+            .checked_sub(shares)
+            .ok_or(NovaireVaultError::MathUnderflow)?;
         storage::set_user_shares(&env, &withdrawer, current_user_shares);
 
         // Withdraw from SY Wrapper
@@ -347,16 +427,26 @@ impl Vault {
 
         // Transfer underlying to the receiver
         let token_client = token::Client::new(&env, &underlying_addr);
-        token_client.transfer(&env.current_contract_address(), &receiver, &underlying_amount);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &receiver,
+            &underlying_amount,
+        );
 
         // Update total vault shares
-        total_vault_shares = total_vault_shares.checked_sub(shares).ok_or(NovaireVaultError::MathUnderflow)?;
+        total_vault_shares = total_vault_shares
+            .checked_sub(shares)
+            .ok_or(NovaireVaultError::MathUnderflow)?;
         storage::set_total_vault_shares(&env, total_vault_shares);
 
         // Emit Event
         env.events().publish(
-            (Symbol::new(&env, "vault_withdraw_for"), withdrawer, receiver),
-            (shares, underlying_amount, total_vault_shares)
+            (
+                Symbol::new(&env, "vault_withdraw_for"),
+                withdrawer,
+                receiver,
+            ),
+            (shares, underlying_amount, total_vault_shares),
         );
 
         Ok(underlying_amount)
@@ -377,8 +467,11 @@ impl Vault {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &true);
-        
-        env.events().publish((Symbol::new(&env, "vault_paused"), admin), env.ledger().sequence());
+
+        env.events().publish(
+            (Symbol::new(&env, "vault_paused"), admin),
+            env.ledger().sequence(),
+        );
         Ok(())
     }
 
@@ -388,7 +481,10 @@ impl Vault {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
 
-        env.events().publish((Symbol::new(&env, "vault_unpaused"), admin), env.ledger().sequence());
+        env.events().publish(
+            (Symbol::new(&env, "vault_unpaused"), admin),
+            env.ledger().sequence(),
+        );
         Ok(())
     }
 
@@ -396,20 +492,29 @@ impl Vault {
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), NovaireVaultError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
 
-        env.events().publish((Symbol::new(&env, "vault_admin_transfer"), admin), new_admin);
+        env.events().publish(
+            (Symbol::new(&env, "vault_admin_transfer"), admin),
+            new_admin,
+        );
         Ok(())
     }
 
     /// Accepts a pending admin transfer, finalizing the change of administration.
     pub fn accept_admin(env: Env) -> Result<(), NovaireVaultError> {
-        let pending_admin: Address = storage::get_pending_admin(&env).ok_or(NovaireVaultError::InvalidAdminTransfer)?;
+        let pending_admin: Address =
+            storage::get_pending_admin(&env).ok_or(NovaireVaultError::InvalidAdminTransfer)?;
         pending_admin.require_auth();
-        env.storage().instance().set(&DataKey::Admin, &pending_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::Admin, &pending_admin);
         env.storage().instance().remove(&DataKey::PendingAdmin);
 
-        env.events().publish((Symbol::new(&env, "vault_admin_accepted"),), pending_admin);
+        env.events()
+            .publish((Symbol::new(&env, "vault_admin_accepted"),), pending_admin);
         Ok(())
     }
 
@@ -475,7 +580,9 @@ mod tests {
 
         // 2. Setup Mock Token
         let token_admin = Address::generate(&env);
-        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+        let token_contract = env
+            .register_stellar_asset_contract_v2(token_admin.clone())
+            .address();
         let token_client = token::Client::new(&env, &token_contract);
         let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
 
@@ -498,40 +605,85 @@ mod tests {
         assert_eq!(alice_shares, 1000);
         assert_eq!(vault_client.balance_of(&alice), 1000);
         assert_eq!(vault_client.total_vault_shares(), 1000);
-        
+
         // 6. Bob deposits 2000 USDC
         let bob_shares = vault_client.deposit(&bob, &2000);
         assert_eq!(bob_shares, 2000);
         assert_eq!(vault_client.balance_of(&bob), 2000);
         assert_eq!(vault_client.total_vault_shares(), 3000);
-        
+
         // 7. Accrue yield on SY Wrapper
         token_admin_client.mint(&sy_contract_id, &400); // 10% yield on 4000
         sy_client.harvest_yield();
-        
+
         // 8. Bob withdraws all shares -> receives 2200 underlying (2000 * 1.1)
         let bob_returned = vault_client.withdraw(&bob, &bob_shares);
         assert_eq!(bob_returned, 2200);
         assert_eq!(vault_client.balance_of(&bob), 0);
         assert_eq!(token_client.balance(&bob), 2200);
         assert_eq!(vault_client.total_vault_shares(), 1000);
-        
+
         // 9. Test pause functionality
         vault_client.pause();
-        
+
         // Next deposit should fail because of pause
         let deposit_res = vault_client.try_deposit(&alice, &10);
         assert!(deposit_res.is_err());
-        
+
         // Unpause and verify it works again
         vault_client.unpause();
         token_admin_client.mint(&alice, &10);
         let alice_shares_2 = vault_client.deposit(&alice, &10);
         assert_eq!(alice_shares_2, 9); // 10 * 1e9 / 1.1e9 = 9 shares
-        
+
         // Test metadata
         let md = vault_client.metadata();
         assert_eq!(md.total_vault_shares, 1009);
         assert!(!md.is_paused);
+    }
+
+    #[test]
+    fn test_user_shares_ttl_survives_long_maturity_gap() {
+        use soroban_sdk::testutils::{storage::Persistent as _, Ledger};
+
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin = Address::generate(&env);
+        let alice = Address::generate(&env);
+        let sy_wrapper = Address::generate(&env);
+        let underlying = Address::generate(&env);
+
+        let vault_contract_id = env.register(Vault, ());
+        let vault_client = VaultClient::new(&env, &vault_contract_id);
+        vault_client.initialize(&admin, &sy_wrapper, &underlying);
+
+        // Directly seed the user's share balance the way `deposit` would,
+        // without routing through the cross-contract SY Wrapper call.
+        env.as_contract(&vault_contract_id, || {
+            storage::set_user_shares(&env, &alice, 1000);
+        });
+
+        let key = DataKey::UserShares(alice.clone());
+        let ttl_after_write = env.as_contract(&vault_contract_id, || {
+            env.storage().persistent().get_ttl(&key)
+        });
+        assert!(ttl_after_write >= PERSISTENT_BUMP_AMOUNT - 1);
+
+        // Advance far past the lifetime threshold without touching the entry.
+        let far_future_ledger = 1 + PERSISTENT_LIFETIME_THRESHOLD + 1000;
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: far_future_ledger,
+            ..env.ledger().get()
+        });
+
+        // Still readable and unchanged: TTL management didn't corrupt state.
+        assert_eq!(vault_client.balance_of(&alice), 1000);
+
+        // Reading re-bumps the TTL for the next stretch of inactivity.
+        let ttl_after_read = env.as_contract(&vault_contract_id, || {
+            env.storage().persistent().get_ttl(&key)
+        });
+        assert!(ttl_after_read >= PERSISTENT_BUMP_AMOUNT - 1);
     }
 }

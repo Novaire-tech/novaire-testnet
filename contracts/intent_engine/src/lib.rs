@@ -1,8 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal
-};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal};
 
 use soroban_sdk::token;
 
@@ -19,8 +17,18 @@ pub trait TokenizerInterface {
 
 #[soroban_sdk::contractclient(name = "MarketplaceClient")]
 pub trait MarketplaceInterface {
-    fn swap_yt_for_underlying(env: Env, seller: Address, yt_amount: i128, min_underlying_out: i128) -> i128;
-    fn swap_pt_for_underlying(env: Env, seller: Address, pt_amount: i128, min_underlying_out: i128) -> i128;
+    fn swap_yt_for_underlying(
+        env: Env,
+        seller: Address,
+        yt_amount: i128,
+        min_underlying_out: i128,
+    ) -> i128;
+    fn swap_pt_for_underlying(
+        env: Env,
+        seller: Address,
+        pt_amount: i128,
+        min_underlying_out: i128,
+    ) -> i128;
     fn get_implied_rate(env: Env) -> i128;
     fn get_twap_rate(env: Env) -> i128;
     fn get_reserves(env: Env) -> (i128, i128, i128);
@@ -78,6 +86,12 @@ pub struct CumulativeIntentRecord {
     pub total_underlying_received: i128,
 }
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const PERSISTENT_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+
 mod storage {
     use super::*;
 
@@ -86,15 +100,47 @@ mod storage {
     }
 
     pub fn get_address(env: &Env, key: DataKey) -> Result<Address, NovaireIntentError> {
-        env.storage().instance().get(&key).ok_or(NovaireIntentError::StorageMissing)
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        env.storage()
+            .instance()
+            .get(&key)
+            .ok_or(NovaireIntentError::StorageMissing)
     }
 
     pub fn get_paused(env: &Env) -> Result<bool, NovaireIntentError> {
-        env.storage().instance().get(&DataKey::Paused).ok_or(NovaireIntentError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .ok_or(NovaireIntentError::StorageMissing)
     }
 
     pub fn set_paused(env: &Env, val: bool) {
         env.storage().instance().set(&DataKey::Paused, &val);
+    }
+
+    pub fn get_user_intents(env: &Env, user: &Address) -> Option<CumulativeIntentRecord> {
+        let key = DataKey::UserIntents(user.clone());
+        let record = env.storage().persistent().get(&key);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        record
+    }
+
+    pub fn set_user_intents(env: &Env, user: &Address, record: &CumulativeIntentRecord) {
+        let key = DataKey::UserIntents(user.clone());
+        env.storage().persistent().set(&key, record);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 }
 
@@ -121,13 +167,24 @@ impl IntentEngine {
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Vault, &vault);
-        env.storage().instance().set(&DataKey::Tokenizer, &tokenizer);
-        env.storage().instance().set(&DataKey::Marketplace, &marketplace);
-        env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
-        env.storage().instance().set(&DataKey::Underlying, &underlying);
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &tokenizer);
+        env.storage()
+            .instance()
+            .set(&DataKey::Marketplace, &marketplace);
+        env.storage()
+            .instance()
+            .set(&DataKey::SyWrapper, &sy_wrapper);
+        env.storage()
+            .instance()
+            .set(&DataKey::Underlying, &underlying);
         env.storage().instance().set(&DataKey::PtToken, &pt_token);
         env.storage().instance().set(&DataKey::YtToken, &yt_token);
         storage::set_paused(&env, false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         Ok(())
     }
@@ -152,8 +209,11 @@ impl IntentEngine {
         Ok(marketplace_client.get_twap_rate())
     }
 
-    pub fn get_user_intent(env: Env, user: Address) -> Result<CumulativeIntentRecord, NovaireIntentError> {
-        env.storage().persistent().get(&DataKey::UserIntents(user)).ok_or(NovaireIntentError::StorageMissing)
+    pub fn get_user_intent(
+        env: Env,
+        user: Address,
+    ) -> Result<CumulativeIntentRecord, NovaireIntentError> {
+        storage::get_user_intents(&env, &user).ok_or(NovaireIntentError::StorageMissing)
     }
 
     pub fn execute_fixed_yield_intent(
@@ -196,7 +256,7 @@ impl IntentEngine {
         let underlying_client = token::Client::new(&env, &underlying_addr);
 
         let intent_engine_addr = env.current_contract_address();
-        
+
         // 1: Pull
         underlying_client.transfer(&user, &intent_engine_addr, &usdc_amount);
 
@@ -223,11 +283,10 @@ impl IntentEngine {
         ]);
         let sy_shares = vault_client.deposit(&intent_engine_addr, &usdc_amount);
 
-
         // 3: Mint
         let tokenizer_addr = storage::get_address(&env, DataKey::Tokenizer)?;
         let tokenizer_client = TokenizerClient::new(&env, &tokenizer_addr);
-        
+
         env.authorize_as_current_contract(soroban_sdk::vec![
             &env,
             soroban_sdk::auth::InvokerContractAuthEntry::Contract(
@@ -251,12 +310,12 @@ impl IntentEngine {
         // 4: Swap YT
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let yt_token_client = YtTokenClient::new(&env, &yt_token_addr);
-        
+
         let yt_to_sell = (yt_amount * (yt_sale_percentage as i128)) / 100;
         let yt_to_keep = yt_amount - yt_to_sell;
-        
+
         let mut underlying_from_yt = 0;
-        
+
         if yt_to_sell > 0 {
             env.authorize_as_current_contract(soroban_sdk::vec![
                 &env,
@@ -276,9 +335,13 @@ impl IntentEngine {
                     }
                 )
             ]);
-            underlying_from_yt = marketplace_client.swap_yt_for_underlying(&intent_engine_addr, &yt_to_sell, &min_underlying_out);
+            underlying_from_yt = marketplace_client.swap_yt_for_underlying(
+                &intent_engine_addr,
+                &yt_to_sell,
+                &min_underlying_out,
+            );
         }
-        
+
         if yt_to_keep > 0 {
             yt_token_client.transfer(&intent_engine_addr, &user, &yt_to_keep);
         }
@@ -293,7 +356,7 @@ impl IntentEngine {
             underlying_client.transfer(&intent_engine_addr, &user, &underlying_from_yt);
         }
 
-        let mut record = env.storage().persistent().get::<_, CumulativeIntentRecord>(&DataKey::UserIntents(user.clone())).unwrap_or(CumulativeIntentRecord {
+        let mut record = storage::get_user_intents(&env, &user).unwrap_or(CumulativeIntentRecord {
             total_deposited_amount: 0,
             total_pt_held: 0,
             total_yt_sold: 0,
@@ -305,7 +368,7 @@ impl IntentEngine {
         record.total_yt_sold += yt_to_sell;
         record.total_underlying_received += underlying_from_yt;
 
-        env.storage().persistent().set(&DataKey::UserIntents(user.clone()), &record);
+        storage::set_user_intents(&env, &user, &record);
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "intent_executed"), user),
@@ -413,7 +476,11 @@ impl IntentEngine {
                 }
             )
         ]);
-        let underlying_from_pt = marketplace_client.swap_pt_for_underlying(&intent_engine_addr, &pt_amount, &min_underlying_out);
+        let underlying_from_pt = marketplace_client.swap_pt_for_underlying(
+            &intent_engine_addr,
+            &pt_amount,
+            &min_underlying_out,
+        );
 
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let yt_client = YtTokenClient::new(&env, &yt_token_addr);
@@ -422,7 +489,10 @@ impl IntentEngine {
         underlying_client.transfer(&intent_engine_addr, &user, &underlying_from_pt);
 
         env.events().publish(
-            (soroban_sdk::Symbol::new(&env, "yield_speculation_executed"), user),
+            (
+                soroban_sdk::Symbol::new(&env, "yield_speculation_executed"),
+                user,
+            ),
             (usdc_amount, yt_amount, underlying_from_pt),
         );
 
@@ -433,23 +503,38 @@ impl IntentEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{testutils::{Address as _, Ledger}, token, Address, Env};
-    
-    use sy_wrapper::{SyWrapper, SyWrapperClient as RealSyWrapperClient};
-    use pt_token::{PtToken, PtTokenClient as RealPtClient};
-    use yt_token::{YtToken, YtTokenClient as RealYtClient};
-    use vault::{Vault, VaultClient as RealVaultClient};
-    use tokenizer::{Tokenizer, TokenizerClient as RealTokenizerClient};
+    use soroban_sdk::{
+        testutils::{Address as _, Ledger},
+        token, Address, Env,
+    };
+
     use marketplace::{NovaireMarketplace, NovaireMarketplaceClient as RealMarketplaceClient};
     use maturity_engine::{MaturityEngine, MaturityEngineClient as RealMaturityEngineClient};
+    use pt_token::{PtToken, PtTokenClient as RealPtClient};
+    use sy_wrapper::{SyWrapper, SyWrapperClient as RealSyWrapperClient};
+    use tokenizer::{Tokenizer, TokenizerClient as RealTokenizerClient};
+    use vault::{Vault, VaultClient as RealVaultClient};
+    use yt_token::{YtToken, YtTokenClient as RealYtClient};
 
-    fn setup_env() -> (Env, Address, Address, IntentEngineClient<'static>, RealMarketplaceClient<'static>, RealPtClient<'static>, RealYtClient<'static>, token::StellarAssetClient<'static>, token::Client<'static>) {
+    fn setup_env() -> (
+        Env,
+        Address,
+        Address,
+        IntentEngineClient<'static>,
+        RealMarketplaceClient<'static>,
+        RealPtClient<'static>,
+        RealYtClient<'static>,
+        token::StellarAssetClient<'static>,
+        token::Client<'static>,
+    ) {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
 
         let admin = Address::generate(&env);
         let token_admin = Address::generate(&env);
-        let underlying_token = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+        let underlying_token = env
+            .register_stellar_asset_contract_v2(token_admin.clone())
+            .address();
         let token_admin_client = token::StellarAssetClient::new(&env, &underlying_token);
         let underlying_client = token::Client::new(&env, &underlying_token);
 
@@ -458,7 +543,7 @@ mod tests {
 
         let vault_contract_id = env.register(Vault, ());
         let vault_client = RealVaultClient::new(&env, &vault_contract_id);
-        
+
         sy_client.initialize(&admin, &underlying_token, &vault_contract_id);
         vault_client.initialize(&admin, &sy_contract_id, &underlying_token);
 
@@ -483,13 +568,39 @@ mod tests {
         let maturity_epoch_id = maturity_engine_client.open_epoch(&maturity_ledger);
 
         pt_client.initialize(&admin, &tokenizer_contract_id);
-        yt_client.initialize(&admin, &tokenizer_contract_id, &maturity_ledger, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
+        yt_client.initialize(
+            &admin,
+            &tokenizer_contract_id,
+            &maturity_ledger,
+            &sy_contract_id,
+            &maturity_engine_id,
+            &maturity_epoch_id,
+        );
 
-        tokenizer_client.initialize(&admin, &vault_contract_id, &pt_contract_id, &yt_contract_id, &sy_contract_id, &maturity_ledger, &maturity_engine_id, &maturity_epoch_id);
+        tokenizer_client.initialize(
+            &admin,
+            &vault_contract_id,
+            &pt_contract_id,
+            &yt_contract_id,
+            &sy_contract_id,
+            &maturity_ledger,
+            &maturity_engine_id,
+            &maturity_epoch_id,
+        );
 
         let market_contract_id = env.register(NovaireMarketplace, ());
         let market_client = RealMarketplaceClient::new(&env, &market_contract_id);
-        market_client.initialize(&admin, &pt_contract_id, &yt_contract_id, &underlying_token, &sy_contract_id, &tokenizer_contract_id, &maturity_ledger, &maturity_engine_id, &maturity_epoch_id);
+        market_client.initialize(
+            &admin,
+            &pt_contract_id,
+            &yt_contract_id,
+            &underlying_token,
+            &sy_contract_id,
+            &tokenizer_contract_id,
+            &maturity_ledger,
+            &maturity_engine_id,
+            &maturity_epoch_id,
+        );
 
         // Seed liquidity
         let lp_provider = Address::generate(&env);
@@ -501,7 +612,7 @@ mod tests {
 
         let intent_engine_contract_id = env.register(IntentEngine, ());
         let intent_engine_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
-        
+
         intent_engine_client.initialize(
             &admin,
             &vault_contract_id,
@@ -513,7 +624,17 @@ mod tests {
             &yt_contract_id,
         );
 
-        (env, admin, underlying_token, intent_engine_client, market_client, pt_client, yt_client, token_admin_client, underlying_client)
+        (
+            env,
+            admin,
+            underlying_token,
+            intent_engine_client,
+            market_client,
+            pt_client,
+            yt_client,
+            token_admin_client,
+            underlying_client,
+        )
     }
 
     #[test]
@@ -523,9 +644,16 @@ mod tests {
         token_admin.mint(&user, &10_000);
 
         let current_twap = intent_engine.get_current_best_rate();
-        
-        let record = intent_engine.execute_fixed_yield_intent(&user, &10_000, &current_twap, &0, &1000, &100);
-        
+
+        let record = intent_engine.execute_fixed_yield_intent(
+            &user,
+            &10_000,
+            &current_twap,
+            &0,
+            &1000,
+            &100,
+        );
+
         assert_eq!(record.total_deposited_amount, 10_000);
         assert_eq!(pt_client.balance(&user), record.total_pt_held); // Received PT
         assert!(underlying.balance(&user) > 0); // Received U back from sold YT
@@ -535,12 +663,13 @@ mod tests {
 
     #[test]
     fn test_yield_speculation() {
-        let (env, _, _, intent_engine, _, pt_client, yt_client, token_admin, underlying) = setup_env();
+        let (env, _, _, intent_engine, _, pt_client, yt_client, token_admin, underlying) =
+            setup_env();
         let user = Address::generate(&env);
         token_admin.mint(&user, &10_000);
 
         let yt_received = intent_engine.execute_yield_speculation_intent(&user, &10_000, &1, &0);
-        
+
         assert!(yt_received > 0);
         assert_eq!(yt_client.balance(&user), yt_received);
         assert!(underlying.balance(&user) > 0); // Received U back from sold PT

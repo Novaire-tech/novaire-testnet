@@ -38,7 +38,7 @@ pub enum EpochState {
 
 /// Represents the persisted storage state of an epoch.
 /// Note: The `state` field may temporarily diverge from the protocol's true dynamic state.
-/// When the current ledger exceeds `maturity_ledger`, the true state is `Matured`, 
+/// When the current ledger exceeds `maturity_ledger`, the true state is `Matured`,
 /// even if the persisted storage still says `Active` (before `settle_epoch` is called).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -65,6 +65,12 @@ pub enum DataKey {
     Epoch(u32),
 }
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const PERSISTENT_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+
 mod storage {
     use super::*;
 
@@ -73,11 +79,20 @@ mod storage {
     }
 
     pub fn get_admin(env: &Env) -> Result<Address, NovaireMaturityError> {
-        env.storage().instance().get(&DataKey::Admin).ok_or(NovaireMaturityError::StorageMissing)
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NovaireMaturityError::StorageMissing)
     }
 
     pub fn get_current_epoch_id(env: &Env) -> u32 {
-        env.storage().instance().get(&DataKey::CurrentEpochId).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::CurrentEpochId)
+            .unwrap_or(0)
     }
 
     pub fn set_current_epoch_id(env: &Env, id: u32) {
@@ -85,11 +100,28 @@ mod storage {
     }
 
     pub fn get_epoch(env: &Env, epoch_id: u32) -> Result<EpochRecord, NovaireMaturityError> {
-        env.storage().persistent().get(&DataKey::Epoch(epoch_id)).ok_or(NovaireMaturityError::EpochNotFound)
+        let key = DataKey::Epoch(epoch_id);
+        let record = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(NovaireMaturityError::EpochNotFound)?;
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        Ok(record)
     }
 
     pub fn set_epoch(env: &Env, epoch_id: u32, record: &EpochRecord) {
-        env.storage().persistent().set(&DataKey::Epoch(epoch_id), record);
+        let key = DataKey::Epoch(epoch_id);
+        env.storage().persistent().set(&key, record);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 }
 
@@ -107,6 +139,9 @@ impl MaturityEngine {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         storage::set_current_epoch_id(&env, 0);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         Ok(())
     }
 
@@ -122,12 +157,16 @@ impl MaturityEngine {
         let current_epoch_id = storage::get_current_epoch_id(&env);
         if current_epoch_id > 0 {
             let current_epoch = storage::get_epoch(&env, current_epoch_id)?;
-            if current_epoch.state == EpochState::Active || Self::evaluate_state(&env, &current_epoch) == EpochState::Matured {
+            if current_epoch.state == EpochState::Active
+                || Self::evaluate_state(&env, &current_epoch) == EpochState::Matured
+            {
                 return Err(NovaireMaturityError::EpochAlreadyActive);
             }
         }
 
-        let new_epoch_id = current_epoch_id.checked_add(1).ok_or(NovaireMaturityError::MathOverflow)?;
+        let new_epoch_id = current_epoch_id
+            .checked_add(1)
+            .ok_or(NovaireMaturityError::MathOverflow)?;
         storage::set_current_epoch_id(&env, new_epoch_id);
 
         let new_epoch = EpochRecord {
@@ -138,7 +177,10 @@ impl MaturityEngine {
         };
 
         storage::set_epoch(&env, new_epoch_id, &new_epoch);
-        env.events().publish((Symbol::new(&env, "epoch_opened"),), (new_epoch_id, maturity_ledger, current_sequence));
+        env.events().publish(
+            (Symbol::new(&env, "epoch_opened"),),
+            (new_epoch_id, maturity_ledger, current_sequence),
+        );
 
         Self::assert_invariant(env.clone())?;
         Ok(new_epoch_id)
@@ -157,8 +199,9 @@ impl MaturityEngine {
 
         epoch.state = EpochState::Settled;
         storage::set_epoch(&env, epoch_id, &epoch);
-        
-        env.events().publish((Symbol::new(&env, "epoch_settled"),), (epoch_id,));
+
+        env.events()
+            .publish((Symbol::new(&env, "epoch_settled"),), (epoch_id,));
 
         Self::assert_invariant(env.clone())?;
         Ok(())
@@ -176,8 +219,9 @@ impl MaturityEngine {
         epoch.state = EpochState::Archived;
         storage::set_epoch(&env, epoch_id, &epoch);
 
-        env.events().publish((Symbol::new(&env, "epoch_archived"),), (epoch_id,));
-        
+        env.events()
+            .publish((Symbol::new(&env, "epoch_archived"),), (epoch_id,));
+
         Self::assert_invariant(env.clone())?;
         Ok(())
     }
@@ -218,7 +262,9 @@ impl MaturityEngine {
 
     pub fn next_epoch(env: Env) -> Result<u32, NovaireMaturityError> {
         let current_id = storage::get_current_epoch_id(&env);
-        current_id.checked_add(1).ok_or(NovaireMaturityError::MathOverflow)
+        current_id
+            .checked_add(1)
+            .ok_or(NovaireMaturityError::MathOverflow)
     }
 
     pub fn epoch_history(env: Env, epoch_id: u32) -> Result<EpochRecord, NovaireMaturityError> {
@@ -239,7 +285,9 @@ impl MaturityEngine {
                 let state = Self::evaluate_state(&env, &epoch);
                 if state == EpochState::Active {
                     is_active = true;
-                    ttm = epoch.maturity_ledger.saturating_sub(env.ledger().sequence());
+                    ttm = epoch
+                        .maturity_ledger
+                        .saturating_sub(env.ledger().sequence());
                 }
             }
         }
@@ -305,7 +353,7 @@ mod tests {
     #[test]
     fn test_lifecycle_and_invariants() {
         let (env, _admin, me_client) = setup_env();
-        
+
         let start_ledger = 100;
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: start_ledger,
@@ -316,7 +364,7 @@ mod tests {
         let maturity = start_ledger + 1000;
         let epoch_id = me_client.open_epoch(&maturity);
         assert_eq!(epoch_id, 1);
-        
+
         assert!(me_client.is_active());
         assert!(!me_client.is_settled());
         assert_eq!(me_client.time_to_maturity(), 1000);
@@ -341,7 +389,7 @@ mod tests {
         });
 
         assert!(!me_client.is_active()); // dynamic check
-        
+
         me_client.settle_epoch(&epoch_id);
         assert!(me_client.is_settled());
 
@@ -352,13 +400,13 @@ mod tests {
         // 3. Archive
         me_client.archive_epoch(&epoch_id);
         assert!(!me_client.is_settled()); // it is now archived, not settled
-        
+
         let epoch = me_client.get_epoch(&epoch_id);
         assert_eq!(epoch.state, EpochState::Archived);
 
         // 4. Next Epoch
         assert_eq!(me_client.next_epoch(), 2);
-        
+
         let new_maturity = maturity + 1 + 1000;
         let new_epoch_id = me_client.open_epoch(&new_maturity);
         assert_eq!(new_epoch_id, 2);
@@ -367,10 +415,11 @@ mod tests {
     #[test]
     fn test_sequential_epoch_lifecycle() {
         let (env, _admin, me_client) = setup_env();
-        
+
         let mut sequence = 100;
-        
-        for i in 1..=50 { // Using 50 to keep test execution fast
+
+        for i in 1..=50 {
+            // Using 50 to keep test execution fast
             env.ledger().set(soroban_sdk::testutils::LedgerInfo {
                 sequence_number: sequence,
                 ..env.ledger().get()
@@ -390,7 +439,7 @@ mod tests {
 
             // Archive
             me_client.archive_epoch(&epoch_id);
-            
+
             sequence += 1;
         }
 
@@ -400,14 +449,14 @@ mod tests {
             assert_eq!(epoch.epoch_id, i);
             assert_eq!(epoch.state, EpochState::Archived);
         }
-        
+
         assert_eq!(me_client.total_epochs(), 50);
     }
 
     #[test]
     fn test_ledger_boundaries() {
         let (env, _admin, me_client) = setup_env();
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: 100,
             ..env.ledger().get()
@@ -437,7 +486,7 @@ mod tests {
     #[test]
     fn test_invalid_transitions() {
         let (env, _admin, me_client) = setup_env();
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: 100,
             ..env.ledger().get()
@@ -447,26 +496,26 @@ mod tests {
 
         // Cannot archive Active epoch
         assert!(me_client.try_archive_epoch(&epoch_id).is_err());
-        
+
         // Advance to maturity
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: 200,
             ..env.ledger().get()
         });
-        
+
         // Cannot archive Matured epoch (must be settled first)
         assert!(me_client.try_archive_epoch(&epoch_id).is_err());
 
         me_client.settle_epoch(&epoch_id);
-        
+
         // Cannot double settle
         assert!(me_client.try_settle_epoch(&epoch_id).is_err());
 
         me_client.archive_epoch(&epoch_id);
-        
+
         // Cannot double archive
         assert!(me_client.try_archive_epoch(&epoch_id).is_err());
-        
+
         // Cannot settle archived
         assert!(me_client.try_settle_epoch(&epoch_id).is_err());
 
@@ -477,7 +526,7 @@ mod tests {
     #[test]
     fn test_read_apis() {
         let (env, _admin, me_client) = setup_env();
-        
+
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
             sequence_number: 100,
             ..env.ledger().get()
@@ -489,11 +538,11 @@ mod tests {
         assert!(me_client.try_current_epoch().is_err());
 
         me_client.open_epoch(&200);
-        
+
         assert_eq!(me_client.total_epochs(), 1);
         assert!(me_client.is_active());
         assert_eq!(me_client.time_to_maturity(), 100);
-        
+
         let status = me_client.protocol_status();
         assert!(status.is_active);
         assert_eq!(status.current_epoch_id, 1);

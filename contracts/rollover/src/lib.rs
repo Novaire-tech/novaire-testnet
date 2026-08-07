@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Address, Env, IntoVal};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal};
 
 #[soroban_sdk::contractclient(name = "PtTokenClient")]
 pub trait PtTokenInterface {
@@ -111,6 +111,12 @@ pub struct RolloverPosition {
     pub min_underlying_out: i128,
 }
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const PERSISTENT_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+
 mod storage {
     use super::*;
 
@@ -119,40 +125,76 @@ mod storage {
     }
 
     pub fn get_address(env: &Env, key: DataKey) -> Result<Address, NovaireRolloverError> {
-        env.storage().instance().get(&key).ok_or(NovaireRolloverError::StorageMissing)
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+        env.storage()
+            .instance()
+            .get(&key)
+            .ok_or(NovaireRolloverError::StorageMissing)
     }
-    
+
     pub fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     pub fn set_paused(env: &Env, state: bool) {
         env.storage().instance().set(&DataKey::Paused, &state);
     }
-    
+
     pub fn get_grace_period(env: &Env) -> u32 {
-        env.storage().instance().get(&DataKey::GracePeriodLedgers).unwrap_or(17280) // default 1 day
+        env.storage()
+            .instance()
+            .get(&DataKey::GracePeriodLedgers)
+            .unwrap_or(17280) // default 1 day
     }
 
     pub fn get_total_pt_held(env: &Env) -> i128 {
-        env.storage().instance().get(&DataKey::TotalPtHeld).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalPtHeld)
+            .unwrap_or(0)
     }
 
     pub fn set_total_pt_held(env: &Env, amount: i128) {
         env.storage().instance().set(&DataKey::TotalPtHeld, &amount);
     }
 
-    pub fn get_position(env: &Env, user: &Address) -> Result<RolloverPosition, NovaireRolloverError> {
-        env.storage().persistent().get(&DataKey::RolloverPositions(user.clone()))
-            .ok_or(NovaireRolloverError::PositionNotFound)
+    pub fn get_position(
+        env: &Env,
+        user: &Address,
+    ) -> Result<RolloverPosition, NovaireRolloverError> {
+        let key = DataKey::RolloverPositions(user.clone());
+        let pos = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(NovaireRolloverError::PositionNotFound)?;
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
+        Ok(pos)
     }
 
     pub fn set_position(env: &Env, user: &Address, pos: &RolloverPosition) {
-        env.storage().persistent().set(&DataKey::RolloverPositions(user.clone()), pos);
+        let key = DataKey::RolloverPositions(user.clone());
+        env.storage().persistent().set(&key, pos);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
-    
+
     pub fn remove_position(env: &Env, user: &Address) {
-        env.storage().persistent().remove(&DataKey::RolloverPositions(user.clone()));
+        env.storage()
+            .persistent()
+            .remove(&DataKey::RolloverPositions(user.clone()));
     }
 }
 
@@ -180,18 +222,31 @@ impl AutonomousRollover {
         }
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Tokenizer, &tokenizer);
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &tokenizer);
         env.storage().instance().set(&DataKey::Vault, &vault);
-        env.storage().instance().set(&DataKey::Marketplace, &marketplace);
-        env.storage().instance().set(&DataKey::IntentEngine, &intent_engine);
+        env.storage()
+            .instance()
+            .set(&DataKey::Marketplace, &marketplace);
+        env.storage()
+            .instance()
+            .set(&DataKey::IntentEngine, &intent_engine);
         env.storage().instance().set(&DataKey::Keeper, &keeper);
         env.storage().instance().set(&DataKey::PtToken, &pt_token);
-        env.storage().instance().set(&DataKey::UnderlyingToken, &underlying_token);
+        env.storage()
+            .instance()
+            .set(&DataKey::UnderlyingToken, &underlying_token);
         env.storage().instance().set(&DataKey::Factory, &factory);
-        env.storage().instance().set(&DataKey::GracePeriodLedgers, &grace_period_ledgers);
-        
+        env.storage()
+            .instance()
+            .set(&DataKey::GracePeriodLedgers, &grace_period_ledgers);
+
         storage::set_paused(&env, false);
         storage::set_total_pt_held(&env, 0);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         Ok(())
     }
@@ -219,7 +274,7 @@ impl AutonomousRollover {
         min_underlying_out: i128,
     ) -> Result<(), NovaireRolloverError> {
         user.require_auth();
-        
+
         if storage::is_paused(&env) {
             return Err(NovaireRolloverError::Paused);
         }
@@ -239,7 +294,7 @@ impl AutonomousRollover {
 
         let user_bal = pt_client.balance(&user);
         if user_bal < pt_amount {
-            return Err(NovaireRolloverError::ZeroAmount); 
+            return Err(NovaireRolloverError::ZeroAmount);
         }
 
         let contract_addr = env.current_contract_address();
@@ -248,7 +303,7 @@ impl AutonomousRollover {
         let position = RolloverPosition {
             active: true,
             pt_balance: pt_amount,
-            initial_principal: pt_amount, 
+            initial_principal: pt_amount,
             current_epoch_maturity,
             min_rate_bps,
             created_ledger: env.ledger().sequence(),
@@ -259,9 +314,14 @@ impl AutonomousRollover {
         };
 
         storage::set_position(&env, &user, &position);
-        
+
         let current_total = storage::get_total_pt_held(&env);
-        storage::set_total_pt_held(&env, current_total.checked_add(pt_amount).ok_or(NovaireRolloverError::MathOverflow)?);
+        storage::set_total_pt_held(
+            &env,
+            current_total
+                .checked_add(pt_amount)
+                .ok_or(NovaireRolloverError::MathOverflow)?,
+        );
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "rollover_started"), user),
@@ -289,8 +349,11 @@ impl AutonomousRollover {
 
         // Keeper Fallback Grace Period
         let grace_period = storage::get_grace_period(&env);
-        let grace_expiration = position.current_epoch_maturity.checked_add(grace_period).ok_or(NovaireRolloverError::MathOverflow)?;
-        
+        let grace_expiration = position
+            .current_epoch_maturity
+            .checked_add(grace_period)
+            .ok_or(NovaireRolloverError::MathOverflow)?;
+
         if current_ledger <= grace_expiration {
             let keeper = storage::get_address(&env, DataKey::Keeper)?;
             keeper.require_auth();
@@ -308,10 +371,10 @@ impl AutonomousRollover {
         // 2. Discover next epoch explicitly via Linked Epochs Routing
         let factory_addr = storage::get_address(&env, DataKey::Factory)?;
         let factory_client = FactoryClient::new(&env, &factory_addr);
-        
+
         let current_epoch = factory_client.get_epoch_by_maturity(&position.current_epoch_maturity);
         let next_epoch = factory_client.get_next_epoch(&current_epoch.epoch_id);
-        
+
         if next_epoch.maturity_ledger <= current_ledger {
             return Err(NovaireRolloverError::NextEpochNotSet);
         }
@@ -319,8 +382,11 @@ impl AutonomousRollover {
         // 3. Intent Engine Fixed Yield Intent
         let intent_engine_addr = storage::get_address(&env, DataKey::IntentEngine)?;
         let intent_engine_client = IntentEngineClient::new(&env, &intent_engine_addr);
-        
-        let min_implied_rate = position.min_rate_bps.checked_mul(100_000).ok_or(NovaireRolloverError::MathOverflow)?;
+
+        let min_implied_rate = position
+            .min_rate_bps
+            .checked_mul(100_000)
+            .ok_or(NovaireRolloverError::MathOverflow)?;
 
         let underlying_addr = storage::get_address(&env, DataKey::UnderlyingToken)?;
         let underlying_client = UnderlyingTokenClient::new(&env, &underlying_addr);
@@ -369,9 +435,14 @@ impl AutonomousRollover {
         }
 
         // 4. Update Independent Yield Metrics
-        position.protocol_yield_earned = position.protocol_yield_earned.checked_add(yt_proceeds).ok_or(NovaireRolloverError::MathOverflow)?;
+        position.protocol_yield_earned = position
+            .protocol_yield_earned
+            .checked_add(yt_proceeds)
+            .ok_or(NovaireRolloverError::MathOverflow)?;
         let pt_growth = core::cmp::max(0, underlying_redeemed - position.initial_principal);
-        position.realized_pnl = pt_growth.checked_add(position.protocol_yield_earned).ok_or(NovaireRolloverError::MathOverflow)?;
+        position.realized_pnl = pt_growth
+            .checked_add(position.protocol_yield_earned)
+            .ok_or(NovaireRolloverError::MathOverflow)?;
 
         // 5. Update position
         let old_pt = position.pt_balance;
@@ -383,8 +454,11 @@ impl AutonomousRollover {
         storage::set_position(&env, &user, &position);
 
         let current_total = storage::get_total_pt_held(&env);
-        let new_total = current_total.checked_sub(old_pt).ok_or(NovaireRolloverError::MathUnderflow)?
-            .checked_add(new_pt).ok_or(NovaireRolloverError::MathOverflow)?;
+        let new_total = current_total
+            .checked_sub(old_pt)
+            .ok_or(NovaireRolloverError::MathUnderflow)?
+            .checked_add(new_pt)
+            .ok_or(NovaireRolloverError::MathOverflow)?;
         storage::set_total_pt_held(&env, new_total);
 
         env.events().publish(
@@ -419,9 +493,14 @@ impl AutonomousRollover {
         pt_client.transfer(&contract_addr, &user, &position.pt_balance);
 
         storage::remove_position(&env, &user);
-        
+
         let current_total = storage::get_total_pt_held(&env);
-        storage::set_total_pt_held(&env, current_total.checked_sub(position.pt_balance).ok_or(NovaireRolloverError::MathUnderflow)?);
+        storage::set_total_pt_held(
+            &env,
+            current_total
+                .checked_sub(position.pt_balance)
+                .ok_or(NovaireRolloverError::MathUnderflow)?,
+        );
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "rollover_cancelled"), user),
@@ -441,7 +520,7 @@ impl AutonomousRollover {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Keeper, &new_keeper);
-        
+
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "keeper_updated"), new_keeper),
             (),
@@ -451,7 +530,7 @@ impl AutonomousRollover {
 
     fn assert_invariant(env: &Env) -> Result<(), NovaireRolloverError> {
         let contract_addr = env.current_contract_address();
-        
+
         if let Ok(underlying_addr) = storage::get_address(env, DataKey::UnderlyingToken) {
             let underlying_client = UnderlyingTokenClient::new(env, &underlying_addr);
             if underlying_client.balance(&contract_addr) > 0 {

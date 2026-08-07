@@ -1,6 +1,9 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractclient, contractimpl, contracttype, Address, Env, String, Symbol};
+use soroban_sdk::{
+    contract, contractclient, contracterror, contractimpl, contracttype, Address, Env, String,
+    Symbol,
+};
 
 /// Cross-contract client for reading the live SY exchange rate.
 #[contractclient(name = "SyWrapperClient")]
@@ -85,6 +88,12 @@ pub struct YtMetadata {
 const VERSION: u32 = 2;
 const YIELD_SCALAR: i128 = 1_000_000_000;
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const PERSISTENT_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+
 mod storage {
     use super::*;
 
@@ -93,7 +102,10 @@ mod storage {
     }
 
     pub fn get_admin(env: &Env) -> Result<Address, NovaireYtError> {
-        env.storage().instance().get(&DataKey::Admin).ok_or(NovaireYtError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NovaireYtError::StorageMissing)
     }
 
     pub fn get_pending_admin(env: &Env) -> Option<Address> {
@@ -101,7 +113,10 @@ mod storage {
     }
 
     pub fn get_tokenizer(env: &Env) -> Result<Address, NovaireYtError> {
-        env.storage().instance().get(&DataKey::Tokenizer).ok_or(NovaireYtError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Tokenizer)
+            .ok_or(NovaireYtError::StorageMissing)
     }
 
     pub fn get_sy_wrapper(env: &Env) -> Option<Address> {
@@ -109,19 +124,31 @@ mod storage {
     }
 
     pub fn get_maturity_ledger(env: &Env) -> Result<u32, NovaireYtError> {
-        env.storage().instance().get(&DataKey::MaturityLedger).ok_or(NovaireYtError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::MaturityLedger)
+            .ok_or(NovaireYtError::StorageMissing)
     }
 
     pub fn get_maturity_engine(env: &Env) -> Result<Address, NovaireYtError> {
-        env.storage().instance().get(&DataKey::MaturityEngine).ok_or(NovaireYtError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::MaturityEngine)
+            .ok_or(NovaireYtError::StorageMissing)
     }
 
     pub fn get_maturity_engine_epoch_id(env: &Env) -> Result<u32, NovaireYtError> {
-        env.storage().instance().get(&DataKey::MaturityEngineEpochId).ok_or(NovaireYtError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::MaturityEngineEpochId)
+            .ok_or(NovaireYtError::StorageMissing)
     }
 
     pub fn get_total_supply(env: &Env) -> i128 {
-        env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalSupply)
+            .unwrap_or(0)
     }
 
     pub fn set_total_supply(env: &Env, supply: i128) {
@@ -129,7 +156,10 @@ mod storage {
     }
 
     pub fn get_yield_index(env: &Env) -> i128 {
-        env.storage().instance().get(&DataKey::YieldIndex).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::YieldIndex)
+            .unwrap_or(0)
     }
 
     pub fn set_yield_index(env: &Env, index: i128) {
@@ -137,48 +167,114 @@ mod storage {
     }
 
     pub fn get_balance(env: &Env, user: &Address) -> i128 {
-        env.storage().persistent().get(&DataKey::Balance(user.clone())).unwrap_or(0)
+        let key = DataKey::Balance(user.clone());
+        let balance = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        balance
     }
 
     pub fn set_balance(env: &Env, user: &Address, balance: i128) {
-        env.storage().persistent().set(&DataKey::Balance(user.clone()), &balance);
+        let key = DataKey::Balance(user.clone());
+        env.storage().persistent().set(&key, &balance);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     pub fn get_allowance(env: &Env, owner: &Address, spender: &Address) -> i128 {
-        env.storage().persistent().get(&DataKey::Allowance(owner.clone(), spender.clone())).unwrap_or(0)
+        let key = DataKey::Allowance(owner.clone(), spender.clone());
+        let allowance = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        allowance
     }
 
     pub fn set_allowance(env: &Env, owner: &Address, spender: &Address, amount: i128) {
-        env.storage().persistent().set(&DataKey::Allowance(owner.clone(), spender.clone()), &amount);
+        let key = DataKey::Allowance(owner.clone(), spender.clone());
+        env.storage().persistent().set(&key, &amount);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     pub fn get_user_yield_index(env: &Env, user: &Address) -> i128 {
-        env.storage().persistent().get(&DataKey::UserYieldIndex(user.clone())).unwrap_or(0)
+        let key = DataKey::UserYieldIndex(user.clone());
+        let index = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        index
     }
 
     pub fn set_user_yield_index(env: &Env, user: &Address, index: i128) {
-        env.storage().persistent().set(&DataKey::UserYieldIndex(user.clone()), &index);
+        let key = DataKey::UserYieldIndex(user.clone());
+        env.storage().persistent().set(&key, &index);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     pub fn get_accrued_yield(env: &Env, user: &Address) -> i128 {
-        env.storage().persistent().get(&DataKey::AccruedYield(user.clone())).unwrap_or(0)
+        let key = DataKey::AccruedYield(user.clone());
+        let accrued = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        accrued
     }
 
     pub fn set_accrued_yield(env: &Env, user: &Address, accrued: i128) {
-        env.storage().persistent().set(&DataKey::AccruedYield(user.clone()), &accrued);
+        let key = DataKey::AccruedYield(user.clone());
+        env.storage().persistent().set(&key, &accrued);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     pub fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     pub fn require_not_paused(env: &Env) -> Result<(), NovaireYtError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         if is_paused(env) {
             return Err(NovaireYtError::Paused);
         }
         Ok(())
     }
-    
+
     /// Delegates to MaturityEngine (the canonical epoch clock) rather than
     /// comparing the locally stored maturity ledger to the current sequence.
     /// Anything other than Active (0) — Matured, Settled, or Archived — counts
@@ -193,8 +289,8 @@ mod storage {
 }
 
 /// # Novaire Yield Token (YT)
-/// 
-/// The YT Token is a protocol-owned primitive representing ownership of 
+///
+/// The YT Token is a protocol-owned primitive representing ownership of
 /// future yield until maturity inside the Novaire protocol.
 ///
 /// ## Protocol Invariants
@@ -220,22 +316,43 @@ impl YtToken {
     ///
     /// # Errors
     /// Returns `AlreadyInitialized` if called more than once.
-    pub fn initialize(env: Env, admin: Address, tokenizer: Address, maturity_ledger: u32, sy_wrapper: Address, maturity_engine: Address, maturity_engine_epoch_id: u32) -> Result<(), NovaireYtError> {
+    pub fn initialize(
+        env: Env,
+        admin: Address,
+        tokenizer: Address,
+        maturity_ledger: u32,
+        sy_wrapper: Address,
+        maturity_engine: Address,
+        maturity_engine_epoch_id: u32,
+    ) -> Result<(), NovaireYtError> {
         if storage::is_initialized(&env) {
             return Err(NovaireYtError::AlreadyInitialized);
         }
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Tokenizer, &tokenizer);
-        env.storage().instance().set(&DataKey::MaturityLedger, &maturity_ledger);
-        env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
-        env.storage().instance().set(&DataKey::MaturityEngine, &maturity_engine);
-        env.storage().instance().set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &tokenizer);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityLedger, &maturity_ledger);
+        env.storage()
+            .instance()
+            .set(&DataKey::SyWrapper, &sy_wrapper);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityEngine, &maturity_engine);
+        env.storage()
+            .instance()
+            .set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
 
         storage::set_total_supply(&env, 0i128);
         storage::set_yield_index(&env, 0i128);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         Ok(())
     }
@@ -245,8 +362,8 @@ impl YtToken {
     // ==========================================
 
     /// Updates the global yield index.
-    /// 
-    /// **Strictly restricted to the Tokenizer contract.** 
+    ///
+    /// **Strictly restricted to the Tokenizer contract.**
     ///
     /// # Arguments
     /// * `new_index` - The new global yield index.
@@ -264,8 +381,9 @@ impl YtToken {
         }
 
         storage::set_yield_index(&env, new_index);
-        
-        env.events().publish((Symbol::new(&env, "yt_index_updated"),), new_index);
+
+        env.events()
+            .publish((Symbol::new(&env, "yt_index_updated"),), new_index);
         Ok(())
     }
 
@@ -289,18 +407,28 @@ impl YtToken {
     /// exactly, but reads `total_supply`/`yield_index` from this contract's own
     /// storage directly instead of over a cross-contract call (see
     /// `TokenizerInterface`'s doc comment for why).
-    fn compute_local_index_preview(env: &Env, current_surplus_raw: i128, last_surplus_raw: i128) -> Result<i128, NovaireYtError> {
+    fn compute_local_index_preview(
+        env: &Env,
+        current_surplus_raw: i128,
+        last_surplus_raw: i128,
+    ) -> Result<i128, NovaireYtError> {
         let old_index = storage::get_yield_index(env);
         let total_yt_supply = storage::get_total_supply(env);
 
         if total_yt_supply > 0 && current_surplus_raw > last_surplus_raw {
-            let delta_surplus_raw = current_surplus_raw.checked_sub(last_surplus_raw).ok_or(NovaireYtError::MathUnderflow)?;
+            let delta_surplus_raw = current_surplus_raw
+                .checked_sub(last_surplus_raw)
+                .ok_or(NovaireYtError::MathUnderflow)?;
             let delta_surplus_underlying = delta_surplus_raw / YIELD_SCALAR;
             if delta_surplus_underlying > 0 {
                 let delta_reward_per_yt = delta_surplus_underlying
-                    .checked_mul(YIELD_SCALAR).ok_or(NovaireYtError::MathOverflow)?
-                    .checked_div(total_yt_supply).ok_or(NovaireYtError::MathUnderflow)?;
-                return old_index.checked_add(delta_reward_per_yt).ok_or(NovaireYtError::MathOverflow);
+                    .checked_mul(YIELD_SCALAR)
+                    .ok_or(NovaireYtError::MathOverflow)?
+                    .checked_div(total_yt_supply)
+                    .ok_or(NovaireYtError::MathUnderflow)?;
+                return old_index
+                    .checked_add(delta_reward_per_yt)
+                    .ok_or(NovaireYtError::MathOverflow);
             }
         }
         Ok(old_index)
@@ -329,12 +457,15 @@ impl YtToken {
         };
         let tokenizer_client = TokenizerClient::new(env, &tokenizer_addr);
 
-        let (current_surplus_raw, last_surplus_raw) = match tokenizer_client.try_get_surplus_snapshot() {
-            Ok(Ok(snapshot)) => snapshot,
-            _ => return,
-        };
+        let (current_surplus_raw, last_surplus_raw) =
+            match tokenizer_client.try_get_surplus_snapshot() {
+                Ok(Ok(snapshot)) => snapshot,
+                _ => return,
+            };
 
-        if let Ok(new_index) = Self::compute_local_index_preview(env, current_surplus_raw, last_surplus_raw) {
+        if let Ok(new_index) =
+            Self::compute_local_index_preview(env, current_surplus_raw, last_surplus_raw)
+        {
             let old_index = storage::get_yield_index(env);
             if new_index > old_index {
                 storage::set_yield_index(env, new_index);
@@ -350,24 +481,33 @@ impl YtToken {
         let balance = storage::get_balance(env, user);
 
         if balance > 0 && current_index > user_index {
-            let index_delta = current_index.checked_sub(user_index).ok_or(NovaireYtError::MathUnderflow)?;
-            let scaled_yield = index_delta.checked_mul(balance).ok_or(NovaireYtError::MathOverflow)?;
+            let index_delta = current_index
+                .checked_sub(user_index)
+                .ok_or(NovaireYtError::MathUnderflow)?;
+            let scaled_yield = index_delta
+                .checked_mul(balance)
+                .ok_or(NovaireYtError::MathOverflow)?;
             let yield_earned = scaled_yield / YIELD_SCALAR; // Integer division is safe here
-            
+
             let mut accrued = storage::get_accrued_yield(env, user);
-            accrued = accrued.checked_add(yield_earned).ok_or(NovaireYtError::MathOverflow)?;
+            accrued = accrued
+                .checked_add(yield_earned)
+                .ok_or(NovaireYtError::MathOverflow)?;
             storage::set_accrued_yield(env, user, accrued);
-            
-            env.events().publish((Symbol::new(env, "yt_checkpoint"), user.clone()), (current_index, accrued));
+
+            env.events().publish(
+                (Symbol::new(env, "yt_checkpoint"), user.clone()),
+                (current_index, accrued),
+            );
         }
-        
+
         storage::set_user_yield_index(env, user, current_index);
         Ok(())
     }
 
     /// Resets the claimable yield for a user to zero after they successfully claim.
     ///
-    /// **Strictly restricted to the Tokenizer contract.** 
+    /// **Strictly restricted to the Tokenizer contract.**
     ///
     /// # Arguments
     /// * `user` - The address whose claimable yield is reset.
@@ -377,7 +517,7 @@ impl YtToken {
     pub fn reset_claimable(env: Env, user: Address) -> Result<(), NovaireYtError> {
         let tokenizer = storage::get_tokenizer(&env)?;
         tokenizer.require_auth();
-        
+
         // Ensure user is fully checkpointed before resetting.
         Self::internal_checkpoint_user(&env, &user)?;
         storage::set_accrued_yield(&env, &user, 0i128);
@@ -386,7 +526,7 @@ impl YtToken {
 
     /// Credits historical yield directly to a user's accrued yield balance.
     ///
-    /// **Strictly restricted to the Tokenizer contract.** 
+    /// **Strictly restricted to the Tokenizer contract.**
     /// Used during late minting to restore economic identity by crediting the
     /// historically backed yield that has accumulated since epoch genesis.
     ///
@@ -399,24 +539,27 @@ impl YtToken {
     pub fn add_accrued_yield(env: Env, user: Address, amount: i128) -> Result<(), NovaireYtError> {
         let tokenizer = storage::get_tokenizer(&env)?;
         tokenizer.require_auth();
-        
+
         if amount < 0 {
             return Err(NovaireYtError::InvalidAmount);
         }
-        
+
         if amount > 0 {
             let mut accrued = storage::get_accrued_yield(&env, &user);
-            accrued = accrued.checked_add(amount).ok_or(NovaireYtError::MathOverflow)?;
+            accrued = accrued
+                .checked_add(amount)
+                .ok_or(NovaireYtError::MathOverflow)?;
             storage::set_accrued_yield(&env, &user, accrued);
-            env.events().publish((Symbol::new(&env, "yt_historical_credit"), user), amount);
+            env.events()
+                .publish((Symbol::new(&env, "yt_historical_credit"), user), amount);
         }
-        
+
         Ok(())
     }
 
     /// Mints new YT tokens to the designated address.
-    /// 
-    /// **Strictly restricted to the Tokenizer contract.** 
+    ///
+    /// **Strictly restricted to the Tokenizer contract.**
     ///
     /// # Arguments
     /// * `to` - The address receiving the minted tokens.
@@ -436,20 +579,27 @@ impl YtToken {
         Self::internal_checkpoint_user(&env, &to)?;
 
         let mut total_supply = storage::get_total_supply(&env);
-        total_supply = total_supply.checked_add(amount).ok_or(NovaireYtError::MathOverflow)?;
+        total_supply = total_supply
+            .checked_add(amount)
+            .ok_or(NovaireYtError::MathOverflow)?;
         storage::set_total_supply(&env, total_supply);
 
         let mut balance = storage::get_balance(&env, &to);
-        balance = balance.checked_add(amount).ok_or(NovaireYtError::MathOverflow)?;
+        balance = balance
+            .checked_add(amount)
+            .ok_or(NovaireYtError::MathOverflow)?;
         storage::set_balance(&env, &to, balance);
 
-        env.events().publish((Symbol::new(&env, "yt_mint"), tokenizer, to), (amount, total_supply));
+        env.events().publish(
+            (Symbol::new(&env, "yt_mint"), tokenizer, to),
+            (amount, total_supply),
+        );
         Ok(())
     }
 
     /// Burns YT tokens from the designated address.
-    /// 
-    /// **Strictly restricted to the Tokenizer contract.** 
+    ///
+    /// **Strictly restricted to the Tokenizer contract.**
     ///
     /// # Arguments
     /// * `from` - The address burning the tokens.
@@ -472,14 +622,21 @@ impl YtToken {
         if balance < amount {
             return Err(NovaireYtError::InsufficientBalance);
         }
-        balance = balance.checked_sub(amount).ok_or(NovaireYtError::MathUnderflow)?;
+        balance = balance
+            .checked_sub(amount)
+            .ok_or(NovaireYtError::MathUnderflow)?;
         storage::set_balance(&env, &from, balance);
 
         let mut total_supply = storage::get_total_supply(&env);
-        total_supply = total_supply.checked_sub(amount).ok_or(NovaireYtError::MathUnderflow)?;
+        total_supply = total_supply
+            .checked_sub(amount)
+            .ok_or(NovaireYtError::MathUnderflow)?;
         storage::set_total_supply(&env, total_supply);
 
-        env.events().publish((Symbol::new(&env, "yt_burn"), tokenizer, from), (amount, total_supply));
+        env.events().publish(
+            (Symbol::new(&env, "yt_burn"), tokenizer, from),
+            (amount, total_supply),
+        );
         Ok(())
     }
 
@@ -490,7 +647,7 @@ impl YtToken {
     /// Transfers tokens from the caller to a recipient.
     /// Checkpoints both sender and recipient before transferring balances.
     ///
-    /// Note: Transfers intentionally bypass the `pause` mechanism to preserve 
+    /// Note: Transfers intentionally bypass the `pause` mechanism to preserve
     /// secondary market liquidity as an escape valve during protocol emergencies.
     ///
     /// # Arguments
@@ -500,7 +657,12 @@ impl YtToken {
     ///
     /// # Errors
     /// Returns `InvalidAmount`, `InsufficientBalance`, `MathOverflow`, or `MathUnderflow`.
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<(), NovaireYtError> {
+    pub fn transfer(
+        env: Env,
+        from: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), NovaireYtError> {
         from.require_auth();
 
         if amount <= 0 {
@@ -520,19 +682,30 @@ impl YtToken {
         if from_balance < amount {
             return Err(NovaireYtError::InsufficientBalance);
         }
-        from_balance = from_balance.checked_sub(amount).ok_or(NovaireYtError::MathUnderflow)?;
+        from_balance = from_balance
+            .checked_sub(amount)
+            .ok_or(NovaireYtError::MathUnderflow)?;
         storage::set_balance(&env, &from, from_balance);
 
         let mut to_balance = storage::get_balance(&env, &to);
-        to_balance = to_balance.checked_add(amount).ok_or(NovaireYtError::MathOverflow)?;
+        to_balance = to_balance
+            .checked_add(amount)
+            .ok_or(NovaireYtError::MathOverflow)?;
         storage::set_balance(&env, &to, to_balance);
 
-        env.events().publish((Symbol::new(&env, "transfer"), from, to), amount);
+        env.events()
+            .publish((Symbol::new(&env, "transfer"), from, to), amount);
         Ok(())
     }
 
     /// Approves a spender to transfer up to `amount` of the caller's tokens.
-    pub fn approve(env: Env, from: Address, spender: Address, amount: i128, _expiration_ledger: u32) -> Result<(), NovaireYtError> {
+    pub fn approve(
+        env: Env,
+        from: Address,
+        spender: Address,
+        amount: i128,
+        _expiration_ledger: u32,
+    ) -> Result<(), NovaireYtError> {
         from.require_auth();
 
         if amount < 0 {
@@ -540,13 +713,20 @@ impl YtToken {
         }
 
         storage::set_allowance(&env, &from, &spender, amount);
-        env.events().publish((Symbol::new(&env, "approve"), from, spender), amount);
+        env.events()
+            .publish((Symbol::new(&env, "approve"), from, spender), amount);
         Ok(())
     }
 
     /// Transfers tokens from one address to another using an allowance.
     /// Checkpoints both sender and recipient.
-    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) -> Result<(), NovaireYtError> {
+    pub fn transfer_from(
+        env: Env,
+        spender: Address,
+        from: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), NovaireYtError> {
         spender.require_auth();
 
         if amount <= 0 {
@@ -564,21 +744,28 @@ impl YtToken {
         if allowance < amount {
             return Err(NovaireYtError::InsufficientAllowance);
         }
-        allowance = allowance.checked_sub(amount).ok_or(NovaireYtError::MathUnderflow)?;
+        allowance = allowance
+            .checked_sub(amount)
+            .ok_or(NovaireYtError::MathUnderflow)?;
         storage::set_allowance(&env, &from, &spender, allowance);
 
         let mut from_balance = storage::get_balance(&env, &from);
         if from_balance < amount {
             return Err(NovaireYtError::InsufficientBalance);
         }
-        from_balance = from_balance.checked_sub(amount).ok_or(NovaireYtError::MathUnderflow)?;
+        from_balance = from_balance
+            .checked_sub(amount)
+            .ok_or(NovaireYtError::MathUnderflow)?;
         storage::set_balance(&env, &from, from_balance);
 
         let mut to_balance = storage::get_balance(&env, &to);
-        to_balance = to_balance.checked_add(amount).ok_or(NovaireYtError::MathOverflow)?;
+        to_balance = to_balance
+            .checked_add(amount)
+            .ok_or(NovaireYtError::MathOverflow)?;
         storage::set_balance(&env, &to, to_balance);
 
-        env.events().publish((Symbol::new(&env, "transfer"), from, to), amount);
+        env.events()
+            .publish((Symbol::new(&env, "transfer"), from, to), amount);
         Ok(())
     }
 
@@ -591,8 +778,11 @@ impl YtToken {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &true);
-        
-        env.events().publish((Symbol::new(&env, "yt_paused"), admin), env.ledger().sequence());
+
+        env.events().publish(
+            (Symbol::new(&env, "yt_paused"), admin),
+            env.ledger().sequence(),
+        );
         Ok(())
     }
 
@@ -602,7 +792,10 @@ impl YtToken {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
 
-        env.events().publish((Symbol::new(&env, "yt_unpaused"), admin), env.ledger().sequence());
+        env.events().publish(
+            (Symbol::new(&env, "yt_unpaused"), admin),
+            env.ledger().sequence(),
+        );
         Ok(())
     }
 
@@ -610,9 +803,14 @@ impl YtToken {
     pub fn set_tokenizer(env: Env, new_tokenizer: Address) -> Result<(), NovaireYtError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::Tokenizer, &new_tokenizer);
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &new_tokenizer);
 
-        env.events().publish((Symbol::new(&env, "tokenizer_transferred"), admin), new_tokenizer);
+        env.events().publish(
+            (Symbol::new(&env, "tokenizer_transferred"), admin),
+            new_tokenizer,
+        );
         Ok(())
     }
 
@@ -622,9 +820,12 @@ impl YtToken {
     pub fn set_sy_wrapper(env: Env, sy_wrapper: Address) -> Result<(), NovaireYtError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
+        env.storage()
+            .instance()
+            .set(&DataKey::SyWrapper, &sy_wrapper);
 
-        env.events().publish((Symbol::new(&env, "sy_wrapper_set"), admin), sy_wrapper);
+        env.events()
+            .publish((Symbol::new(&env, "sy_wrapper_set"), admin), sy_wrapper);
         Ok(())
     }
 
@@ -632,20 +833,27 @@ impl YtToken {
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), NovaireYtError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
 
-        env.events().publish((Symbol::new(&env, "yt_admin_transfer"), admin), new_admin);
+        env.events()
+            .publish((Symbol::new(&env, "yt_admin_transfer"), admin), new_admin);
         Ok(())
     }
 
     /// Accepts a pending admin transfer, finalizing the change of administration.
     pub fn accept_admin(env: Env) -> Result<(), NovaireYtError> {
-        let pending_admin: Address = storage::get_pending_admin(&env).ok_or(NovaireYtError::InvalidAdminTransfer)?;
+        let pending_admin: Address =
+            storage::get_pending_admin(&env).ok_or(NovaireYtError::InvalidAdminTransfer)?;
         pending_admin.require_auth();
-        env.storage().instance().set(&DataKey::Admin, &pending_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::Admin, &pending_admin);
         env.storage().instance().remove(&DataKey::PendingAdmin);
 
-        env.events().publish((Symbol::new(&env, "yt_admin_accepted"),), pending_admin);
+        env.events()
+            .publish((Symbol::new(&env, "yt_admin_accepted"),), pending_admin);
         Ok(())
     }
 
@@ -676,11 +884,12 @@ impl YtToken {
                         let tokenizer_client = TokenizerClient::new(&env, &tokenizer_addr);
                         match tokenizer_client.try_get_surplus_snapshot() {
                             Ok(Ok((current, last))) => {
-                                Self::compute_local_index_preview(&env, current, last).unwrap_or(stored_index)
-                            },
+                                Self::compute_local_index_preview(&env, current, last)
+                                    .unwrap_or(stored_index)
+                            }
                             _ => stored_index,
                         }
-                    },
+                    }
                     Err(_) => stored_index,
                 }
             }
@@ -688,12 +897,18 @@ impl YtToken {
 
         let mut pending = 0;
         if balance > 0 && effective_index > user_index {
-            let index_delta = effective_index.checked_sub(user_index).ok_or(NovaireYtError::MathUnderflow)?;
-            let scaled_yield = index_delta.checked_mul(balance).ok_or(NovaireYtError::MathOverflow)?;
+            let index_delta = effective_index
+                .checked_sub(user_index)
+                .ok_or(NovaireYtError::MathUnderflow)?;
+            let scaled_yield = index_delta
+                .checked_mul(balance)
+                .ok_or(NovaireYtError::MathOverflow)?;
             pending = scaled_yield / YIELD_SCALAR;
         }
 
-        let total = accrued.checked_add(pending).ok_or(NovaireYtError::MathOverflow)?;
+        let total = accrued
+            .checked_add(pending)
+            .ok_or(NovaireYtError::MathOverflow)?;
         Ok(total)
     }
 

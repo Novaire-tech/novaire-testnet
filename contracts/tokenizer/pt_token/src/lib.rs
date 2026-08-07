@@ -1,6 +1,8 @@
 #![no_std]
 
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, String, Symbol};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, Address, Env, String, Symbol,
+};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -43,6 +45,12 @@ pub struct PtMetadata {
 
 const VERSION: u32 = 1;
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const PERSISTENT_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const PERSISTENT_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+
 mod storage {
     use super::*;
 
@@ -51,7 +59,10 @@ mod storage {
     }
 
     pub fn get_admin(env: &Env) -> Result<Address, NovairePtError> {
-        env.storage().instance().get(&DataKey::Admin).ok_or(NovairePtError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NovairePtError::StorageMissing)
     }
 
     pub fn get_pending_admin(env: &Env) -> Option<Address> {
@@ -59,11 +70,17 @@ mod storage {
     }
 
     pub fn get_tokenizer(env: &Env) -> Result<Address, NovairePtError> {
-        env.storage().instance().get(&DataKey::Tokenizer).ok_or(NovairePtError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Tokenizer)
+            .ok_or(NovairePtError::StorageMissing)
     }
 
     pub fn get_total_supply(env: &Env) -> i128 {
-        env.storage().instance().get(&DataKey::TotalSupply).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalSupply)
+            .unwrap_or(0)
     }
 
     pub fn set_total_supply(env: &Env, supply: i128) {
@@ -71,26 +88,62 @@ mod storage {
     }
 
     pub fn get_balance(env: &Env, user: &Address) -> i128 {
-        env.storage().persistent().get(&DataKey::Balance(user.clone())).unwrap_or(0)
+        let key = DataKey::Balance(user.clone());
+        let balance = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        balance
     }
 
     pub fn set_balance(env: &Env, user: &Address, balance: i128) {
-        env.storage().persistent().set(&DataKey::Balance(user.clone()), &balance);
+        let key = DataKey::Balance(user.clone());
+        env.storage().persistent().set(&key, &balance);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     pub fn get_allowance(env: &Env, owner: &Address, spender: &Address) -> i128 {
-        env.storage().persistent().get(&DataKey::Allowance(owner.clone(), spender.clone())).unwrap_or(0)
+        let key = DataKey::Allowance(owner.clone(), spender.clone());
+        let allowance = env.storage().persistent().get(&key).unwrap_or(0);
+        if env.storage().persistent().has(&key) {
+            env.storage().persistent().extend_ttl(
+                &key,
+                PERSISTENT_LIFETIME_THRESHOLD,
+                PERSISTENT_BUMP_AMOUNT,
+            );
+        }
+        allowance
     }
 
     pub fn set_allowance(env: &Env, owner: &Address, spender: &Address, amount: i128) {
-        env.storage().persistent().set(&DataKey::Allowance(owner.clone(), spender.clone()), &amount);
+        let key = DataKey::Allowance(owner.clone(), spender.clone());
+        env.storage().persistent().set(&key, &amount);
+        env.storage().persistent().extend_ttl(
+            &key,
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
     }
 
     pub fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     pub fn require_not_paused(env: &Env) -> Result<(), NovairePtError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         if is_paused(env) {
             return Err(NovairePtError::Paused);
         }
@@ -99,8 +152,8 @@ mod storage {
 }
 
 /// # Novaire Principal Token (PT)
-/// 
-/// The PT Token is a protocol-owned primitive representing ownership of 
+///
+/// The PT Token is a protocol-owned primitive representing ownership of
 /// underlying principal inside the Novaire yield tokenization protocol.
 ///
 /// ## Protocol Invariants
@@ -132,9 +185,14 @@ impl PtToken {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Tokenizer, &tokenizer);
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &tokenizer);
         storage::set_total_supply(&env, 0i128);
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         Ok(())
     }
@@ -144,8 +202,8 @@ impl PtToken {
     // ==========================================
 
     /// Mints new PT tokens to the designated address.
-    /// 
-    /// **Strictly restricted to the Tokenizer contract.** 
+    ///
+    /// **Strictly restricted to the Tokenizer contract.**
     /// This ensures PT is only issued when underlying yield-bearing assets are securely locked.
     ///
     /// # Arguments
@@ -164,20 +222,27 @@ impl PtToken {
         }
 
         let mut total_supply = storage::get_total_supply(&env);
-        total_supply = total_supply.checked_add(amount).ok_or(NovairePtError::MathOverflow)?;
+        total_supply = total_supply
+            .checked_add(amount)
+            .ok_or(NovairePtError::MathOverflow)?;
         storage::set_total_supply(&env, total_supply);
 
         let mut balance = storage::get_balance(&env, &to);
-        balance = balance.checked_add(amount).ok_or(NovairePtError::MathOverflow)?;
+        balance = balance
+            .checked_add(amount)
+            .ok_or(NovairePtError::MathOverflow)?;
         storage::set_balance(&env, &to, balance);
 
-        env.events().publish((Symbol::new(&env, "mint"), tokenizer, to), (amount, total_supply));
+        env.events().publish(
+            (Symbol::new(&env, "mint"), tokenizer, to),
+            (amount, total_supply),
+        );
         Ok(())
     }
 
     /// Burns PT tokens from the designated address.
-    /// 
-    /// **Strictly restricted to the Tokenizer contract.** 
+    ///
+    /// **Strictly restricted to the Tokenizer contract.**
     /// Called when users redeem their PT for underlying assets at maturity.
     ///
     /// # Arguments
@@ -199,14 +264,21 @@ impl PtToken {
         if balance < amount {
             return Err(NovairePtError::InsufficientBalance);
         }
-        balance = balance.checked_sub(amount).ok_or(NovairePtError::MathUnderflow)?;
+        balance = balance
+            .checked_sub(amount)
+            .ok_or(NovairePtError::MathUnderflow)?;
         storage::set_balance(&env, &from, balance);
 
         let mut total_supply = storage::get_total_supply(&env);
-        total_supply = total_supply.checked_sub(amount).ok_or(NovairePtError::MathUnderflow)?;
+        total_supply = total_supply
+            .checked_sub(amount)
+            .ok_or(NovairePtError::MathUnderflow)?;
         storage::set_total_supply(&env, total_supply);
 
-        env.events().publish((Symbol::new(&env, "burn"), tokenizer, from), (amount, total_supply));
+        env.events().publish(
+            (Symbol::new(&env, "burn"), tokenizer, from),
+            (amount, total_supply),
+        );
         Ok(())
     }
 
@@ -216,7 +288,7 @@ impl PtToken {
 
     /// Transfers tokens from the caller to a recipient.
     ///
-    /// Note: Transfers intentionally bypass the `pause` mechanism to preserve 
+    /// Note: Transfers intentionally bypass the `pause` mechanism to preserve
     /// secondary market liquidity as an escape valve during protocol emergencies.
     ///
     /// # Arguments
@@ -226,7 +298,12 @@ impl PtToken {
     ///
     /// # Errors
     /// Returns `InvalidAmount`, `InsufficientBalance`, `MathOverflow`, or `MathUnderflow`.
-    pub fn transfer(env: Env, from: Address, to: Address, amount: i128) -> Result<(), NovairePtError> {
+    pub fn transfer(
+        env: Env,
+        from: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), NovairePtError> {
         from.require_auth();
 
         if amount <= 0 {
@@ -237,14 +314,19 @@ impl PtToken {
         if from_balance < amount {
             return Err(NovairePtError::InsufficientBalance);
         }
-        from_balance = from_balance.checked_sub(amount).ok_or(NovairePtError::MathUnderflow)?;
+        from_balance = from_balance
+            .checked_sub(amount)
+            .ok_or(NovairePtError::MathUnderflow)?;
         storage::set_balance(&env, &from, from_balance);
 
         let mut to_balance = storage::get_balance(&env, &to);
-        to_balance = to_balance.checked_add(amount).ok_or(NovairePtError::MathOverflow)?;
+        to_balance = to_balance
+            .checked_add(amount)
+            .ok_or(NovairePtError::MathOverflow)?;
         storage::set_balance(&env, &to, to_balance);
 
-        env.events().publish((Symbol::new(&env, "transfer"), from, to), amount);
+        env.events()
+            .publish((Symbol::new(&env, "transfer"), from, to), amount);
         Ok(())
     }
 
@@ -255,7 +337,13 @@ impl PtToken {
     /// * `spender` - The address granted allowance.
     /// * `amount` - The maximum amount the spender can transfer.
     /// * `expiration_ledger` - Unused parameter to maintain standard token interface compatibility.
-    pub fn approve(env: Env, from: Address, spender: Address, amount: i128, _expiration_ledger: u32) -> Result<(), NovairePtError> {
+    pub fn approve(
+        env: Env,
+        from: Address,
+        spender: Address,
+        amount: i128,
+        _expiration_ledger: u32,
+    ) -> Result<(), NovairePtError> {
         from.require_auth();
 
         if amount < 0 {
@@ -263,7 +351,8 @@ impl PtToken {
         }
 
         storage::set_allowance(&env, &from, &spender, amount);
-        env.events().publish((Symbol::new(&env, "approve"), from, spender), amount);
+        env.events()
+            .publish((Symbol::new(&env, "approve"), from, spender), amount);
         Ok(())
     }
 
@@ -274,7 +363,13 @@ impl PtToken {
     /// * `from` - The owner of the tokens.
     /// * `to` - The recipient of the tokens.
     /// * `amount` - The amount to transfer.
-    pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) -> Result<(), NovairePtError> {
+    pub fn transfer_from(
+        env: Env,
+        spender: Address,
+        from: Address,
+        to: Address,
+        amount: i128,
+    ) -> Result<(), NovairePtError> {
         spender.require_auth();
 
         if amount <= 0 {
@@ -285,21 +380,28 @@ impl PtToken {
         if allowance < amount {
             return Err(NovairePtError::InsufficientAllowance);
         }
-        allowance = allowance.checked_sub(amount).ok_or(NovairePtError::MathUnderflow)?;
+        allowance = allowance
+            .checked_sub(amount)
+            .ok_or(NovairePtError::MathUnderflow)?;
         storage::set_allowance(&env, &from, &spender, allowance);
 
         let mut from_balance = storage::get_balance(&env, &from);
         if from_balance < amount {
             return Err(NovairePtError::InsufficientBalance);
         }
-        from_balance = from_balance.checked_sub(amount).ok_or(NovairePtError::MathUnderflow)?;
+        from_balance = from_balance
+            .checked_sub(amount)
+            .ok_or(NovairePtError::MathUnderflow)?;
         storage::set_balance(&env, &from, from_balance);
 
         let mut to_balance = storage::get_balance(&env, &to);
-        to_balance = to_balance.checked_add(amount).ok_or(NovairePtError::MathOverflow)?;
+        to_balance = to_balance
+            .checked_add(amount)
+            .ok_or(NovairePtError::MathOverflow)?;
         storage::set_balance(&env, &to, to_balance);
 
-        env.events().publish((Symbol::new(&env, "transfer"), from, to), amount);
+        env.events()
+            .publish((Symbol::new(&env, "transfer"), from, to), amount);
         Ok(())
     }
 
@@ -312,8 +414,11 @@ impl PtToken {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &true);
-        
-        env.events().publish((Symbol::new(&env, "pt_paused"), admin), env.ledger().sequence());
+
+        env.events().publish(
+            (Symbol::new(&env, "pt_paused"), admin),
+            env.ledger().sequence(),
+        );
         Ok(())
     }
 
@@ -323,7 +428,10 @@ impl PtToken {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
 
-        env.events().publish((Symbol::new(&env, "pt_unpaused"), admin), env.ledger().sequence());
+        env.events().publish(
+            (Symbol::new(&env, "pt_unpaused"), admin),
+            env.ledger().sequence(),
+        );
         Ok(())
     }
 
@@ -331,9 +439,14 @@ impl PtToken {
     pub fn set_tokenizer(env: Env, new_tokenizer: Address) -> Result<(), NovairePtError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::Tokenizer, &new_tokenizer);
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &new_tokenizer);
 
-        env.events().publish((Symbol::new(&env, "tokenizer_transferred"), admin), new_tokenizer);
+        env.events().publish(
+            (Symbol::new(&env, "tokenizer_transferred"), admin),
+            new_tokenizer,
+        );
         Ok(())
     }
 
@@ -341,20 +454,27 @@ impl PtToken {
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), NovairePtError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
 
-        env.events().publish((Symbol::new(&env, "pt_admin_transfer"), admin), new_admin);
+        env.events()
+            .publish((Symbol::new(&env, "pt_admin_transfer"), admin), new_admin);
         Ok(())
     }
 
     /// Accepts a pending admin transfer, finalizing the change of administration.
     pub fn accept_admin(env: Env) -> Result<(), NovairePtError> {
-        let pending_admin: Address = storage::get_pending_admin(&env).ok_or(NovairePtError::InvalidAdminTransfer)?;
+        let pending_admin: Address =
+            storage::get_pending_admin(&env).ok_or(NovairePtError::InvalidAdminTransfer)?;
         pending_admin.require_auth();
-        env.storage().instance().set(&DataKey::Admin, &pending_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::Admin, &pending_admin);
         env.storage().instance().remove(&DataKey::PendingAdmin);
 
-        env.events().publish((Symbol::new(&env, "pt_admin_accepted"),), pending_admin);
+        env.events()
+            .publish((Symbol::new(&env, "pt_admin_accepted"),), pending_admin);
         Ok(())
     }
 
