@@ -900,8 +900,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_tokenizer_state_machine() {
+    struct Harness {
+        env: Env,
+        admin: Address,
+        user: Address,
+        token_admin_client: token::StellarAssetClient<'static>,
+        sy_client: RealSyWrapperClient<'static>,
+        vault_client: RealVaultClient<'static>,
+        pt_client: RealPtClient<'static>,
+        yt_client: RealYtClient<'static>,
+        tokenizer_client: TokenizerClient<'static>,
+        maturity_ledger: u32,
+    }
+
+    /// Builds a full Vault/SyWrapper/PtToken/YtToken/Tokenizer/MaturityEngine stack with a
+    /// single `user` funded with `mint_amount` underlying, wired to a fresh `maturity_ledger`.
+    fn setup(mint_amount: i128, maturity_ledger: u32) -> Harness {
         let env = Env::default();
         env.mock_all_auths_allowing_non_root_auth();
 
@@ -913,9 +927,10 @@ mod tests {
             .register_stellar_asset_contract_v2(token_admin.clone())
             .address();
         let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
-        let _token_client = token::Client::new(&env, &token_contract);
 
-        token_admin_client.mint(&user, &2000);
+        if mint_amount > 0 {
+            token_admin_client.mint(&user, &mint_amount);
+        }
 
         let pool_id = env.register(MockBlendPool, ());
         MockBlendPoolClient::new(&env, &pool_id).init(&token_contract);
@@ -937,8 +952,6 @@ mod tests {
 
         let tokenizer_contract_id = env.register(Tokenizer, ());
         let tokenizer_client = TokenizerClient::new(&env, &tokenizer_contract_id);
-
-        let maturity_ledger = 100;
 
         let maturity_engine_id = env.register(MaturityEngine, ());
         let maturity_engine_client = RealMaturityEngineClient::new(&env, &maturity_engine_id);
@@ -966,6 +979,35 @@ mod tests {
             &maturity_epoch_id,
         );
 
+        Harness {
+            env,
+            admin,
+            user,
+            token_admin_client,
+            sy_client,
+            vault_client,
+            pt_client,
+            yt_client,
+            tokenizer_client,
+            maturity_ledger,
+        }
+    }
+
+    #[test]
+    fn test_tokenizer_state_machine() {
+        let Harness {
+            env,
+            admin: _admin,
+            user,
+            token_admin_client,
+            sy_client,
+            vault_client,
+            pt_client,
+            yt_client,
+            tokenizer_client,
+            maturity_ledger,
+        } = setup(2000, 100);
+
         // Vault Deposit
         vault_client.deposit(&user, &2000); // 1000 locked, user gets 1000 shares
 
@@ -988,16 +1030,16 @@ mod tests {
         // Yield accrual
         // Rate starts at 1e9. Total underlying = 2000.
         // We add 10% (200), then another 10% (220), etc.
-        token_admin_client.mint(&sy_contract_id, &200);
+        token_admin_client.mint(&sy_client.address, &200);
         sy_client.harvest_yield();
-        token_admin_client.mint(&sy_contract_id, &220);
+        token_admin_client.mint(&sy_client.address, &220);
         sy_client.harvest_yield();
-        token_admin_client.mint(&sy_contract_id, &242);
+        token_admin_client.mint(&sy_client.address, &242);
         sy_client.harvest_yield();
 
         // STATE: MATURED
         env.ledger().set(soroban_sdk::testutils::LedgerInfo {
-            sequence_number: 100,
+            sequence_number: maturity_ledger,
             ..env.ledger().get()
         });
         assert_eq!(
@@ -1029,5 +1071,108 @@ mod tests {
         // 8. Redemption Allowed in Settled
         tokenizer_client.redeem_pt(&user, &1000);
         assert_eq!(pt_client.balance(&user), 0);
+    }
+
+    /// Advances the harness straight to the `Settled` state with no yield accrual, so the
+    /// redemption rate is exactly 1:1.
+    fn settle(h: &Harness) {
+        h.env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: h.maturity_ledger,
+            ..h.env.ledger().get()
+        });
+        h.tokenizer_client.settle_epoch();
+    }
+
+    #[test]
+    fn test_redeem_pt_dust_and_tiny_amounts() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+        settle(&h);
+
+        // Redeem the smallest possible unit first.
+        let out = h.tokenizer_client.redeem_pt(&h.user, &1);
+        assert_eq!(out, 1);
+        assert_eq!(h.pt_client.balance(&h.user), 999);
+
+        // Then redeem the remaining dust one unit at a time.
+        for _ in 0..999 {
+            h.tokenizer_client.redeem_pt(&h.user, &1);
+        }
+        assert_eq!(h.pt_client.balance(&h.user), 0);
+
+        // Nothing left to redeem.
+        let res = h.tokenizer_client.try_redeem_pt(&h.user, &1);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_redeem_pt_max_amount() {
+        let mint_amount: i128 = 1_000_000_000_000;
+        let h = setup(mint_amount, 100);
+        h.vault_client.deposit(&h.user, &mint_amount);
+        h.tokenizer_client.mint_pt_yt(&h.user, &(mint_amount - 1000));
+        settle(&h);
+
+        let user_pt = h.pt_client.balance(&h.user);
+        let out = h.tokenizer_client.redeem_pt(&h.user, &user_pt);
+        assert_eq!(out, user_pt);
+        assert_eq!(h.pt_client.balance(&h.user), 0);
+    }
+
+    #[test]
+    fn test_redeem_pt_repeated_full_balance_fails_second_time() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+        settle(&h);
+
+        h.tokenizer_client.redeem_pt(&h.user, &1000);
+        // Repeating the exact same redemption with nothing left must fail, not panic
+        // or silently mint underlying from nowhere.
+        let res = h.tokenizer_client.try_redeem_pt(&h.user, &1000);
+        assert!(res.is_err());
+        let res = h.tokenizer_client.try_redeem_pt(&h.user, &1);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_redeem_pt_zero_amount_rejected() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+        settle(&h);
+
+        let res = h.tokenizer_client.try_redeem_pt(&h.user, &0);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_settle_epoch_repeated_calls_all_fail_after_first() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+        settle(&h);
+
+        // Spam settle_epoch repeatedly; every call after the first must be rejected.
+        for _ in 0..10 {
+            let res = h.tokenizer_client.try_settle_epoch();
+            assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_redeem_pt_with_zero_pt_balance() {
+        // A user who never minted PT has an empty treasury of their own: redeeming
+        // against a zero balance must fail cleanly rather than underflow.
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+        settle(&h);
+
+        let other_user = Address::generate(&h.env);
+        assert_eq!(h.pt_client.balance(&other_user), 0);
+        let res = h.tokenizer_client.try_redeem_pt(&other_user, &1);
+        assert!(res.is_err());
     }
 }

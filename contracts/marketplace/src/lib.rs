@@ -2616,6 +2616,134 @@ mod tests {
         );
     }
 
+    // ── EDGE CASES: zero liquidity, dust amounts, repeated liquidity cycles ──
+
+    fn edge_total_lp_shares(env: &Env, market: &Address) -> i128 {
+        env.as_contract(market, || storage::get_i128(env, DataKey::TotalLpShares).unwrap_or(0))
+    }
+
+    fn edge_lp_balance(env: &Env, market: &Address, who: &Address) -> i128 {
+        env.as_contract(market, || storage::get_lp_balance(env, who))
+    }
+
+    #[test]
+    fn test_swap_against_zero_liquidity_fails() {
+        let (env, _, _, _, market_client, _, _) = setup_env();
+        let buyer = Address::generate(&env);
+        // Fresh deployment: no add_liquidity call yet, reserves are all zero.
+        let res = market_client.try_swap_underlying_for_pt(&buyer, &1_000, &0);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_remove_liquidity_on_zero_liquidity_fails() {
+        let (env, _, _, _, market_client, _, _) = setup_env();
+        let provider = Address::generate(&env);
+        // Never provided liquidity, so provider's LP balance is 0.
+        let res = market_client.try_remove_liquidity(&provider, &1);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_add_liquidity_zero_amount_rejected() {
+        let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
+        let provider = Address::generate(&env);
+        let pt_client = pt_token::PtTokenClient::new(&env, &pt_token);
+        token_admin_client.mint(&provider, &1_000_000);
+        pt_client.mint(&provider, &1_000_000);
+
+        let res = market_client.try_add_liquidity(&provider, &0, &1000);
+        assert!(res.is_err());
+        let res = market_client.try_add_liquidity(&provider, &1000, &0);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_first_add_liquidity_at_minimum_liquidity_boundary_rejected() {
+        let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
+        let provider = Address::generate(&env);
+        let pt_client = pt_token::PtTokenClient::new(&env, &pt_token);
+        token_admin_client.mint(&provider, &(MINIMUM_LIQUIDITY * 2));
+        pt_client.mint(&provider, &(MINIMUM_LIQUIDITY * 2));
+
+        // initial_lp == sqrt(pt*underlying) == MINIMUM_LIQUIDITY exactly must fail
+        // (guard is `<=`), while one unit above must succeed.
+        let res = market_client.try_add_liquidity(&provider, &MINIMUM_LIQUIDITY, &MINIMUM_LIQUIDITY);
+        assert!(res.is_err());
+
+        let ok = market_client.add_liquidity(&provider, &(MINIMUM_LIQUIDITY + 1), &(MINIMUM_LIQUIDITY + 1));
+        assert!(ok > 0);
+    }
+
+    #[test]
+    fn test_remove_all_liquidity_leaves_only_locked_minimum() {
+        let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
+        let provider = bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
+
+        let bal = edge_lp_balance(&env, &market_client.address, &provider);
+        market_client.remove_liquidity(&provider, &bal);
+        assert_eq!(edge_lp_balance(&env, &market_client.address, &provider), 0);
+
+        // Only the permanently-locked MINIMUM_LIQUIDITY dead shares remain.
+        assert_eq!(edge_total_lp_shares(&env, &market_client.address), MINIMUM_LIQUIDITY);
+
+        // A subsequent swap against the now near-empty pool must fail, not panic.
+        let res = market_client.try_swap_underlying_for_pt(&provider, &1_000, &0);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_repeated_remove_liquidity_beyond_balance_fails() {
+        let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
+        let provider = bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
+
+        let bal = edge_lp_balance(&env, &market_client.address, &provider);
+        market_client.remove_liquidity(&provider, &bal);
+
+        // Every subsequent attempt to remove more (now-nonexistent) liquidity must fail.
+        for _ in 0..5 {
+            let res = market_client.try_remove_liquidity(&provider, &1);
+            assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_add_liquidity_dust_amount_after_bootstrap() {
+        let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            BOOTSTRAP_PT,
+            BOOTSTRAP_UNDER,
+        );
+
+        let provider = Address::generate(&env);
+        let pt_client = pt_token::PtTokenClient::new(&env, &pt_token);
+        token_admin_client.mint(&provider, &10);
+        pt_client.mint(&provider, &10);
+
+        // A dust-sized top-up after a real pool exists is either accepted (proportional
+        // to the tiny share it buys) or rejected as zero-shares-minted - either way it must
+        // not panic or corrupt reserve accounting.
+        let _ = market_client.try_add_liquidity(&provider, &1, &1);
+    }
+
     // ── PROPERTY TESTS: LP share accounting ─────────────────────────────────
     // Fuzzes multiple LPs through random add/withdraw sequences (including edge
     // amounts and repeated ops) and checks that share accounting stays correct

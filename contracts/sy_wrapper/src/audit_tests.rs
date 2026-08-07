@@ -311,3 +311,124 @@ fn test_stress_randomized_operations() {
 
     assert_eq!(s.client.total_shares(), u1_shares + 1000); // user shares + dead shares
 }
+
+// ==========================================
+// 4. MARK_LOSS / DUST / TINY / MAX / EMPTY-TREASURY EDGE CASES
+// ==========================================
+
+#[test]
+fn test_mark_loss_no_loss_returns_zero() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    // Actual pool balance still matches tracked total_underlying exactly.
+    let loss = s.client.mark_loss();
+    assert_eq!(loss, 0);
+    assert_eq!(s.client.total_shares(), 9_000 + 1000);
+}
+
+#[test]
+fn test_mark_loss_dust_loss() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    // Simulate the pool losing a single unit of underlying (e.g. rounding dust).
+    s.pool_client.simulate_yield(&s.contract_id, &-1);
+
+    let loss = s.client.mark_loss();
+    assert_eq!(loss, 1);
+    // Repeating with no further drift reports no additional loss.
+    assert_eq!(s.client.mark_loss(), 0);
+}
+
+#[test]
+fn test_mark_loss_repeated_calls_are_idempotent_between_losses() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &100_000);
+    s.client.deposit(&s.user1, &100_000);
+
+    s.pool_client.simulate_yield(&s.contract_id, &-10_000);
+    let loss1 = s.client.mark_loss();
+    assert_eq!(loss1, 10_000);
+
+    // Calling again immediately with no further balance drift must be a no-op.
+    let loss2 = s.client.mark_loss();
+    assert_eq!(loss2, 0);
+
+    // A second, independent loss event is tracked correctly on top of the first.
+    s.pool_client.simulate_yield(&s.contract_id, &-5_000);
+    let loss3 = s.client.mark_loss();
+    assert_eq!(loss3, 5_000);
+}
+
+#[test]
+fn test_mark_loss_total_loss_to_zero_balance() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    // Wipe out the entire pool position.
+    s.pool_client.simulate_yield(&s.contract_id, &-10_000);
+
+    let loss = s.client.mark_loss();
+    assert_eq!(loss, 10_000);
+    assert_eq!(s.client.get_exchange_rate(), 0);
+}
+
+#[test]
+fn test_deposit_tiny_amount_above_minimum() {
+    let s = setup();
+    // Minimum first deposit is > 1000; 1001 is the smallest tiny amount that clears it.
+    s.token_admin_client.mint(&s.user1, &1001);
+    let shares = s.client.deposit(&s.user1, &1001);
+    assert_eq!(shares, 1);
+    assert_eq!(s.client.total_shares(), 1001);
+}
+
+#[test]
+fn test_deposit_at_minimum_threshold_rejected() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &1000);
+    let res = s.client.try_deposit(&s.user1, &1000);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_deposit_and_withdraw_max_value() {
+    let s = setup();
+    let max_amount: i128 = 1_000_000_000_000_000_000; // large but headroom for scaling math
+    s.token_admin_client.mint(&s.user1, &max_amount);
+
+    let shares = s.client.deposit(&s.user1, &max_amount);
+    assert_eq!(shares, max_amount - 1000);
+
+    let out = s.client.withdraw(&s.user1, &shares);
+    assert_eq!(out, max_amount - 1000);
+}
+
+#[test]
+fn test_withdraw_from_empty_treasury_fails() {
+    let s = setup();
+    // No deposits have ever been made: the contract holds no underlying at all.
+    let res = s.client.try_withdraw(&s.user1, &1);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_withdraw_zero_shares_rejected() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    let res = s.client.try_withdraw(&s.user1, &0);
+    assert!(res.is_err());
+}
+
+#[test]
+fn test_deposit_zero_amount_rejected() {
+    let s = setup();
+    let res = s.client.try_deposit(&s.user1, &0);
+    assert!(res.is_err());
+}

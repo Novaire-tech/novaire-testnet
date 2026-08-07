@@ -524,6 +524,89 @@ mod tests {
     }
 
     #[test]
+    fn test_repeated_settle_epoch_spam_all_fail_after_first() {
+        let (env, _admin, me_client) = setup_env();
+
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: 100,
+            ..env.ledger().get()
+        });
+        let epoch_id = me_client.open_epoch(&110);
+
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: 110,
+            ..env.ledger().get()
+        });
+        me_client.settle_epoch(&epoch_id);
+
+        for _ in 0..25 {
+            assert!(me_client.try_settle_epoch(&epoch_id).is_err());
+        }
+        assert!(me_client.is_settled());
+    }
+
+    #[test]
+    fn test_repeated_archive_spam_all_fail_after_first() {
+        let (env, _admin, me_client) = setup_env();
+
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: 100,
+            ..env.ledger().get()
+        });
+        let epoch_id = me_client.open_epoch(&110);
+
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: 110,
+            ..env.ledger().get()
+        });
+        me_client.settle_epoch(&epoch_id);
+        me_client.archive_epoch(&epoch_id);
+
+        for _ in 0..25 {
+            assert!(me_client.try_archive_epoch(&epoch_id).is_err());
+        }
+    }
+
+    #[test]
+    fn test_maturity_at_max_ledger_sequence() {
+        let (env, _admin, me_client) = setup_env();
+
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: 100,
+            ..env.ledger().get()
+        });
+        // A maturity_ledger of u32::MAX must be accepted and not overflow anything.
+        let epoch_id = me_client.open_epoch(&u32::MAX);
+        assert!(me_client.is_active());
+        assert_eq!(me_client.time_to_maturity(), u32::MAX - 100);
+
+        assert!(me_client.try_settle_epoch(&epoch_id).is_err());
+    }
+
+    #[test]
+    fn test_open_epoch_at_maturity_equal_to_current_ledger_rejected() {
+        let (env, _admin, me_client) = setup_env();
+
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: 100,
+            ..env.ledger().get()
+        });
+        // maturity_ledger == current sequence must be rejected (guard is `<=`).
+        let res = me_client.try_open_epoch(&100);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_settle_epoch_unknown_epoch_id_fails() {
+        let (_env, _admin, me_client) = setup_env();
+        // No epoch has ever been opened.
+        let res = me_client.try_settle_epoch(&1);
+        assert!(res.is_err());
+        let res = me_client.try_settle_epoch(&0);
+        assert!(res.is_err());
+    }
+
+    #[test]
     fn test_read_apis() {
         let (env, _admin, me_client) = setup_env();
 
