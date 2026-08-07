@@ -88,14 +88,21 @@ pub enum DataKey {
 const EXCHANGE_RATE_SCALAR: i128 = 1_000_000_000;
 const VERSION: u32 = 1;
 
+const DAY_IN_LEDGERS: u32 = 17280;
+const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
+const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
+
 mod storage {
     use super::*;
-    
+
     pub fn is_initialized(env: &Env) -> bool {
         env.storage().instance().has(&DataKey::Admin)
     }
 
     pub fn get_admin(env: &Env) -> Result<Address, NovaireSyError> {
+        env.storage()
+            .instance()
+            .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
         env.storage().instance().get(&DataKey::Admin).ok_or(NovaireSyError::StorageMissing)
     }
 

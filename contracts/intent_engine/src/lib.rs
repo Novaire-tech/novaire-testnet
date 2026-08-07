@@ -31,6 +31,7 @@ pub trait MarketplaceInterface {
     ) -> i128;
     fn get_implied_rate(env: Env) -> i128;
     fn get_twap_rate(env: Env) -> i128;
+    fn get_twap_rate_checked(env: Env) -> i128;
     fn get_reserves(env: Env) -> (i128, i128, i128);
 }
 
@@ -206,7 +207,7 @@ impl IntentEngine {
     pub fn get_current_best_rate(env: Env) -> Result<i128, NovaireIntentError> {
         let marketplace_addr = storage::get_address(&env, DataKey::Marketplace)?;
         let marketplace_client = MarketplaceClient::new(&env, &marketplace_addr);
-        Ok(marketplace_client.get_twap_rate())
+        Ok(marketplace_client.get_twap_rate_checked())
     }
 
     pub fn get_user_intent(
@@ -247,7 +248,7 @@ impl IntentEngine {
             return Err(NovaireIntentError::MarketplaceNotBootstrapped);
         }
 
-        let current_twap = marketplace_client.get_twap_rate();
+        let current_twap = marketplace_client.get_twap_rate_checked();
         if current_twap < min_implied_rate {
             return Err(NovaireIntentError::RateTooLow);
         }
