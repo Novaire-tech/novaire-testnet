@@ -48,6 +48,8 @@ pub enum NovaireYtError {
     InvalidAdminTransfer = 11,
     PastMaturity = 12,
     IndexCannotDecrease = 13,
+    InvalidTokenizerTransfer = 14,
+    InvalidSyWrapperTransfer = 15,
 }
 
 #[contracttype]
@@ -56,7 +58,9 @@ pub enum DataKey {
     Admin,
     PendingAdmin,
     Tokenizer,
+    PendingTokenizer,
     SyWrapper,
+    PendingSyWrapper,
     TotalSupply,
     YieldIndex,
     MaturityLedger,
@@ -472,6 +476,19 @@ impl YtToken {
             }
         }
 
+        env.authorize_as_current_contract(soroban_sdk::vec![
+            env,
+            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+                soroban_sdk::auth::SubContractInvocation {
+                    context: soroban_sdk::auth::ContractContext {
+                        contract: tokenizer_addr.clone(),
+                        fn_name: Symbol::new(env, "record_surplus_baseline_pub"),
+                        args: soroban_sdk::vec![env],
+                    },
+                    sub_invocations: soroban_sdk::vec![env],
+                }
+            )
+        ]);
         let _ = tokenizer_client.try_record_surplus_baseline_pub();
     }
 
@@ -799,33 +816,78 @@ impl YtToken {
         Ok(())
     }
 
-    /// Updates the trusted Tokenizer contract address.
+    /// Initiates a two-step update of the trusted Tokenizer contract address
+    /// (SEC-06: instant reassignment is a centralization risk on a
+    /// single-key admin, so this now requires a second confirming call).
     pub fn set_tokenizer(env: Env, new_tokenizer: Address) -> Result<(), NovaireYtError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
         env.storage()
             .instance()
-            .set(&DataKey::Tokenizer, &new_tokenizer);
+            .set(&DataKey::PendingTokenizer, &new_tokenizer);
 
         env.events().publish(
-            (Symbol::new(&env, "tokenizer_transferred"), admin),
+            (Symbol::new(&env, "tokenizer_transfer_proposed"), admin),
             new_tokenizer,
         );
         Ok(())
     }
 
-    /// Sets the SY Wrapper address for live yield index refresh.
-    /// This is the upgrade-compatible entry point for H4: existing deployed
-    /// YT Token contracts can call this without re-initialization.
+    /// Confirms a pending Tokenizer address change, requiring admin auth again.
+    pub fn accept_tokenizer(env: Env) -> Result<(), NovaireYtError> {
+        let admin = storage::get_admin(&env)?;
+        admin.require_auth();
+        let pending_tokenizer: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingTokenizer)
+            .ok_or(NovaireYtError::InvalidTokenizerTransfer)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &pending_tokenizer);
+        env.storage().instance().remove(&DataKey::PendingTokenizer);
+
+        env.events().publish(
+            (Symbol::new(&env, "tokenizer_transferred"), admin),
+            pending_tokenizer,
+        );
+        Ok(())
+    }
+
+    /// Initiates a two-step update of the SY Wrapper address used for live
+    /// yield index refresh (SEC-06: see `set_tokenizer`).
     pub fn set_sy_wrapper(env: Env, sy_wrapper: Address) -> Result<(), NovaireYtError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
         env.storage()
             .instance()
-            .set(&DataKey::SyWrapper, &sy_wrapper);
+            .set(&DataKey::PendingSyWrapper, &sy_wrapper);
 
-        env.events()
-            .publish((Symbol::new(&env, "sy_wrapper_set"), admin), sy_wrapper);
+        env.events().publish(
+            (Symbol::new(&env, "sy_wrapper_transfer_proposed"), admin),
+            sy_wrapper,
+        );
+        Ok(())
+    }
+
+    /// Confirms a pending SY Wrapper address change, requiring admin auth again.
+    pub fn accept_sy_wrapper(env: Env) -> Result<(), NovaireYtError> {
+        let admin = storage::get_admin(&env)?;
+        admin.require_auth();
+        let pending_sy_wrapper: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingSyWrapper)
+            .ok_or(NovaireYtError::InvalidSyWrapperTransfer)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::SyWrapper, &pending_sy_wrapper);
+        env.storage().instance().remove(&DataKey::PendingSyWrapper);
+
+        env.events().publish(
+            (Symbol::new(&env, "sy_wrapper_set"), admin),
+            pending_sy_wrapper,
+        );
         Ok(())
     }
 

@@ -61,6 +61,7 @@ pub enum NovaireIntentError {
     InvariantViolated = 8,
     InvalidPercentage = 9,
     MarketplaceNotBootstrapped = 10,
+    MathOverflow = 11,
 }
 
 #[contracttype]
@@ -312,8 +313,14 @@ impl IntentEngine {
         let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
         let yt_token_client = YtTokenClient::new(&env, &yt_token_addr);
 
-        let yt_to_sell = (yt_amount * (yt_sale_percentage as i128)) / 100;
-        let yt_to_keep = yt_amount - yt_to_sell;
+        let yt_to_sell = yt_amount
+            .checked_mul(yt_sale_percentage as i128)
+            .ok_or(NovaireIntentError::MathOverflow)?
+            .checked_div(100)
+            .ok_or(NovaireIntentError::MathOverflow)?;
+        let yt_to_keep = yt_amount
+            .checked_sub(yt_to_sell)
+            .ok_or(NovaireIntentError::MathOverflow)?;
 
         let mut underlying_from_yt = 0;
 

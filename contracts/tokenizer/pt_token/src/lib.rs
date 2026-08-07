@@ -19,6 +19,7 @@ pub enum NovairePtError {
     MathUnderflow = 9,
     StorageMissing = 10,
     InvalidAdminTransfer = 11,
+    InvalidTokenizerTransfer = 12,
 }
 
 #[contracttype]
@@ -27,6 +28,7 @@ pub enum DataKey {
     Admin,
     PendingAdmin,
     Tokenizer,
+    PendingTokenizer,
     TotalSupply,
     Paused,
     Balance(Address),
@@ -436,16 +438,40 @@ impl PtToken {
     }
 
     /// Updates the trusted Tokenizer contract address.
+    /// Initiates a two-step update of the trusted Tokenizer contract address
+    /// (SEC-06: instant reassignment is a centralization risk on a
+    /// single-key admin, so this now requires a second confirming call).
     pub fn set_tokenizer(env: Env, new_tokenizer: Address) -> Result<(), NovairePtError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
         env.storage()
             .instance()
-            .set(&DataKey::Tokenizer, &new_tokenizer);
+            .set(&DataKey::PendingTokenizer, &new_tokenizer);
+
+        env.events().publish(
+            (Symbol::new(&env, "tokenizer_transfer_proposed"), admin),
+            new_tokenizer,
+        );
+        Ok(())
+    }
+
+    /// Confirms a pending Tokenizer address change, requiring admin auth again.
+    pub fn accept_tokenizer(env: Env) -> Result<(), NovairePtError> {
+        let admin = storage::get_admin(&env)?;
+        admin.require_auth();
+        let pending_tokenizer: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingTokenizer)
+            .ok_or(NovairePtError::InvalidTokenizerTransfer)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::Tokenizer, &pending_tokenizer);
+        env.storage().instance().remove(&DataKey::PendingTokenizer);
 
         env.events().publish(
             (Symbol::new(&env, "tokenizer_transferred"), admin),
-            new_tokenizer,
+            pending_tokenizer,
         );
         Ok(())
     }

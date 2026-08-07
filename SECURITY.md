@@ -168,11 +168,11 @@ All items below are **outstanding** as of this document's publication (none have
 ### Low
 - [x] SEC-01 — Wire `intent_engine`'s rate gate to `marketplace.get_twap_rate_checked()` instead of the unstaleness-checked variant. *(Fixed: `contracts/intent_engine/src/lib.rs`)*
 - [x] SEC-02 — Add `extend_ttl` calls throughout `sy_wrapper` (currently has none). *(Fixed: `contracts/sy_wrapper/src/lib.rs`)*
-- [ ] SEC-03 — Convert raw division to `checked_div` in `tokenizer`'s `claim_yield`/`redeem_pt` settlement math.
-- [ ] SEC-04 — Convert raw multiply/divide to `checked_*` in `intent_engine`'s YT-sale-percentage calculation.
-- [ ] SEC-05 — Restrict `tokenizer.record_surplus_baseline_pub` to `require_auth()` by the registered YtToken address.
-- [ ] SEC-06 — Add a two-step or timelocked handoff for `set_tokenizer`/`set_sy_wrapper`.
-- [ ] SEC-07 — Consolidate instance-storage TTL-bump logic into a single shared helper used by all read paths.
+- [x] SEC-03 — Convert raw division to `checked_div` in `tokenizer`'s `claim_yield`/`redeem_pt` settlement math. *(Fixed: `contracts/tokenizer/tokenizer/src/lib.rs`)*
+- [x] SEC-04 — Convert raw multiply/divide to `checked_*` in `intent_engine`'s YT-sale-percentage calculation. *(Fixed: `contracts/intent_engine/src/lib.rs`)*
+- [x] SEC-05 — Restrict `tokenizer.record_surplus_baseline_pub` to `require_auth()` by the registered YtToken address. *(Fixed: `contracts/tokenizer/tokenizer/src/lib.rs`, `contracts/tokenizer/yt_token/src/lib.rs`)*
+- [x] SEC-06 — Add a two-step or timelocked handoff for `set_tokenizer`/`set_sy_wrapper`. *(Fixed: `contracts/tokenizer/pt_token/src/lib.rs`, `contracts/tokenizer/yt_token/src/lib.rs` — `set_tokenizer`/`set_sy_wrapper` now stage a pending address; `accept_tokenizer`/`accept_sy_wrapper` confirm it with a second admin-signed call.)*
+- [x] SEC-07 — Consolidate instance-storage TTL-bump logic into a single shared helper used by all read paths. *(Fixed: `contracts/sy_wrapper/src/lib.rs` — added `bump_instance_ttl`, called from every instance-storage getter instead of relying on `get_admin` incidentally running first.)*
 
 ### Best Practices / Informational
 - [ ] SEC-08 — Replace silent `max(0, …)` floors in `rollover` with explicit error handling where a negative delta indicates a real anomaly.

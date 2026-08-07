@@ -99,29 +99,39 @@ mod storage {
         env.storage().instance().has(&DataKey::Admin)
     }
 
-    pub fn get_admin(env: &Env) -> Result<Address, NovaireSyError> {
+    /// Single shared TTL-bump for instance storage (SEC-07), called from every
+    /// read path below instead of relying on `get_admin` happening to run first.
+    fn bump_instance_ttl(env: &Env) {
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+    }
+
+    pub fn get_admin(env: &Env) -> Result<Address, NovaireSyError> {
+        bump_instance_ttl(env);
         env.storage().instance().get(&DataKey::Admin).ok_or(NovaireSyError::StorageMissing)
     }
 
     pub fn get_underlying(env: &Env) -> Result<Address, NovaireSyError> {
+        bump_instance_ttl(env);
         env.storage().instance().get(&DataKey::Underlying).ok_or(NovaireSyError::StorageMissing)
     }
 
     pub fn get_yield_source(env: &Env) -> Result<Address, NovaireSyError> {
+        bump_instance_ttl(env);
         env.storage().instance().get(&DataKey::YieldSource).ok_or(NovaireSyError::StorageMissing)
     }
 
     pub fn get_total_shares(env: &Env) -> i128 {
+        bump_instance_ttl(env);
         env.storage().instance().get(&DataKey::TotalShares).unwrap_or(0)
     }
 
     pub fn is_paused(env: &Env) -> bool {
+        bump_instance_ttl(env);
         env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
     }
-    
+
     pub fn require_not_paused(env: &Env) -> Result<(), NovaireSyError> {
         if is_paused(env) {
             return Err(NovaireSyError::Paused);
@@ -130,6 +140,7 @@ mod storage {
     }
 
     pub fn get_total_underlying(env: &Env) -> i128 {
+        bump_instance_ttl(env);
         env.storage().instance().get(&DataKey::TotalUnderlying).unwrap_or(0)
     }
 

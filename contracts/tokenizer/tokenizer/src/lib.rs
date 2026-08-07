@@ -389,7 +389,8 @@ impl Tokenizer {
         let shares_to_withdraw = claimable
             .checked_mul(1_000_000_000)
             .ok_or(NovaireTokenizerError::MathOverflow)?
-            / exchange_rate;
+            .checked_div(exchange_rate)
+            .ok_or(NovaireTokenizerError::MathOverflow)?;
 
         // Withdraw underlying physical assets via the Vault
         let vault_addr = storage::get_address(&env, DataKey::Vault)?;
@@ -533,7 +534,8 @@ impl Tokenizer {
         let shares_to_withdraw = pt_amount
             .checked_mul(epoch_start_index)
             .ok_or(NovaireTokenizerError::MathOverflow)?
-            / settlement_rate;
+            .checked_div(settlement_rate)
+            .ok_or(NovaireTokenizerError::MathOverflow)?;
 
         // 4. Withdraw physical assets via Vault
         let vault_addr = storage::get_address(&env, DataKey::Vault)?;
@@ -665,7 +667,11 @@ impl Tokenizer {
 
     /// Public wrapper around `record_surplus_baseline`, safe for YtToken to call
     /// for the same reason as `get_surplus_snapshot` (touches no YtToken state).
+    /// Restricted to the registered YtToken contract to prevent any other caller
+    /// from resetting the surplus baseline out from under YT holders (SEC-05).
     pub fn record_surplus_baseline_pub(env: Env) -> Result<(), NovaireTokenizerError> {
+        let yt_token_addr = storage::get_address(&env, DataKey::YtToken)?;
+        yt_token_addr.require_auth();
         Self::record_surplus_baseline(env)
     }
 
