@@ -335,7 +335,7 @@ All routes are Next.js Route Handlers under `src/app/api/`. There is no OpenAPI/
 ## Security Considerations & Known Limitations
 
 - **Testnet only.** The full protocol suite is deployed and wired on Testnet (see [Deployed Contract Addresses](#deployed-contract-addresses)), but it is experimental; the addresses in `scripts/deployments.mainnet.json` should not be treated as a supported, audited Mainnet deployment.
-- **No independent audit.** The contracts in `contracts/` have not undergone third-party security review as documented in this repository.
+- **No independent audit.** The contracts in `contracts/` have not undergone third-party security review. An AI-assisted internal review is documented in [`SECURITY_AUDIT.md`](./SECURITY_AUDIT.md) — all findings raised there (SEC-01 through SEC-14) have been remediated in-repo, but this should not be treated as a substitute for a licensed third-party audit before Mainnet use.
 - **Admin-privileged operations.** Per `CONTRACTS.md`, epoch creation on the `factory` contract is currently gated to a protocol admin key — this is centralization risk during the testnet phase.
 - **Secrets in `.env`.** `ADMIN_SECRET` and `KEEPER_SECRET` are raw Stellar secret keys read from environment variables by deploy/bootstrap scripts — never commit `.env` or reuse a funded Mainnet key for testnet development.
 - **Local file-based state.** `registered_users.json` and the SQLite `dev.db` are plain files with no access control; they are appropriate for local/testnet development only, not multi-user production deployment.
