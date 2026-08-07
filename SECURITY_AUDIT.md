@@ -128,7 +128,8 @@ The external Blend `submit` call (L267) executes before final state commits (L26
 `contracts/tokenizer/yt_token/src/lib.rs:547`
 `if amount > 0` silently skips rather than rejecting, inconsistent with the codebase's usual `<=0 → explicit error` convention. Harmless in practice (only caller already gates on `historical_yield > 0`). Now rejects `amount <= 0` with `InvalidAmount`, matching convention; the sole caller (`tokenizer`'s late-mint path) already only invokes this with `historical_yield > 0`, so behavior is unchanged for all real call sites.
 
-**SEC-14 — Zero unit-test coverage in `pt_token` and `yt_token`** *(process finding, not a code defect)*
+**SEC-14 — Zero unit-test coverage in `pt_token` and `yt_token` — FIXED** *(process finding, not a code defect)*
+Added standalone `#[cfg(test)] mod test;` suites to both contracts (37 tests in `pt_token`, 43 in `yt_token`), covering: initialization/double-init, mint/burn authorization and error paths, pause behavior (including transfer's intentional pause-bypass), approve/transfer_from allowance accounting, the two-step admin/tokenizer(/sy_wrapper for YT) transfer flows, and for `yt_token` specifically: yield-index update monotonicity, checkpoint/accrual math, `add_accrued_yield`, the H4 fix (yield locks to the sender across a transfer), and maturity/expiry transitions via a real `maturity_engine` instance. Both packages needed a `[dev-dependencies]` `soroban-sdk testutils` feature added to their `Cargo.toml` (previously absent, which is presumably why no tests existed).
 `contracts/tokenizer/pt_token/src/lib.rs`, `contracts/tokenizer/yt_token/src/lib.rs`
 Neither file contains a `#[cfg(test)]` module. All confidence in these contracts' correctness is transitive via `tokenizer`'s 8 integration tests, which do not exercise allowance mechanics, pause toggling, `transfer_from` edge cases, yield-index monotonicity rejection, or the sender-keeps-earned-yield-on-transfer property directly.
 
@@ -151,7 +152,7 @@ Neither file contains a `#[cfg(test)]` module. All confidence in these contracts
 | SEC-11 | sy_wrapper deposit CEI ordering | Informational | Very low | None demonstrated — **FIXED** |
 | SEC-12 | Dead `_maturity_ledger` param | Informational | N/A | None — **FIXED** |
 | SEC-13 | add_accrued_yield no-op on zero | Informational | N/A | None — **FIXED** |
-| SEC-14 | pt_token/yt_token zero unit tests | Process | N/A | Increases risk of undetected regressions |
+| SEC-14 | pt_token/yt_token zero unit tests | Process | N/A | Increases risk of undetected regressions — **FIXED** |
 
 ---
 
@@ -161,7 +162,7 @@ Neither file contains a `#[cfg(test)]` module. All confidence in these contracts
 
 **Solid coverage:** `maturity_engine` (full FSM + exact-boundary + spam-idempotency tests), `rollover` (full-stack E2E lifecycle, PT-custody invariant, invariant-violation trip test), `vault` (E2E flow + TTL-survival test), `tokenizer` (8 tests: state-machine gating, dust redemptions, double-redeem/zero-amount rejection), `intent_engine` (6 tests covering both intent types, slippage/pause/zero-amount rejection, zero-residual-balance assertions), `factory` (confirmed: `test_wiring_mismatch_fails`, `test_maturity_engine_wiring_mismatch_fails`, `test_duplicate_maturity_panic`, `test_unauthorized_initialization_fails` all present in `contracts/factory/src/test.rs`).
 
-**Zero coverage:** `pt_token`, `yt_token` — no `#[cfg(test)]` module in either file (SEC-14).
+**Zero coverage:** `pt_token`, `yt_token` — no `#[cfg(test)]` module in either file (SEC-14) — **FIXED**, see above.
 
 **Specific gaps identified:**
 - No live test of rollover's keeper-vs-permissionless access boundary (SEC-09).

@@ -559,3 +559,6 @@ impl PtToken {
         })
     }
 }
+
+#[cfg(test)]
+mod test;
