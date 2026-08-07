@@ -1,3 +1,8 @@
+// DEPRECATED: demo-only tool. Real yield now accrues from Blend's actual `b_rate`
+// (see contracts/sy_wrapper's `pool_supplied_value`/`get_reserve` accounting), so this
+// script - which fakes yield by transferring underlying directly into the SY Wrapper's
+// idle balance - is no longer needed for correctness. Kept only for testnet demos where
+// waiting on real Blend interest accrual isn't practical; not part of any production flow.
 import { Keypair, Networks } from '@stellar/stellar-sdk';
 import * as fs from 'fs';
 import * as path from 'path';
