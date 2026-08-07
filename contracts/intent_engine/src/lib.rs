@@ -208,7 +208,7 @@ impl IntentEngine {
     pub fn get_current_best_rate(env: Env) -> Result<i128, NovaireIntentError> {
         let marketplace_addr = storage::get_address(&env, DataKey::Marketplace)?;
         let marketplace_client = MarketplaceClient::new(&env, &marketplace_addr);
-        Ok(marketplace_client.get_twap_rate_checked())
+        Ok(marketplace_client.get_twap_rate())
     }
 
     pub fn get_user_intent(
@@ -248,7 +248,7 @@ impl IntentEngine {
             return Err(NovaireIntentError::MarketplaceNotBootstrapped);
         }
 
-        let current_twap = marketplace_client.get_twap_rate_checked();
+        let current_twap = marketplace_client.get_twap_rate();
         if current_twap < min_implied_rate {
             return Err(NovaireIntentError::RateTooLow);
         }
@@ -518,7 +518,10 @@ mod tests {
     use marketplace::{NovaireMarketplace, NovaireMarketplaceClient as RealMarketplaceClient};
     use maturity_engine::{MaturityEngine, MaturityEngineClient as RealMaturityEngineClient};
     use pt_token::{PtToken, PtTokenClient as RealPtClient};
-    use sy_wrapper::{Positions, Request, SyWrapper, SyWrapperClient as RealSyWrapperClient};
+    use sy_wrapper::{
+        Positions, Request, Reserve, ReserveConfig, ReserveData, SyWrapper,
+        SyWrapperClient as RealSyWrapperClient, BLEND_RATE_SCALAR,
+    };
     use tokenizer::{Tokenizer, TokenizerClient as RealTokenizerClient};
     use vault::{Vault, VaultClient as RealVaultClient};
     use yt_token::{YtToken, YtTokenClient as RealYtClient};
@@ -595,6 +598,40 @@ mod tests {
                 .get(&PoolDataKey::Supply(address))
                 .unwrap_or(0);
             Self::positions_for(&env, supply)
+        }
+
+        /// Identity `b_rate` (1 bToken == 1 underlying): this mock tracks `supply` directly
+        /// in underlying units, so `pool_supplied_value`'s bToken * b_rate / BLEND_RATE_SCALAR
+        /// conversion must be a no-op to keep this mock's existing 1:1 test behavior unchanged.
+        pub fn get_reserve(env: Env, asset: Address) -> Reserve {
+            Reserve {
+                asset,
+                config: ReserveConfig {
+                    index: 0,
+                    decimals: 7,
+                    c_factor: 0,
+                    l_factor: 0,
+                    util: 0,
+                    max_util: 0,
+                    r_base: 0,
+                    r_one: 0,
+                    r_two: 0,
+                    r_three: 0,
+                    reactivity: 0,
+                    supply_cap: 0,
+                    enabled: true,
+                },
+                data: ReserveData {
+                    d_rate: BLEND_RATE_SCALAR,
+                    b_rate: BLEND_RATE_SCALAR,
+                    ir_mod: 0,
+                    b_supply: 0,
+                    d_supply: 0,
+                    backstop_credit: 0,
+                    last_time: env.ledger().timestamp(),
+                },
+                scalar: 10_000_000,
+            }
         }
 
         fn positions_for(env: &Env, supply: i128) -> Positions {
@@ -742,13 +779,8 @@ mod tests {
 
         let current_twap = intent_engine.get_current_best_rate();
 
-        let record = intent_engine.execute_fixed_yield_intent(
-            &user,
-            &10_000,
-            &current_twap,
-            &0,
-            &100,
-        );
+        let record =
+            intent_engine.execute_fixed_yield_intent(&user, &10_000, &current_twap, &0, &100);
 
         assert_eq!(record.total_deposited_amount, 10_000);
         assert_eq!(pt_client.balance(&user), record.total_pt_held); // Received PT

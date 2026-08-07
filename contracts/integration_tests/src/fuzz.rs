@@ -27,14 +27,14 @@ pub fn run_fuzz_sequence(actions: Vec<ProtocolAction>) {
                 if amt > 0 {
                     protocol.try_deposit(user, amt);
                 }
-            },
+            }
             ProtocolAction::Withdraw { user_idx, amount } => {
                 let user = &users[user_idx % users.len()];
                 let amt = amount.abs() % 1_000_000;
                 if amt > 0 {
                     protocol.try_withdraw(user, amt);
                 }
-            },
+            }
             ProtocolAction::MintPtYt { user_idx, amount } => {
                 let user = &users[user_idx % users.len()];
                 let amt = amount.abs() % 1_000_000;

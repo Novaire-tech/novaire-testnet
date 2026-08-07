@@ -375,7 +375,10 @@ fn test_metadata_fields() {
 #[test]
 fn test_name_symbol_decimals_version() {
     let s = setup();
-    assert_eq!(s.client.name(), String::from_str(&s.env, "Novaire Principal Token"));
+    assert_eq!(
+        s.client.name(),
+        String::from_str(&s.env, "Novaire Principal Token")
+    );
     assert_eq!(s.client.symbol(), String::from_str(&s.env, "nPT"));
     assert_eq!(s.client.decimals(), 7);
     assert_eq!(s.client.version(), VERSION);

@@ -194,8 +194,8 @@ fn test_checkpoint_accrues_yield_on_mint() {
     assert_eq!(s.client.claimable_yield(&s.user1), 0);
 
     s.client.update_yield_index(&1_000_000_000); // +1.0 index unit (scaled)
-    // internal_checkpoint_user runs on the *next* mutating call; simulate via burn of 0? not allowed.
-    // Use checkpoint_user directly.
+                                                 // internal_checkpoint_user runs on the *next* mutating call; simulate via burn of 0? not allowed.
+                                                 // Use checkpoint_user directly.
     s.client.checkpoint_user(&s.user1);
     assert_eq!(s.client.claimable_yield(&s.user1), 1000);
 }
@@ -467,7 +467,10 @@ fn test_transfer_still_works_after_maturity() {
 #[test]
 fn test_name_symbol_decimals_version() {
     let s = setup();
-    assert_eq!(s.client.name(), String::from_str(&s.env, "Novaire Yield Token"));
+    assert_eq!(
+        s.client.name(),
+        String::from_str(&s.env, "Novaire Yield Token")
+    );
     assert_eq!(s.client.symbol(), String::from_str(&s.env, "nYT"));
     assert_eq!(s.client.decimals(), 7);
     assert_eq!(s.client.version(), VERSION);

@@ -1,20 +1,20 @@
 //! 7-Phase Protocol-Wide Simulation
 //! All economic metrics read from real on-chain state — no mocked values.
 
-use crate::framework::{Protocol, SCALE, BOOTSTRAP_PT, BOOTSTRAP_UNDER, MATURITY_LEDGER};
+use crate::framework::{Protocol, BOOTSTRAP_PT, BOOTSTRAP_UNDER, MATURITY_LEDGER, SCALE};
 use crate::invariants::InvariantEngine;
 
 // ── Economic snapshot ─────────────────────────────────────────────────────────
 #[derive(Debug)]
 pub struct EconomicSnapshot {
-    pub ledger:        u32,
-    pub pt_spot_raw:   i128,
-    pub pt_twap_raw:   i128,
+    pub ledger: u32,
+    pub pt_spot_raw: i128,
+    pub pt_twap_raw: i128,
     pub exchange_rate: i128,
-    pub vault_tvl:     i128,
-    pub pt_supply:     i128,
-    pub yt_supply:     i128,
-    pub apy_bps:       i128,   // Basis points from TWAP (0 if no liquidity)
+    pub vault_tvl: i128,
+    pub pt_supply: i128,
+    pub yt_supply: i128,
+    pub apy_bps: i128, // Basis points from TWAP (0 if no liquidity)
 }
 
 impl EconomicSnapshot {
@@ -40,28 +40,36 @@ impl EconomicSnapshot {
         };
 
         EconomicSnapshot {
-            ledger:        p.current_ledger(),
-            pt_spot_raw:   spot,
-            pt_twap_raw:   twap,
+            ledger: p.current_ledger(),
+            pt_spot_raw: spot,
+            pt_twap_raw: twap,
             exchange_rate: p.get_exchange_rate(),
-            vault_tvl:     p.vault.total_vault_shares(),
-            pt_supply:     p.pt_token.total_supply(),
-            yt_supply:     p.yt_token.total_supply(),
+            vault_tvl: p.vault.total_vault_shares(),
+            pt_supply: p.pt_token.total_supply(),
+            yt_supply: p.yt_token.total_supply(),
             apy_bps,
         }
     }
 }
 
 // ── Deterministic "random" number generator (LCG) ────────────────────────────
-struct Rng { state: u64 }
+struct Rng {
+    state: u64,
+}
 impl Rng {
-    fn new(seed: u64) -> Self { Rng { state: seed } }
+    fn new(seed: u64) -> Self {
+        Rng { state: seed }
+    }
     fn next(&mut self) -> u64 {
-        self.state = self.state.wrapping_mul(6_364_136_223_846_793_005)
+        self.state = self
+            .state
+            .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
         self.state
     }
-    fn range(&mut self, lo: u64, hi: u64) -> u64 { lo + self.next() % (hi - lo + 1) }
+    fn range(&mut self, lo: u64, hi: u64) -> u64 {
+        lo + self.next() % (hi - lo + 1)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -75,7 +83,7 @@ fn phase_1_fresh_deployment(p: &Protocol) {
     // Verify reserves are empty before bootstrap
     let (pt0, u0, yt0) = p.get_reserves();
     assert_eq!(pt0, 0, "Phase1: Pre-bootstrap PT reserves must be 0");
-    assert_eq!(u0,  0, "Phase1: Pre-bootstrap underlying reserves must be 0");
+    assert_eq!(u0, 0, "Phase1: Pre-bootstrap underlying reserves must be 0");
     assert_eq!(yt0, 0, "Phase1: Pre-bootstrap YT reserves must be 0");
     println!("  ✅ Pre-bootstrap reserves = [0, 0, 0]");
 
@@ -87,8 +95,11 @@ fn phase_1_fresh_deployment(p: &Protocol) {
 
     // Verify reserves match bootstrap values exactly
     let (pt, u, _) = p.get_reserves();
-    assert_eq!(pt, BOOTSTRAP_PT,    "Phase1: PT reserves must match bootstrap");
-    assert_eq!(u,  BOOTSTRAP_UNDER, "Phase1: Underlying reserves must match bootstrap");
+    assert_eq!(pt, BOOTSTRAP_PT, "Phase1: PT reserves must match bootstrap");
+    assert_eq!(
+        u, BOOTSTRAP_UNDER,
+        "Phase1: Underlying reserves must match bootstrap"
+    );
     println!("  ✅ Reserves match bootstrap (pt={pt}, under={u})");
 
     // Advance one ledger so TWAP can be written by a swap
@@ -101,15 +112,22 @@ fn phase_1_fresh_deployment(p: &Protocol) {
     println!("  ✅ Post-bootstrap spot={spot}, twap={twap}");
 
     // PT must trade below face value (discount bond)
-    assert!(spot > 0 && spot <= SCALE,
-        "Phase1: Spot must be ≤ face value, got {spot}");
-    assert!(twap > 0 && twap <= SCALE,
-        "Phase1: TWAP must be ≤ face value, got {twap}");
+    assert!(
+        spot > 0 && spot <= SCALE,
+        "Phase1: Spot must be ≤ face value, got {spot}"
+    );
+    assert!(
+        twap > 0 && twap <= SCALE,
+        "Phase1: TWAP must be ≤ face value, got {twap}"
+    );
     println!("  ✅ PT trading at discount (spot < face value)");
 
     // Due to H3 fix, TWAP is updated pre-swap, so it intentionally lags the new spot price
     let diff = (twap - spot).abs();
-    assert!(diff > 1000, "Phase1: TWAP ({twap}) should lag Spot ({spot}) due to pre-swap TWAP update, diff={diff}");
+    assert!(
+        diff > 1000,
+        "Phase1: TWAP ({twap}) should lag Spot ({spot}) due to pre-swap TWAP update, diff={diff}"
+    );
     println!("  ✅ TWAP lags Spot intentionally (diff={diff})");
 
     // Full invariant check
@@ -161,10 +179,10 @@ fn phase_2_3_simulation(p: &Protocol) -> Vec<EconomicSnapshot> {
         let ledger_advance = rng.range(1, 5) as u32;
         p.advance_ledger(ledger_advance);
 
-        let user_idx  = rng.range(0, 9) as usize;
-        let user      = &users[user_idx];
-        let op        = rng.range(0, 9) as u32;
-        let amount    = (rng.range(500_000, 5_000_000)) as i128;
+        let user_idx = rng.range(0, 9) as usize;
+        let user = &users[user_idx];
+        let op = rng.range(0, 9) as u32;
+        let amount = (rng.range(500_000, 5_000_000)) as i128;
 
         match op {
             0 => {
@@ -207,10 +225,10 @@ fn phase_2_3_simulation(p: &Protocol) -> Vec<EconomicSnapshot> {
             6 => {
                 // Add liquidity
                 let pt_bal = p.pt_token.balance(user);
-                let u_bal  = p.underlying_token.balance(user);
+                let u_bal = p.underlying_token.balance(user);
                 if pt_bal > 100_000 && u_bal > 100_000 {
-                    let pt_add  = (pt_bal / 5).max(1);
-                    let u_add   = (u_bal  / 5).max(1);
+                    let pt_add = (pt_bal / 5).max(1);
+                    let u_add = (u_bal / 5).max(1);
                     p.try_add_liquidity(user, pt_add, u_add);
                 }
             }
@@ -249,7 +267,9 @@ fn phase_2_3_simulation(p: &Protocol) -> Vec<EconomicSnapshot> {
 
         if !r.is_clean() {
             invariant_failures += 1;
-            for f in &r.failures { println!("    {f}"); }
+            for f in &r.failures {
+                println!("    {f}");
+            }
             r.assert_all(); // hard-fail on any invariant violation
         }
 
@@ -266,7 +286,10 @@ fn phase_2_3_simulation(p: &Protocol) -> Vec<EconomicSnapshot> {
     }
 
     println!("  ✅ Phase 2+3 complete — {total_ops} ops, {invariant_failures} invariant failures");
-    assert_eq!(invariant_failures, 0, "Phase 2+3: invariant failures detected");
+    assert_eq!(
+        invariant_failures, 0,
+        "Phase 2+3: invariant failures detected"
+    );
     snapshots
 }
 
@@ -283,21 +306,36 @@ fn phase_4_economic_validation(snapshots: &[EconomicSnapshot]) {
     for snap in snapshots {
         assert!(
             snap.exchange_rate >= prev_rate,
-            "Phase4: Exchange rate decreased! {} → {}", prev_rate, snap.exchange_rate
+            "Phase4: Exchange rate decreased! {} → {}",
+            prev_rate,
+            snap.exchange_rate
         );
         prev_rate = snap.exchange_rate;
 
         // Spot and TWAP must remain valid (> 0)
-        assert!(snap.pt_spot_raw > 0,
-            "Phase4: Spot out of range: {}", snap.pt_spot_raw);
-        assert!(snap.pt_twap_raw > 0,
-            "Phase4: TWAP out of range: {}", snap.pt_twap_raw);
+        assert!(
+            snap.pt_spot_raw > 0,
+            "Phase4: Spot out of range: {}",
+            snap.pt_spot_raw
+        );
+        assert!(
+            snap.pt_twap_raw > 0,
+            "Phase4: TWAP out of range: {}",
+            snap.pt_twap_raw
+        );
 
         // TVL must be non-negative
-        assert!(snap.vault_tvl >= 0, "Phase4: Negative TVL: {}", snap.vault_tvl);
+        assert!(
+            snap.vault_tvl >= 0,
+            "Phase4: Negative TVL: {}",
+            snap.vault_tvl
+        );
     }
 
-    println!("  ✅ Exchange rate monotonically non-decreasing across all {} snapshots", snapshots.len());
+    println!(
+        "  ✅ Exchange rate monotonically non-decreasing across all {} snapshots",
+        snapshots.len()
+    );
     println!("  ✅ All Spot/TWAP prices remained in valid range");
     println!("  ✅ TVL never negative");
 }
@@ -312,7 +350,11 @@ fn phase_5_maturity(p: &Protocol) {
 
     // Advance past maturity
     p.set_ledger(MATURITY_LEDGER + 1);
-    println!("  ✅ Advanced to ledger {} (past maturity {})", p.current_ledger(), MATURITY_LEDGER);
+    println!(
+        "  ✅ Advanced to ledger {} (past maturity {})",
+        p.current_ledger(),
+        MATURITY_LEDGER
+    );
 
     // The test framework minted naked PT to bootstrap the marketplace (bypassing the Tokenizer).
     // The Tokenizer's strict solvency invariant will fail unless we fund it with Vault shares to back this naked PT.
@@ -321,13 +363,19 @@ fn phase_5_maturity(p: &Protocol) {
     p.deposit(admin, 10_000_000_000);
     let shares_to_fund = p.vault.balance_of(admin);
     p.transfer_vault_shares(admin, &p.tokenizer.address, shares_to_fund);
-    println!("  ✅ Funded Tokenizer with {} Vault shares to back test-framework naked PT", shares_to_fund);
+    println!(
+        "  ✅ Funded Tokenizer with {} Vault shares to back test-framework naked PT",
+        shares_to_fund
+    );
 
     // settle_epoch must succeed now
     p.tokenizer.settle_epoch();
     let state = p.tokenizer.get_epoch_state();
     // State 2 = Settled or 3 depending on Tokenizer design — any state > 1 means post-maturity
-    assert!(state >= 2, "Phase5: settle_epoch must move state past Open (1), got {state}");
+    assert!(
+        state >= 2,
+        "Phase5: settle_epoch must move state past Open (1), got {state}"
+    );
     println!("  ✅ settle_epoch succeeded — epoch state={state}");
 
     // New users deposit and mint before maturity check
@@ -388,9 +436,9 @@ fn phase_6_stress(p: &Protocol) {
     p.mint_mock_usdc(&attacker, 50_000_000_000);
     p.pt_token.mint(&attacker, &50_000_000_000);
     let twap_before = p.get_twap();
-    p.try_swap_u_for_pt(&attacker, 10_000_000_000);   // buy PT hard
+    p.try_swap_u_for_pt(&attacker, 10_000_000_000); // buy PT hard
     p.advance_ledger(1);
-    p.try_swap_pt_for_u(&attacker, 10_000_000_000);   // dump PT immediately
+    p.try_swap_pt_for_u(&attacker, 10_000_000_000); // dump PT immediately
     let twap_after = p.get_twap();
     // TWAP must not have moved more than 50% from before the attack
     let twap_delta = (twap_after - twap_before).abs();
@@ -425,8 +473,10 @@ fn phase_6_stress(p: &Protocol) {
             p.try_swap_pt_for_u(&rapid_user, 100_000);
         }
         let twap = p.get_twap();
-        assert!(twap > 0 && twap <= SCALE + 10_000_000,
-            "S5: TWAP out of range at iteration {k}: twap={twap}");
+        assert!(
+            twap > 0 && twap <= SCALE + 10_000_000,
+            "S5: TWAP out of range at iteration {k}: twap={twap}"
+        );
     }
     InvariantEngine::assert_everything(p);
     println!("  ✅ S5: Rapid TWAP updates (20 ledger-advancing swaps) — no reciprocal regression");
@@ -470,8 +520,13 @@ fn phase_7_report(p: &Protocol) {
 
     println!("\n── Contract Status ─────────────────────────────────────────────");
     let contracts = [
-        "SY Wrapper", "Vault", "Tokenizer", "Marketplace",
-        "Intent Engine", "Rollover", "Maturity Engine",
+        "SY Wrapper",
+        "Vault",
+        "Tokenizer",
+        "Marketplace",
+        "Intent Engine",
+        "Rollover",
+        "Maturity Engine",
     ];
     for c in &contracts {
         println!("   ✅  {c}");
@@ -484,23 +539,25 @@ fn phase_7_report(p: &Protocol) {
     if r.failures.is_empty() {
         println!("   Result:        ✅ ALL INVARIANTS PASS");
     } else {
-        for f in &r.failures { println!("   {f}"); }
+        for f in &r.failures {
+            println!("   {f}");
+        }
     }
 
     println!("\n── Regression Verification ─────────────────────────────────────");
     let regressions = [
-        ("TWAP reciprocal bug",                 true),
-        ("1400% APY anomaly",                   true),
-        ("Yield blackout window",               true),
-        ("ERC4626 donation attack",             true),
-        ("Zero-share minting",                  true),
-        ("Exchange-rate decrease",              true),
-        ("Marketplace reserve drain",           true),
-        ("LP insolvency",                       true),
-        ("Intent overwrite bug",                true),
-        ("Unsafe rollover sweep",               true),
-        ("Broken cumulative yield accounting",  true),
-        ("Multi-epoch rollover halt",           true),
+        ("TWAP reciprocal bug", true),
+        ("1400% APY anomaly", true),
+        ("Yield blackout window", true),
+        ("ERC4626 donation attack", true),
+        ("Zero-share minting", true),
+        ("Exchange-rate decrease", true),
+        ("Marketplace reserve drain", true),
+        ("LP insolvency", true),
+        ("Intent overwrite bug", true),
+        ("Unsafe rollover sweep", true),
+        ("Broken cumulative yield accounting", true),
+        ("Multi-epoch rollover halt", true),
     ];
     for (regression, resolved) in &regressions {
         let icon = if *resolved { "✅" } else { "❌" };

@@ -2,10 +2,7 @@
 
 use super::*;
 use crate::audit_tests::{MockBlendPool, MockBlendPoolClient};
-use soroban_sdk::{
-    testutils::Address as _,
-    token, Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
 // --- Setup Helpers ---
 struct Setup {
@@ -34,7 +31,9 @@ fn setup_test() -> Setup {
     let user3 = Address::generate(&env);
 
     let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone()).address();
+    let token_contract = env
+        .register_stellar_asset_contract_v2(token_admin.clone())
+        .address();
     let token_client = token::Client::new(&env, &token_contract);
     let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
 
@@ -79,13 +78,15 @@ fn simulate_pool_yield(s: &Setup, amount: i128) {
 #[test]
 fn test_l2_underlying_asset_missing_storage_error() {
     let setup = setup_test();
-    
+
     // Call try_underlying_asset() before initialization
     let res = setup.client.try_underlying_asset();
     assert_eq!(res, Err(Ok(NovaireSyError::StorageMissing)));
 
     // Initialize the contract
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     // Verify underlying_asset() still returns the expected Address
     assert_eq!(setup.client.underlying_asset(), setup.token_contract);
@@ -95,7 +96,9 @@ fn test_l2_underlying_asset_missing_storage_error() {
 #[test]
 fn test_initialize_success() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     assert_eq!(setup.client.get_exchange_rate(), EXCHANGE_RATE_SCALAR);
     assert_eq!(setup.client.total_shares(), 0);
@@ -106,8 +109,12 @@ fn test_initialize_success() {
 #[should_panic(expected = "HostError: Error(Contract, #1)")]
 fn test_initialize_fails_twice() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 }
 
 // ==========================================
@@ -117,7 +124,9 @@ fn test_initialize_fails_twice() {
 #[test]
 fn test_normal_deposit() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     setup.token_admin_client.mint(&setup.user1, &2000);
     let shares = setup.client.deposit(&setup.user1, &2000);
@@ -133,7 +142,9 @@ fn test_normal_deposit() {
 #[test]
 fn test_multiple_deposits() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     setup.token_admin_client.mint(&setup.user1, &3500);
     setup.client.deposit(&setup.user1, &2000);
@@ -148,7 +159,9 @@ fn test_multiple_deposits() {
 #[should_panic(expected = "HostError: Error(Contract, #4)")]
 fn test_deposit_zero() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
     setup.client.deposit(&setup.user1, &0);
 }
 
@@ -156,18 +169,22 @@ fn test_deposit_zero() {
 #[should_panic(expected = "HostError: Error(Contract, #13)")]
 fn test_deposit_under_minimum() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
     setup.client.deposit(&setup.user1, &1000);
 }
 
 #[test]
 fn test_extremely_large_deposits() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     let large_amount = i128::MAX / 1_000_000_000 - 1; // max safe amount before overflow in unchecked mul
     setup.token_admin_client.mint(&setup.user1, &large_amount);
-    
+
     let shares = setup.client.deposit(&setup.user1, &large_amount);
     assert_eq!(shares, large_amount - 1000);
 }
@@ -179,7 +196,9 @@ fn test_extremely_large_deposits() {
 #[test]
 fn test_partial_withdraw() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     setup.token_admin_client.mint(&setup.user1, &2000);
     setup.client.deposit(&setup.user1, &2000);
@@ -196,7 +215,9 @@ fn test_partial_withdraw() {
 #[should_panic(expected = "HostError: Error(Contract, #4)")]
 fn test_withdraw_zero_shares() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
     setup.client.withdraw(&setup.user1, &0);
 }
 
@@ -204,11 +225,13 @@ fn test_withdraw_zero_shares() {
 #[should_panic(expected = "HostError: Error(Contract, #6)")]
 fn test_withdraw_more_than_exists() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
-    
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+
     setup.token_admin_client.mint(&setup.user1, &2000);
     setup.client.deposit(&setup.user1, &2000);
-    
+
     setup.client.withdraw(&setup.user1, &2001);
 }
 
@@ -219,7 +242,9 @@ fn test_withdraw_more_than_exists() {
 #[test]
 fn test_real_yield_backing() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     setup.token_admin_client.mint(&setup.user1, &2000);
     setup.client.deposit(&setup.user1, &2000);
@@ -240,7 +265,7 @@ fn test_real_yield_backing() {
 
     // Withdraw 1000 shares
     let amount = setup.client.withdraw(&setup.user1, &1000);
-    
+
     // User gets 1100 underlying (1000 shares * 1.1 rate)
     assert_eq!(amount, 1100);
     assert_eq!(setup.client.total_shares(), 1000); // 1000 dead shares remain
@@ -250,7 +275,9 @@ fn test_real_yield_backing() {
 #[test]
 fn test_solvency_invariant_holds() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     setup.token_admin_client.mint(&setup.user1, &2000);
     setup.token_admin_client.mint(&setup.user2, &1000);
@@ -292,16 +319,18 @@ fn test_solvency_invariant_holds() {
 #[test]
 fn test_yield_cannot_increase_without_underlying_increasing() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     setup.token_admin_client.mint(&setup.user1, &2000);
     setup.client.deposit(&setup.user1, &2000);
 
     let initial_rate = setup.client.get_exchange_rate();
-    
+
     // Call harvest yield but NO new underlying tokens are added
     setup.client.harvest_yield();
-    
+
     // Rate MUST remain exactly the same
     assert_eq!(setup.client.get_exchange_rate(), initial_rate);
 }
@@ -313,8 +342,10 @@ fn test_yield_cannot_increase_without_underlying_increasing() {
 #[test]
 fn test_previews() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
-    
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+
     assert_eq!(setup.client.preview_deposit(&1000), 1000);
     assert_eq!(setup.client.preview_withdraw(&1000), 1000);
 
@@ -339,7 +370,9 @@ fn test_previews() {
 #[test]
 fn test_harvest_yield_donation_clamp() {
     let setup = setup_test();
-    setup.client.initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
+    setup
+        .client
+        .initialize(&setup.admin, &setup.token_contract, &setup.yield_source);
 
     // Initial deposit: 2000
     setup.token_admin_client.mint(&setup.user1, &2000);

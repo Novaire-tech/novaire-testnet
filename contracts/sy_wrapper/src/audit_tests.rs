@@ -2,9 +2,8 @@
 
 use super::*;
 use soroban_sdk::{
-    contract, contracttype, contractimpl,
-    testutils::Address as _,
-    token, Address, Env, Map,
+    contract, contractimpl, contracttype, testutils::Address as _, token, Address, Env, IntoVal,
+    Map, TryFromVal,
 };
 
 // ==========================================
@@ -22,7 +21,12 @@ use soroban_sdk::{
 #[derive(Clone)]
 enum PoolDataKey {
     Underlying,
+    /// Tracked in bTokens (not underlying) - see `get_reserve`/`BRate` below.
     Supply(Address),
+    /// The reserve's `b_rate`, `BLEND_RATE_SCALAR`-scaled. Defaults to
+    /// `BLEND_RATE_SCALAR` (1:1) so untouched tests keep their original 1-bToken-per-
+    /// underlying-unit behavior exactly.
+    BRate,
 }
 
 #[contract]
@@ -31,54 +35,152 @@ pub struct MockBlendPool;
 #[contractimpl]
 impl MockBlendPool {
     pub fn init(env: Env, underlying: Address) {
-        env.storage().instance().set(&PoolDataKey::Underlying, &underlying);
+        env.storage()
+            .instance()
+            .set(&PoolDataKey::Underlying, &underlying);
     }
 
-    pub fn submit(env: Env, from: Address, spender: Address, to: Address, requests: Vec<Request>) -> Positions {
-        let underlying: Address = env.storage().instance().get(&PoolDataKey::Underlying).unwrap();
+    fn b_rate(env: &Env) -> i128 {
+        env.storage()
+            .instance()
+            .get(&PoolDataKey::BRate)
+            .unwrap_or(BLEND_RATE_SCALAR)
+    }
+
+    /// Test-only: sets the reserve's `b_rate` directly, modeling real Blend interest
+    /// accrual (bToken count unchanged, value-per-bToken rises) rather than injecting
+    /// extra principal. This is the mechanism `get_reserve`/`pool_supplied_value` actually
+    /// read from.
+    pub fn set_b_rate(env: Env, new_rate: i128) {
+        env.storage().instance().set(&PoolDataKey::BRate, &new_rate);
+    }
+
+    pub fn get_reserve(env: Env, asset: Address) -> Reserve {
+        Reserve {
+            asset,
+            config: ReserveConfig {
+                index: 0,
+                decimals: 7,
+                c_factor: 0,
+                l_factor: 0,
+                util: 0,
+                max_util: 0,
+                r_base: 0,
+                r_one: 0,
+                r_two: 0,
+                r_three: 0,
+                reactivity: 0,
+                supply_cap: 0,
+                enabled: true,
+            },
+            data: ReserveData {
+                d_rate: Self::b_rate(&env),
+                b_rate: Self::b_rate(&env),
+                ir_mod: 0,
+                b_supply: 0,
+                d_supply: 0,
+                backstop_credit: 0,
+                last_time: env.ledger().timestamp(),
+            },
+            scalar: 10_000_000,
+        }
+    }
+
+    pub fn submit(
+        env: Env,
+        from: Address,
+        spender: Address,
+        to: Address,
+        requests: Vec<Request>,
+    ) -> Positions {
+        let underlying: Address = env
+            .storage()
+            .instance()
+            .get(&PoolDataKey::Underlying)
+            .unwrap();
         let token_client = token::Client::new(&env, &underlying);
         let this = env.current_contract_address();
+        let b_rate = Self::b_rate(&env);
 
-        let mut supply: i128 = env.storage().instance()
+        let mut b_tokens: i128 = env
+            .storage()
+            .instance()
             .get(&PoolDataKey::Supply(from.clone()))
             .unwrap_or(0);
 
         for req in requests.iter() {
             if req.request_type == 0 {
                 // Supply: pull underlying from `spender` (who must have approved this pool)
-                // into the pool, and credit `from`'s tracked supply.
+                // into the pool, and credit `from`'s tracked bToken balance, converting at
+                // the current `b_rate` (floor), mirroring `Reserve::to_b_token` in real
+                // Blend.
                 token_client.transfer_from(&this, &spender, &this, &req.amount);
-                supply += req.amount;
+                // Fast path at the identity rate avoids an `amount * SCALAR_12`
+                // intermediate that would overflow i128 for large-but-valid deposit
+                // amounts; at 1:1 the conversion is exact and overflow-free anyway.
+                let minted = if b_rate == BLEND_RATE_SCALAR {
+                    req.amount
+                } else {
+                    req.amount * BLEND_RATE_SCALAR / b_rate
+                };
+                b_tokens += minted;
             } else if req.request_type == 1 {
-                // Withdraw: pay `to` out of the pool's own balance, debiting `from`'s supply.
-                let amt = if req.amount > supply { supply } else { req.amount };
-                token_client.transfer(&this, &to, &amt);
-                supply -= amt;
+                // Withdraw: `req.amount` is requested underlying; convert to bTokens
+                // (ceil, mirroring `to_b_token_up`), clamp to the available balance, pay
+                // out the corresponding underlying (floor, mirroring
+                // `to_asset_from_b_token`).
+                let requested_b_tokens = if b_rate == BLEND_RATE_SCALAR {
+                    req.amount
+                } else {
+                    (req.amount * BLEND_RATE_SCALAR + b_rate - 1) / b_rate
+                };
+                let debited_b_tokens = if requested_b_tokens > b_tokens {
+                    b_tokens
+                } else {
+                    requested_b_tokens
+                };
+                let underlying_out = if b_rate == BLEND_RATE_SCALAR {
+                    debited_b_tokens
+                } else {
+                    debited_b_tokens * b_rate / BLEND_RATE_SCALAR
+                };
+                token_client.transfer(&this, &to, &underlying_out);
+                b_tokens -= debited_b_tokens;
             }
         }
 
-        env.storage().instance().set(&PoolDataKey::Supply(from), &supply);
-        Self::positions_for(&env, supply)
+        env.storage()
+            .instance()
+            .set(&PoolDataKey::Supply(from), &b_tokens);
+        Self::positions_for(&env, b_tokens)
     }
 
     pub fn get_positions(env: Env, address: Address) -> Positions {
-        let supply: i128 = env.storage().instance()
+        let b_tokens: i128 = env
+            .storage()
+            .instance()
             .get(&PoolDataKey::Supply(address))
             .unwrap_or(0);
-        Self::positions_for(&env, supply)
+        Self::positions_for(&env, b_tokens)
     }
 
-    /// Test-only: simulates interest accruing on `depositor`'s supplied position by
-    /// crediting `extra` underlying units directly to their tracked supply. The caller is
-    /// responsible for also minting the matching underlying into the pool's own balance
-    /// (mirroring real Blend, where accrued interest is backed by borrower repayments)
-    /// so a subsequent Withdraw can actually be paid out.
+    /// Test-only legacy/demo hook: directly injects `extra` bTokens into `depositor`'s
+    /// tracked supply (i.e. adds principal), rather than raising `b_rate` (which is how
+    /// real Blend accrues interest - see `set_b_rate`). Kept only for tests that
+    /// pre-date `set_b_rate` and exercise the "extra principal appears" path
+    /// specifically; new tests modeling real yield accrual should use `set_b_rate`
+    /// instead. The caller is responsible for also minting the matching underlying into
+    /// the pool's own balance so a subsequent Withdraw can actually be paid out.
     pub fn simulate_yield(env: Env, depositor: Address, extra: i128) {
-        let mut supply: i128 = env.storage().instance()
+        let mut supply: i128 = env
+            .storage()
+            .instance()
             .get(&PoolDataKey::Supply(depositor.clone()))
             .unwrap_or(0);
         supply += extra;
-        env.storage().instance().set(&PoolDataKey::Supply(depositor), &supply);
+        env.storage()
+            .instance()
+            .set(&PoolDataKey::Supply(depositor), &supply);
     }
 
     fn positions_for(env: &Env, supply: i128) -> Positions {
@@ -148,7 +250,9 @@ fn setup() -> AuditSetup {
     let user3 = Address::generate(&env);
 
     let token_admin = Address::generate(&env);
-    let token_contract = env.register_stellar_asset_contract_v2(token_admin).address();
+    let token_contract = env
+        .register_stellar_asset_contract_v2(token_admin)
+        .address();
     let token_client = token::Client::new(&env, &token_contract);
     let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
 
@@ -187,13 +291,25 @@ fn simulate_pool_yield(s: &AuditSetup, amount: i128) {
     s.pool_client.simulate_yield(&s.contract_id, &amount);
 }
 
-fn assert_invariant_total_shares_sum(s: &AuditSetup, u1_shares: i128, u2_shares: i128, u3_shares: i128) {
+fn assert_invariant_total_shares_sum(
+    s: &AuditSetup,
+    u1_shares: i128,
+    u2_shares: i128,
+    u3_shares: i128,
+) {
     let expected = u1_shares + u2_shares + u3_shares;
-    assert_eq!(s.client.total_shares(), expected, "Invariant violation: total shares sum mismatch");
+    assert_eq!(
+        s.client.total_shares(),
+        expected,
+        "Invariant violation: total shares sum mismatch"
+    );
 }
 
 fn assert_invariant_rate_monotonicity(s: &AuditSetup, previous_rate: i128) {
-    assert!(s.client.get_exchange_rate() >= previous_rate, "Invariant violation: rate decreased");
+    assert!(
+        s.client.get_exchange_rate() >= previous_rate,
+        "Invariant violation: rate decreased"
+    );
 }
 
 // ==========================================
@@ -203,7 +319,7 @@ fn assert_invariant_rate_monotonicity(s: &AuditSetup, previous_rate: i128) {
 #[test]
 fn test_invariant_accounting_across_complex_transitions() {
     let s = setup();
-    
+
     // User 1 deposits 20k (1k locked) -> 19k shares
     s.token_admin_client.mint(&s.user1, &20_000);
     let u1_s1 = s.client.deposit(&s.user1, &20_000);
@@ -213,17 +329,17 @@ fn test_invariant_accounting_across_complex_transitions() {
     // Yield accrues: 10% of 20k = 2k
     simulate_pool_yield(&s, 2_000);
     s.client.harvest_yield(); // Rate becomes 1.1
-    
+
     // User 2 deposits 11k -> gets 10k shares (11k * 1 / 1.1)
     s.token_admin_client.mint(&s.user2, &11_000);
     let u2_s1 = s.client.deposit(&s.user2, &11_000);
-    assert_eq!(u2_s1, 10_000); 
+    assert_eq!(u2_s1, 10_000);
     assert_invariant_total_shares_sum(&s, u1_s1, u2_s1, 1000);
 
     // Yield accrues: 10% of 33k (20k + 2k + 11k) = 3.3k
     simulate_pool_yield(&s, 3_300);
     s.client.harvest_yield(); // Rate becomes 36.3k / 30k = 1.21
-    
+
     // User 3 deposits 12.1k -> gets 10k shares (12.1k * 1 / 1.21)
     s.token_admin_client.mint(&s.user3, &12_100);
     let u3_s1 = s.client.deposit(&s.user3, &12_100);
@@ -250,7 +366,7 @@ fn test_invariant_accounting_across_complex_transitions() {
 fn test_invariants_during_back_to_back_deposits_withdraws() {
     let s = setup();
     s.token_admin_client.mint(&s.user1, &100_000);
-    
+
     // Repeated cycle to check precision drift
     // First deposit must be > 1000
     let mut shares = 0;
@@ -280,7 +396,7 @@ fn test_stress_randomized_operations() {
 
     let operations = [
         ("deposit", 12345, 0), // min threshold cleared here
-        ("yield", 0, 1000), // < 10% of 12345
+        ("yield", 0, 1000),    // < 10% of 12345
         ("deposit", 999, 0),
         ("withdraw", 500, 0),
         ("deposit", 88888, 0),
@@ -465,11 +581,15 @@ mod dishonest_pool {
     #[contractimpl]
     impl DishonestBlendPool {
         pub fn set_reported_supply(env: Env, address: Address, supply: i128) {
-            env.storage().instance().set(&PoolDataKey::Supply(address), &supply);
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Supply(address), &supply);
         }
 
         pub fn get_positions(env: Env, address: Address) -> Positions {
-            let supply: i128 = env.storage().instance()
+            let supply: i128 = env
+                .storage()
+                .instance()
                 .get(&PoolDataKey::Supply(address))
                 .unwrap_or(0);
             let mut supply_map = Map::new(&env);
@@ -486,8 +606,18 @@ mod dishonest_pool {
         // Only ever needs to accept the deposit's Supply request; a dishonest
         // pool doesn't need to model Withdraw for these tests since they
         // never withdraw.
-        pub fn submit(env: Env, from: Address, spender: Address, _to: Address, requests: Vec<Request>) -> Positions {
-            let underlying: Address = env.storage().instance().get(&PoolDataKey::Underlying).unwrap();
+        pub fn submit(
+            env: Env,
+            from: Address,
+            spender: Address,
+            _to: Address,
+            requests: Vec<Request>,
+        ) -> Positions {
+            let underlying: Address = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Underlying)
+                .unwrap();
             let token_client = token::Client::new(&env, &underlying);
             let this = env.current_contract_address();
             for req in requests.iter() {
@@ -499,7 +629,44 @@ mod dishonest_pool {
         }
 
         pub fn init(env: Env, underlying: Address) {
-            env.storage().instance().set(&PoolDataKey::Underlying, &underlying);
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Underlying, &underlying);
+        }
+
+        /// Identity rate: these tests model a pool that misreports `supply`
+        /// directly, not one with a dishonest `b_rate`, so `get_reserve` reports
+        /// straightforwardly (1 bToken == 1 underlying) and all the deception is
+        /// in `set_reported_supply`/`get_positions` above.
+        pub fn get_reserve(env: Env, asset: Address) -> Reserve {
+            Reserve {
+                asset,
+                config: ReserveConfig {
+                    index: 0,
+                    decimals: 7,
+                    c_factor: 0,
+                    l_factor: 0,
+                    util: 0,
+                    max_util: 0,
+                    r_base: 0,
+                    r_one: 0,
+                    r_two: 0,
+                    r_three: 0,
+                    reactivity: 0,
+                    supply_cap: 0,
+                    enabled: true,
+                },
+                data: ReserveData {
+                    d_rate: BLEND_RATE_SCALAR,
+                    b_rate: BLEND_RATE_SCALAR,
+                    ir_mod: 0,
+                    b_supply: 0,
+                    d_supply: 0,
+                    backstop_credit: 0,
+                    last_time: env.ledger().timestamp(),
+                },
+                scalar: 10_000_000,
+            }
         }
     }
 }
@@ -539,7 +706,10 @@ fn test_dishonest_pool_inflated_report_clamped_to_ten_percent_ratchet() {
     dishonest_pool.set_reported_supply(&s.contract_id, &9_000_000);
 
     let res = s.client.try_refresh_rate();
-    assert!(res.is_ok(), "refresh_rate must clamp rather than revert (H5 fix)");
+    assert!(
+        res.is_ok(),
+        "refresh_rate must clamp rather than revert (H5 fix)"
+    );
 
     // The rate-of-change ratchet must cap the increase at 10%, regardless of how
     // large the reported figure is.
@@ -566,7 +736,10 @@ fn test_dishonest_pool_persistent_lying_still_bounded_per_call() {
     for _ in 0..5 {
         s.client.refresh_rate();
         let rate = s.client.get_exchange_rate();
-        assert!(rate <= prev_rate * 110 / 100, "rate grew more than 10% in a single call");
+        assert!(
+            rate <= prev_rate * 110 / 100,
+            "rate grew more than 10% in a single call"
+        );
         assert!(rate >= prev_rate, "rate must be monotonic non-decreasing");
         prev_rate = rate;
     }
@@ -594,5 +767,186 @@ fn test_dishonest_pool_underreport_does_not_decrease_rate() {
 
     // The honest recourse for a real loss remains available and admin-gated.
     let loss = s.client.mark_loss();
-    assert!(loss > 0, "mark_loss is the only sanctioned path to record a real loss");
+    assert!(
+        loss > 0,
+        "mark_loss is the only sanctioned path to record a real loss"
+    );
+}
+
+#[test]
+fn test_reserve_type_xdr_roundtrip() {
+    let env = Env::default();
+    let asset = Address::generate(&env);
+    let reserve = Reserve {
+        asset: asset.clone(),
+        config: ReserveConfig {
+            index: 0,
+            decimals: 7,
+            c_factor: 9_000_000,
+            l_factor: 9_000_000,
+            util: 8_000_000,
+            max_util: 9_500_000,
+            r_base: 100_000,
+            r_one: 500_000,
+            r_two: 1_500_000,
+            r_three: 10_000_000,
+            reactivity: 2_000,
+            supply_cap: 1_000_000_000_000_000,
+            enabled: true,
+        },
+        data: ReserveData {
+            d_rate: 1_050_000_000_000,
+            b_rate: 1_020_000_000_000,
+            ir_mod: 1_000_000,
+            b_supply: 5_000_000_000_000,
+            d_supply: 3_000_000_000_000,
+            backstop_credit: 10_000_000_000,
+            last_time: 123_456_789,
+        },
+        scalar: 10_000_000,
+    };
+
+    let val: soroban_sdk::Val = reserve.clone().into_val(&env);
+    let decoded: Reserve = Reserve::try_from_val(&env, &val).unwrap();
+    assert_eq!(decoded, reserve);
+    assert_eq!(decoded.data.b_rate, 1_020_000_000_000);
+}
+
+// ==========================================
+// STAGE 7 REGRESSION SUITE — b_rate accounting
+// ==========================================
+//
+// These exercise `pool_supplied_value`'s real bToken * b_rate / BLEND_RATE_SCALAR
+// conversion (Stage 4) end-to-end through `MockBlendPool::set_b_rate`, distinct from the
+// legacy `simulate_yield` principal-injection hook (see its doc comment above, and
+// Stage 8's disposition of `scripts/inject_yield.ts`).
+
+/// Scenario 1: a supply with no rate movement at all should leave the exchange rate
+/// exactly unchanged across a `harvest_yield` call - `refresh_rate` must not manufacture
+/// yield out of nothing.
+#[test]
+fn test_regression_supply_then_harvest_rate_unchanged() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &2000);
+    s.client.deposit(&s.user1, &2000);
+
+    assert_eq!(s.client.get_exchange_rate(), 1_000_000_000);
+    s.client.harvest_yield();
+    assert_eq!(s.client.get_exchange_rate(), 1_000_000_000);
+}
+
+/// Scenario 2: raising only the reserve's `b_rate` (no change in bToken count, no extra
+/// principal deposited) must raise the exchange rate proportionally after harvest - this
+/// is the real Blend interest-accrual path Stage 4 fixed `pool_supplied_value` to honor.
+#[test]
+fn test_regression_b_rate_increase_raises_exchange_rate() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &2000);
+    s.client.deposit(&s.user1, &2000);
+    assert_eq!(s.client.get_exchange_rate(), 1_000_000_000);
+
+    // 10% b_rate increase. Real Blend backs this with borrower interest repayments
+    // actually held by the pool; mirror that here by minting the matching extra
+    // underlying into the pool so a subsequent withdraw can be paid out.
+    let new_b_rate = BLEND_RATE_SCALAR * 110 / 100;
+    s.pool_client.set_b_rate(&new_b_rate);
+    s.token_admin_client.mint(&s.yield_source, &200);
+
+    s.client.harvest_yield();
+    assert_eq!(s.client.get_exchange_rate(), 1_100_000_000);
+}
+
+/// Scenario 3: with zero token injection into the SY wrapper's own idle balance, a
+/// `b_rate`-only increase must still flow through to a larger payout on withdrawal -
+/// confirming the yield is real and redeemable, not just a reported number.
+#[test]
+fn test_regression_b_rate_only_yield_increases_withdrawal() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &2000);
+    s.client.deposit(&s.user1, &2000);
+
+    let new_b_rate = BLEND_RATE_SCALAR * 105 / 100;
+    s.pool_client.set_b_rate(&new_b_rate);
+    s.token_admin_client.mint(&s.yield_source, &100);
+    s.client.harvest_yield();
+
+    let shares = s.client.total_shares();
+    let payout = s.client.withdraw(&s.user1, &shares);
+    assert!(
+        payout > 2000,
+        "b_rate-only yield must be redeemable: got {}",
+        payout
+    );
+    assert_eq!(payout, 2100);
+}
+
+/// Scenario 4: the legacy `simulate_yield` principal-injection hook is never called in
+/// this test - all yield here flows exclusively through real `get_reserve`/`b_rate`
+/// accounting, confirming that path alone is sufficient for deposits, accrual, and
+/// withdrawal without the demo/legacy mechanism.
+#[test]
+fn test_regression_real_accounting_works_without_injected_tokens() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &2000);
+    s.token_admin_client.mint(&s.user2, &1100);
+
+    s.client.deposit(&s.user1, &2000);
+    // Note: `refresh_rate` clamps any single accrual to a max 10% rate increase (see H5
+    // in lib.rs), so a 20% `b_rate` jump is intentionally only half-realized per harvest.
+    let new_b_rate = BLEND_RATE_SCALAR * 120 / 100;
+    s.pool_client.set_b_rate(&new_b_rate);
+    s.token_admin_client.mint(&s.yield_source, &400);
+    s.client.harvest_yield();
+
+    assert_eq!(s.client.get_exchange_rate(), 1_100_000_000);
+
+    // A second depositor coming in after the rate has moved must be priced fairly at the
+    // freshest rate (Stage 5's deposit-freshness fix), not against a stale one. `deposit`
+    // itself calls `refresh_rate` before pricing, which here catches the remainder of the
+    // 20% `b_rate` jump the first `harvest_yield` call had only partially ratcheted in
+    // (bounded to +10%/call) - true backing is now worth 1.2x, so user2's shares are
+    // priced at 1.2e9, not the 1.1e9 snapshot from the earlier harvest.
+    let shares_before = s.client.total_shares();
+    s.client.deposit(&s.user2, &1100);
+    let user2_shares = s.client.total_shares() - shares_before;
+    assert_eq!(user2_shares, 916); // floor(1100e9 / 1.2e9)
+}
+
+/// Scenario 5: large balances combined with a real rate change must not overflow the
+/// checked arithmetic in `pool_supplied_value`/`refresh_rate`.
+#[test]
+fn test_regression_large_balances_no_overflow() {
+    let s = setup();
+    let large_amount: i128 = 1_000_000_000_000_000; // 1e15 underlying units
+    s.token_admin_client.mint(&s.user1, &large_amount);
+    s.client.deposit(&s.user1, &large_amount);
+
+    let new_b_rate = BLEND_RATE_SCALAR * 110 / 100;
+    s.pool_client.set_b_rate(&new_b_rate);
+    s.token_admin_client
+        .mint(&s.yield_source, &(large_amount / 10));
+
+    s.client.harvest_yield();
+    let rate = s.client.get_exchange_rate();
+    assert_eq!(rate, 1_100_000_000);
+
+    let shares = s.client.total_shares();
+    let payout = s.client.withdraw(&s.user1, &shares);
+    assert_eq!(payout, large_amount + large_amount / 10);
+}
+
+/// Scenario 6: a reserve with zero supplied position (no deposits yet) must be handled
+/// gracefully - `pool_supplied_value` should short-circuit to 0 without even attempting a
+/// `get_reserve` call, so `harvest_yield`/`get_exchange_rate` work fine on a fresh
+/// contract before any deposit has happened.
+#[test]
+fn test_regression_zero_reserve_graceful_handling() {
+    let s = setup();
+    assert_eq!(s.client.total_shares(), 0);
+    assert_eq!(s.client.get_exchange_rate(), 1_000_000_000);
+
+    // Must not panic even though no Supply request has ever been submitted to the pool,
+    // i.e. the pool has no reserve data configured for this asset at all.
+    s.client.harvest_yield();
+    assert_eq!(s.client.get_exchange_rate(), 1_000_000_000);
 }

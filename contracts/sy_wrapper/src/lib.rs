@@ -40,6 +40,70 @@ pub struct Positions {
 const BLEND_REQUEST_TYPE_SUPPLY: u32 = 0;
 const BLEND_REQUEST_TYPE_WITHDRAW: u32 = 1;
 
+/// Fixed-point scalar Blend uses for `ReserveData::b_rate`/`d_rate` (12 decimals).
+/// Confirmed against `blend-capital/blend-contracts-v2` (`pool/src/constants.rs`,
+/// `SCALAR_12`), commit on `main` as of this audit.
+pub const BLEND_RATE_SCALAR: i128 = 1_000_000_000_000;
+
+/// A Blend Capital `ReserveConfig`, as returned nested inside `Pool::get_reserve`.
+///
+/// Field layout confirmed against the real Blend v2 pool source
+/// (blend-capital/blend-contracts-v2, `pool/src/storage.rs`, `struct ReserveConfig`) via
+/// GitHub. Field *declaration* order does not affect on-wire compatibility - Soroban's
+/// `#[contracttype]` derive encodes named-field structs as a `Map<Symbol, Val>` keyed by
+/// field name, so entries are matched by name regardless of order - but this mirrors
+/// Blend's order for auditability.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReserveConfig {
+    pub index: u32,
+    pub decimals: u32,
+    pub c_factor: u32,
+    pub l_factor: u32,
+    pub util: u32,
+    pub max_util: u32,
+    pub r_base: u32,
+    pub r_one: u32,
+    pub r_two: u32,
+    pub r_three: u32,
+    pub reactivity: u32,
+    pub supply_cap: i128,
+    pub enabled: bool,
+}
+
+/// A Blend Capital `ReserveData`, as returned nested inside `Pool::get_reserve`.
+///
+/// Field layout confirmed against the real Blend v2 pool source
+/// (blend-capital/blend-contracts-v2, `pool/src/storage.rs`, `struct ReserveData`) via
+/// GitHub. `b_rate` is the bToken -> underlying conversion rate at `BLEND_RATE_SCALAR`
+/// (12 decimals) precision - this is the field `pool_supplied_value` needs to convert
+/// this contract's supplied bToken balance into underlying-equivalent value.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReserveData {
+    pub d_rate: i128,
+    pub b_rate: i128,
+    pub ir_mod: i128,
+    pub b_supply: i128,
+    pub d_supply: i128,
+    pub backstop_credit: i128,
+    pub last_time: u64,
+}
+
+/// A Blend Capital `Reserve`, as returned by `Pool::get_reserve(asset)`.
+///
+/// Field layout confirmed against the real Blend v2 pool source
+/// (blend-capital/blend-contracts-v2, `pool/src/pool/reserve.rs`, `struct Reserve`) via
+/// GitHub.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Reserve {
+    pub asset: Address,
+    pub config: ReserveConfig,
+    pub data: ReserveData,
+    pub scalar: i128,
+}
+
 /// Minimal client-only view of the Blend Capital Pool contract's cross-contract interface.
 /// We don't need the whole Pool contract, just the two entry points needed to lend the
 /// underlying asset (`submit`) and read back our position (`get_positions`). Since Soroban
@@ -48,8 +112,15 @@ const BLEND_REQUEST_TYPE_WITHDRAW: u32 = 1;
 /// without pulling in blend-contracts as a crates.io dependency.
 #[contractclient(name = "BlendPoolClient")]
 pub trait BlendPool {
-    fn submit(env: Env, from: Address, spender: Address, to: Address, requests: Vec<Request>) -> Positions;
+    fn submit(
+        env: Env,
+        from: Address,
+        spender: Address,
+        to: Address,
+        requests: Vec<Request>,
+    ) -> Positions;
     fn get_positions(env: Env, address: Address) -> Positions;
+    fn get_reserve(env: Env, asset: Address) -> Reserve;
 }
 
 #[contracterror]
@@ -109,27 +180,42 @@ mod storage {
 
     pub fn get_admin(env: &Env) -> Result<Address, NovaireSyError> {
         bump_instance_ttl(env);
-        env.storage().instance().get(&DataKey::Admin).ok_or(NovaireSyError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(NovaireSyError::StorageMissing)
     }
 
     pub fn get_underlying(env: &Env) -> Result<Address, NovaireSyError> {
         bump_instance_ttl(env);
-        env.storage().instance().get(&DataKey::Underlying).ok_or(NovaireSyError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::Underlying)
+            .ok_or(NovaireSyError::StorageMissing)
     }
 
     pub fn get_yield_source(env: &Env) -> Result<Address, NovaireSyError> {
         bump_instance_ttl(env);
-        env.storage().instance().get(&DataKey::YieldSource).ok_or(NovaireSyError::StorageMissing)
+        env.storage()
+            .instance()
+            .get(&DataKey::YieldSource)
+            .ok_or(NovaireSyError::StorageMissing)
     }
 
     pub fn get_total_shares(env: &Env) -> i128 {
         bump_instance_ttl(env);
-        env.storage().instance().get(&DataKey::TotalShares).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalShares)
+            .unwrap_or(0)
     }
 
     pub fn is_paused(env: &Env) -> bool {
         bump_instance_ttl(env);
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     pub fn require_not_paused(env: &Env) -> Result<(), NovaireSyError> {
@@ -141,44 +227,86 @@ mod storage {
 
     pub fn get_total_underlying(env: &Env) -> i128 {
         bump_instance_ttl(env);
-        env.storage().instance().get(&DataKey::TotalUnderlying).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalUnderlying)
+            .unwrap_or(0)
     }
 
     pub fn set_total_underlying(env: &Env, amount: i128) {
-        env.storage().instance().set(&DataKey::TotalUnderlying, &amount);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalUnderlying, &amount);
     }
 }
 
 /// Sums every entry in the Blend pool's reported `supply` map for this contract's
-/// position. We deliberately don't index by a specific reserve key (see the `Positions`
-/// doc comment above) since this contract only ever supplies a single asset.
+/// position, then converts that bToken total into underlying-equivalent value using the
+/// reserve's real `b_rate`. We deliberately don't index by a specific reserve key (see the
+/// `Positions` doc comment above) since this contract only ever supplies a single asset.
 ///
-/// CONFIDENCE NOTE: we treat the raw supply amount reported by `get_positions` as
-/// underlying-equivalent 1:1. In Blend's real accounting, supplied amounts are tracked as
-/// bTokens which accrue value relative to underlying via a `b_rate` exchange rate exposed
-/// from `get_reserve`, so this is an approximation, not exact accounting - we could not
-/// confirm `get_reserve`'s exact `ReserveData` field layout with confidence, and guessing
-/// wrong there would silently corrupt accounting. Treating supply 1:1 is the safer choice:
-/// it under-reports rather than over-reports accrued yield whenever bTokens are worth more
-/// than 1 underlying unit (the normal case), and `refresh_rate`'s existing rate-can-only-
-/// increase / 10%-max-increase invariants further bound any error from this approximation.
-fn pool_supplied_value(env: &Env, pool_id: &Address) -> Result<i128, NovaireSyError> {
+/// Underlying value = bTokens * b_rate / BLEND_RATE_SCALAR (floor division), matching
+/// `Reserve::to_asset_from_b_token` exactly (confirmed against
+/// blend-capital/blend-contracts-v2, `pool/src/pool/reserve.rs`: `fixed_mul_floor` against
+/// `SCALAR_12`). `positions.supply` values are non-collateral supply *share* balances
+/// (i.e. bTokens), not underlying - see the audit note on `Positions` above.
+///
+/// If this contract holds no supply position (`total_b_tokens == 0`), we skip the
+/// `get_reserve` call entirely and return 0: there is nothing to convert, and a reserve
+/// that exists but is otherwise empty/uninitialized shouldn't be able to fail this path.
+/// If a position exists but the reserve can't be read (unconfigured asset, or any other
+/// cross-contract failure) or reports a non-positive `b_rate`, we fail loudly rather than
+/// silently under- or over-reporting backing - `b_rate` should be monotonically
+/// non-decreasing and start at `BLEND_RATE_SCALAR` for any real Blend reserve, so a
+/// non-positive value indicates a data problem, not a valid state to paper over.
+fn pool_supplied_value(
+    env: &Env,
+    pool_id: &Address,
+    underlying_addr: &Address,
+) -> Result<i128, NovaireSyError> {
     let pool_client = BlendPoolClient::new(env, pool_id);
     let positions = pool_client.get_positions(&env.current_contract_address());
-    let mut total: i128 = 0;
+    let mut total_b_tokens: i128 = 0;
     for (_, v) in positions.supply.iter() {
-        total = total.checked_add(v).ok_or(NovaireSyError::MathOverflow)?;
+        total_b_tokens = total_b_tokens
+            .checked_add(v)
+            .ok_or(NovaireSyError::MathOverflow)?;
     }
-    Ok(total)
+
+    if total_b_tokens == 0 {
+        return Ok(0);
+    }
+
+    let reserve = pool_client
+        .try_get_reserve(underlying_addr)
+        .map_err(|_| NovaireSyError::StorageMissing)?
+        .map_err(|_| NovaireSyError::StorageMissing)?;
+
+    let b_rate = reserve.data.b_rate;
+    if b_rate <= 0 {
+        return Err(NovaireSyError::MathUnderflow);
+    }
+
+    total_b_tokens
+        .checked_mul(b_rate)
+        .ok_or(NovaireSyError::MathOverflow)?
+        .checked_div(BLEND_RATE_SCALAR)
+        .ok_or(NovaireSyError::MathUnderflow)
 }
 
 /// Computes the total underlying backing this contract: idle balance held directly by the
 /// contract, plus the value of whatever is currently supplied to the Blend pool.
-fn total_backing(env: &Env, underlying_addr: &Address, pool_id: &Address) -> Result<i128, NovaireSyError> {
+fn total_backing(
+    env: &Env,
+    underlying_addr: &Address,
+    pool_id: &Address,
+) -> Result<i128, NovaireSyError> {
     let token_client = token::Client::new(env, underlying_addr);
     let idle_balance = token_client.balance(&env.current_contract_address());
-    let supplied = pool_supplied_value(env, pool_id)?;
-    idle_balance.checked_add(supplied).ok_or(NovaireSyError::MathOverflow)
+    let supplied = pool_supplied_value(env, pool_id, underlying_addr)?;
+    idle_balance
+        .checked_add(supplied)
+        .ok_or(NovaireSyError::MathOverflow)
 }
 
 #[contract]
@@ -202,10 +330,16 @@ impl SyWrapper {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::Underlying, &underlying);
-        env.storage().instance().set(&DataKey::YieldSource, &yield_source);
+        env.storage()
+            .instance()
+            .set(&DataKey::Underlying, &underlying);
+        env.storage()
+            .instance()
+            .set(&DataKey::YieldSource, &yield_source);
         env.storage().instance().set(&DataKey::TotalShares, &0i128);
-        env.storage().instance().set(&DataKey::TotalUnderlying, &0i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalUnderlying, &0i128);
         env.storage().instance().set(&DataKey::Paused, &false);
 
         Ok(())
@@ -220,6 +354,14 @@ impl SyWrapper {
         }
 
         let underlying_addr = storage::get_underlying(&env)?;
+
+        // Refresh the exchange rate against the pool's real current backing before pricing
+        // this deposit's shares. Without this, a deposit priced off a stale rate mints
+        // shares as if no yield had accrued since the last `refresh_rate`/`harvest_yield`
+        // call, diluting existing suppliers by handing the new depositor shares priced
+        // below the position's true current value.
+        Self::refresh_rate(env.clone())?;
+
         let rate = Self::get_exchange_rate(env.clone());
         let mut total_shares = storage::get_total_shares(&env);
 
@@ -233,7 +375,9 @@ impl SyWrapper {
             if amount <= 1000 {
                 return Err(NovaireSyError::MinimumDepositNotMet);
             }
-            shares_to_mint = amount.checked_sub(1000).ok_or(NovaireSyError::MathUnderflow)?;
+            shares_to_mint = amount
+                .checked_sub(1000)
+                .ok_or(NovaireSyError::MathUnderflow)?;
             total_shares = 1000; // Permanently locked shares to prevent inflation attack
         }
 
@@ -248,12 +392,7 @@ impl SyWrapper {
         // pool so it actually earns lending yield instead of sitting idle in this contract.
         let pool_id = storage::get_yield_source(&env)?;
         let this = env.current_contract_address();
-        token_client.approve(
-            &this,
-            &pool_id,
-            &amount,
-            &(env.ledger().sequence() + 100),
-        );
+        token_client.approve(&this, &pool_id, &amount, &(env.ledger().sequence() + 100));
         let pool_client = BlendPoolClient::new(&env, &pool_id);
         let mut requests: Vec<Request> = Vec::new(&env);
         requests.push_back(Request {
@@ -263,11 +402,17 @@ impl SyWrapper {
         });
 
         // Commit state before the external Blend call (CEI ordering, mirroring `withdraw`).
-        total_shares = total_shares.checked_add(shares_to_mint).ok_or(NovaireSyError::MathOverflow)?;
-        env.storage().instance().set(&DataKey::TotalShares, &total_shares);
+        total_shares = total_shares
+            .checked_add(shares_to_mint)
+            .ok_or(NovaireSyError::MathOverflow)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalShares, &total_shares);
 
         let mut total_underlying = storage::get_total_underlying(&env);
-        total_underlying = total_underlying.checked_add(amount).ok_or(NovaireSyError::MathOverflow)?;
+        total_underlying = total_underlying
+            .checked_add(amount)
+            .ok_or(NovaireSyError::MathOverflow)?;
         storage::set_total_underlying(&env, total_underlying);
 
         // Pool::submit performs the token transfer (this -> pool) itself, one call
@@ -294,8 +439,8 @@ impl SyWrapper {
         pool_client.submit(&this, &this, &this, &requests);
 
         env.events().publish(
-            (Symbol::new(&env, "sy_deposit"), from), 
-            (amount, shares_to_mint, total_shares, rate)
+            (Symbol::new(&env, "sy_deposit"), from),
+            (amount, shares_to_mint, total_shares, rate),
         );
 
         Ok(shares_to_mint)
@@ -323,11 +468,17 @@ impl SyWrapper {
             .checked_div(EXCHANGE_RATE_SCALAR)
             .ok_or(NovaireSyError::MathUnderflow)?;
 
-        total_shares = total_shares.checked_sub(shares).ok_or(NovaireSyError::MathUnderflow)?;
-        env.storage().instance().set(&DataKey::TotalShares, &total_shares);
+        total_shares = total_shares
+            .checked_sub(shares)
+            .ok_or(NovaireSyError::MathUnderflow)?;
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalShares, &total_shares);
 
         let mut total_underlying = storage::get_total_underlying(&env);
-        total_underlying = total_underlying.checked_sub(underlying_to_return).ok_or(NovaireSyError::MathUnderflow)?;
+        total_underlying = total_underlying
+            .checked_sub(underlying_to_return)
+            .ok_or(NovaireSyError::MathUnderflow)?;
         storage::set_total_underlying(&env, total_underlying);
 
         // Pull the underlying needed to fund this withdrawal back out of the Blend pool
@@ -347,11 +498,15 @@ impl SyWrapper {
         pool_client.submit(&this, &this, &this, &requests);
 
         let token_client = token::Client::new(&env, &underlying_addr);
-        token_client.transfer(&env.current_contract_address(), &from, &underlying_to_return);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &from,
+            &underlying_to_return,
+        );
 
         env.events().publish(
             (Symbol::new(&env, "sy_withdraw"), from),
-            (shares, underlying_to_return, total_shares, rate)
+            (shares, underlying_to_return, total_shares, rate),
         );
 
         Ok(underlying_to_return)
@@ -366,26 +521,35 @@ impl SyWrapper {
         let actual_balance = total_backing(&env, &underlying_addr, &pool_id)?;
 
         let total_underlying = storage::get_total_underlying(&env);
-        
+
         if actual_balance > total_underlying {
             let total_shares = storage::get_total_shares(&env);
             if total_shares > 0 {
                 let old_rate = Self::get_exchange_rate(env.clone());
-                let new_rate = actual_balance.checked_mul(EXCHANGE_RATE_SCALAR).ok_or(NovaireSyError::MathOverflow)?
-                    .checked_div(total_shares).ok_or(NovaireSyError::MathUnderflow)?;
-                
+                let new_rate = actual_balance
+                    .checked_mul(EXCHANGE_RATE_SCALAR)
+                    .ok_or(NovaireSyError::MathOverflow)?
+                    .checked_div(total_shares)
+                    .ok_or(NovaireSyError::MathUnderflow)?;
+
                 if new_rate < old_rate {
                     return Err(NovaireSyError::RateCannotDecrease);
                 }
-                
+
                 // Max 10% rate increase
-                let max_rate = old_rate.checked_mul(110).ok_or(NovaireSyError::MathOverflow)?
-                    .checked_div(100).ok_or(NovaireSyError::MathUnderflow)?;
-                
+                let max_rate = old_rate
+                    .checked_mul(110)
+                    .ok_or(NovaireSyError::MathOverflow)?
+                    .checked_div(100)
+                    .ok_or(NovaireSyError::MathUnderflow)?;
+
                 if new_rate > max_rate {
                     // Fix H5: Clamp instead of reverting to prevent donation DoS
-                    let clamped_balance = max_rate.checked_mul(total_shares).ok_or(NovaireSyError::MathOverflow)?
-                        .checked_div(EXCHANGE_RATE_SCALAR).ok_or(NovaireSyError::MathUnderflow)?;
+                    let clamped_balance = max_rate
+                        .checked_mul(total_shares)
+                        .ok_or(NovaireSyError::MathOverflow)?
+                        .checked_div(EXCHANGE_RATE_SCALAR)
+                        .ok_or(NovaireSyError::MathUnderflow)?;
                     storage::set_total_underlying(&env, clamped_balance);
                 } else {
                     storage::set_total_underlying(&env, actual_balance);
@@ -394,7 +558,7 @@ impl SyWrapper {
                 storage::set_total_underlying(&env, actual_balance);
             }
         }
-        
+
         Ok(())
     }
 
@@ -423,7 +587,9 @@ impl SyWrapper {
             return Ok(0);
         }
 
-        let loss = total_underlying.checked_sub(actual_balance).ok_or(NovaireSyError::MathUnderflow)?;
+        let loss = total_underlying
+            .checked_sub(actual_balance)
+            .ok_or(NovaireSyError::MathUnderflow)?;
         storage::set_total_underlying(&env, actual_balance);
 
         env.events().publish(
@@ -445,8 +611,8 @@ impl SyWrapper {
         let total_shares = storage::get_total_shares(&env);
 
         env.events().publish(
-            (Symbol::new(&env, "yield_harvested"),), 
-            (rate, total_shares, env.ledger().sequence())
+            (Symbol::new(&env, "yield_harvested"),),
+            (rate, total_shares, env.ledger().sequence()),
         );
 
         Ok(())
@@ -469,14 +635,22 @@ impl SyWrapper {
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), NovaireSyError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
         Ok(())
     }
 
     pub fn accept_admin(env: Env) -> Result<(), NovaireSyError> {
-        let pending_admin: Address = env.storage().instance().get(&DataKey::PendingAdmin).ok_or(NovaireSyError::InvalidAdminTransfer)?;
+        let pending_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PendingAdmin)
+            .ok_or(NovaireSyError::InvalidAdminTransfer)?;
         pending_admin.require_auth();
-        env.storage().instance().set(&DataKey::Admin, &pending_admin);
+        env.storage()
+            .instance()
+            .set(&DataKey::Admin, &pending_admin);
         env.storage().instance().remove(&DataKey::PendingAdmin);
         Ok(())
     }
@@ -487,17 +661,29 @@ impl SyWrapper {
             return EXCHANGE_RATE_SCALAR;
         }
         let total_underlying = storage::get_total_underlying(&env);
-        total_underlying.checked_mul(EXCHANGE_RATE_SCALAR).unwrap_or(0).checked_div(total_shares).unwrap_or(EXCHANGE_RATE_SCALAR)
+        total_underlying
+            .checked_mul(EXCHANGE_RATE_SCALAR)
+            .unwrap_or(0)
+            .checked_div(total_shares)
+            .unwrap_or(EXCHANGE_RATE_SCALAR)
     }
 
     pub fn preview_deposit(env: Env, amount: i128) -> i128 {
         let rate = Self::get_exchange_rate(env.clone());
-        amount.checked_mul(EXCHANGE_RATE_SCALAR).unwrap_or(0).checked_div(rate).unwrap_or(0)
+        amount
+            .checked_mul(EXCHANGE_RATE_SCALAR)
+            .unwrap_or(0)
+            .checked_div(rate)
+            .unwrap_or(0)
     }
 
     pub fn preview_withdraw(env: Env, shares: i128) -> i128 {
         let rate = Self::get_exchange_rate(env.clone());
-        shares.checked_mul(rate).unwrap_or(0).checked_div(EXCHANGE_RATE_SCALAR).unwrap_or(0)
+        shares
+            .checked_mul(rate)
+            .unwrap_or(0)
+            .checked_div(EXCHANGE_RATE_SCALAR)
+            .unwrap_or(0)
     }
 
     pub fn total_shares(env: Env) -> i128 {
@@ -510,6 +696,6 @@ impl SyWrapper {
 }
 
 #[cfg(test)]
-mod test;
-#[cfg(test)]
 mod audit_tests;
+#[cfg(test)]
+mod test;

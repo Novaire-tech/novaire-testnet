@@ -2619,7 +2619,9 @@ mod tests {
     // ── EDGE CASES: zero liquidity, dust amounts, repeated liquidity cycles ──
 
     fn edge_total_lp_shares(env: &Env, market: &Address) -> i128 {
-        env.as_contract(market, || storage::get_i128(env, DataKey::TotalLpShares).unwrap_or(0))
+        env.as_contract(market, || {
+            storage::get_i128(env, DataKey::TotalLpShares).unwrap_or(0)
+        })
     }
 
     fn edge_lp_balance(env: &Env, market: &Address, who: &Address) -> i128 {
@@ -2668,10 +2670,15 @@ mod tests {
 
         // initial_lp == sqrt(pt*underlying) == MINIMUM_LIQUIDITY exactly must fail
         // (guard is `<=`), while one unit above must succeed.
-        let res = market_client.try_add_liquidity(&provider, &MINIMUM_LIQUIDITY, &MINIMUM_LIQUIDITY);
+        let res =
+            market_client.try_add_liquidity(&provider, &MINIMUM_LIQUIDITY, &MINIMUM_LIQUIDITY);
         assert!(res.is_err());
 
-        let ok = market_client.add_liquidity(&provider, &(MINIMUM_LIQUIDITY + 1), &(MINIMUM_LIQUIDITY + 1));
+        let ok = market_client.add_liquidity(
+            &provider,
+            &(MINIMUM_LIQUIDITY + 1),
+            &(MINIMUM_LIQUIDITY + 1),
+        );
         assert!(ok > 0);
     }
 
@@ -2692,7 +2699,10 @@ mod tests {
         assert_eq!(edge_lp_balance(&env, &market_client.address, &provider), 0);
 
         // Only the permanently-locked MINIMUM_LIQUIDITY dead shares remain.
-        assert_eq!(edge_total_lp_shares(&env, &market_client.address), MINIMUM_LIQUIDITY);
+        assert_eq!(
+            edge_total_lp_shares(&env, &market_client.address),
+            MINIMUM_LIQUIDITY
+        );
 
         // A subsequent swap against the now near-empty pool must fail, not panic.
         let res = market_client.try_swap_underlying_for_pt(&provider, &1_000, &0);
@@ -2761,8 +2771,15 @@ mod tests {
 
         #[derive(Clone, Debug)]
         enum LpAction {
-            Add { lp_idx: usize, pt: i128, under: i128 },
-            RemoveFraction { lp_idx: usize, bps: i128 }, // remove bps/10_000 of current balance
+            Add {
+                lp_idx: usize,
+                pt: i128,
+                under: i128,
+            },
+            RemoveFraction {
+                lp_idx: usize,
+                bps: i128,
+            }, // remove bps/10_000 of current balance
         }
 
         fn total_lp_shares(env: &Env, market: &Address) -> i128 {
@@ -2802,7 +2819,8 @@ mod tests {
             let assert_conservation = || {
                 let contract_locked =
                     lp_balance(&env, &market_client.address, &market_client.address);
-                let mut sum = contract_locked + lp_balance(&env, &market_client.address, &bootstrap_provider);
+                let mut sum =
+                    contract_locked + lp_balance(&env, &market_client.address, &bootstrap_provider);
                 for lp in &lps {
                     let bal = lp_balance(&env, &market_client.address, lp);
                     assert!(bal >= 0, "LP share balance must never go negative");
@@ -2869,7 +2887,10 @@ mod tests {
             pt_client.mint(&provider, &10);
             // sqrt(pt*under) must exceed MINIMUM_LIQUIDITY or the pool refuses to seed.
             let res = market_client.try_add_liquidity(&provider, &10, &10);
-            assert!(res.is_err(), "tiny initial liquidity must be rejected, not silently underfunded");
+            assert!(
+                res.is_err(),
+                "tiny initial liquidity must be rejected, not silently underfunded"
+            );
             assert_eq!(total_lp_shares(&env, &market_client.address), 0);
         }
 
@@ -2877,8 +2898,12 @@ mod tests {
         fn large_liquidity_round_trip_conserves_shares() {
             let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
             let provider = bootstrap(
-                &env, &market_client, &token_admin_client, &pt_token,
-                BOOTSTRAP_PT, BOOTSTRAP_UNDER,
+                &env,
+                &market_client,
+                &token_admin_client,
+                &pt_token,
+                BOOTSTRAP_PT,
+                BOOTSTRAP_UNDER,
             );
 
             let whale = Address::generate(&env);
@@ -2896,7 +2921,8 @@ mod tests {
 
             let after_total = total_lp_shares(&env, &market_client.address);
             assert_eq!(
-                before_total - whale_shares, after_total,
+                before_total - whale_shares,
+                after_total,
                 "removing exactly what was minted must exactly reduce total_lp_shares"
             );
             assert_eq!(lp_balance(&env, &market_client.address, &whale), 0);
@@ -2907,8 +2933,12 @@ mod tests {
         fn repeated_small_add_withdraw_cycles_do_not_leak_shares() {
             let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
             bootstrap(
-                &env, &market_client, &token_admin_client, &pt_token,
-                BOOTSTRAP_PT, BOOTSTRAP_UNDER,
+                &env,
+                &market_client,
+                &token_admin_client,
+                &pt_token,
+                BOOTSTRAP_PT,
+                BOOTSTRAP_UNDER,
             );
 
             let lp = Address::generate(&env);

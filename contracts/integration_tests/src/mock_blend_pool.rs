@@ -10,7 +10,7 @@
 #![cfg(test)]
 
 use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Map};
-use sy_wrapper::{Positions, Request};
+use sy_wrapper::{Positions, Request, Reserve, ReserveConfig, ReserveData, BLEND_RATE_SCALAR};
 
 #[contracttype]
 #[derive(Clone)]
@@ -25,7 +25,9 @@ pub struct MockBlendPool;
 #[contractimpl]
 impl MockBlendPool {
     pub fn init(env: Env, underlying: Address) {
-        env.storage().instance().set(&PoolDataKey::Underlying, &underlying);
+        env.storage()
+            .instance()
+            .set(&PoolDataKey::Underlying, &underlying);
     }
 
     pub fn submit(
@@ -35,7 +37,11 @@ impl MockBlendPool {
         to: Address,
         requests: soroban_sdk::Vec<Request>,
     ) -> Positions {
-        let underlying: Address = env.storage().instance().get(&PoolDataKey::Underlying).unwrap();
+        let underlying: Address = env
+            .storage()
+            .instance()
+            .get(&PoolDataKey::Underlying)
+            .unwrap();
         let token_client = token::Client::new(&env, &underlying);
         let this = env.current_contract_address();
 
@@ -53,13 +59,19 @@ impl MockBlendPool {
                 supply += req.amount;
             } else if req.request_type == 1 {
                 // Withdraw: pay `to` out of the pool's own balance, debiting `from`'s supply.
-                let amt = if req.amount > supply { supply } else { req.amount };
+                let amt = if req.amount > supply {
+                    supply
+                } else {
+                    req.amount
+                };
                 token_client.transfer(&this, &to, &amt);
                 supply -= amt;
             }
         }
 
-        env.storage().instance().set(&PoolDataKey::Supply(from), &supply);
+        env.storage()
+            .instance()
+            .set(&PoolDataKey::Supply(from), &supply);
         Self::positions_for(&env, supply)
     }
 
@@ -70,6 +82,41 @@ impl MockBlendPool {
             .get(&PoolDataKey::Supply(address))
             .unwrap_or(0);
         Self::positions_for(&env, supply)
+    }
+
+    /// Identity `b_rate` (1 bToken == 1 underlying): this mock tracks `supply` directly
+    /// in underlying units (see `submit` above), so `pool_supplied_value`'s
+    /// bToken * b_rate / BLEND_RATE_SCALAR conversion must be a no-op to keep this mock's
+    /// existing 1:1 test behavior unchanged.
+    pub fn get_reserve(env: Env, asset: Address) -> Reserve {
+        Reserve {
+            asset,
+            config: ReserveConfig {
+                index: 0,
+                decimals: 7,
+                c_factor: 0,
+                l_factor: 0,
+                util: 0,
+                max_util: 0,
+                r_base: 0,
+                r_one: 0,
+                r_two: 0,
+                r_three: 0,
+                reactivity: 0,
+                supply_cap: 0,
+                enabled: true,
+            },
+            data: ReserveData {
+                d_rate: BLEND_RATE_SCALAR,
+                b_rate: BLEND_RATE_SCALAR,
+                ir_mod: 0,
+                b_supply: 0,
+                d_supply: 0,
+                backstop_credit: 0,
+                last_time: env.ledger().timestamp(),
+            },
+            scalar: 10_000_000,
+        }
     }
 
     /// Test-only: simulates interest accruing on `depositor`'s supplied position by
@@ -84,7 +131,9 @@ impl MockBlendPool {
             .get(&PoolDataKey::Supply(depositor.clone()))
             .unwrap_or(0);
         supply += extra;
-        env.storage().instance().set(&PoolDataKey::Supply(depositor), &supply);
+        env.storage()
+            .instance()
+            .set(&PoolDataKey::Supply(depositor), &supply);
     }
 
     fn positions_for(env: &Env, supply: i128) -> Positions {

@@ -11,7 +11,7 @@ use maturity_engine::{MaturityEngine, MaturityEngineClient};
 use pt_token::{PtToken, PtTokenClient};
 use rollover::{AutonomousRollover, AutonomousRolloverClient, DataKey};
 use soroban_sdk::{contract, contractimpl, contracttype};
-use sy_wrapper::{Positions, Request};
+use sy_wrapper::{Positions, Request, Reserve, ReserveConfig, ReserveData, BLEND_RATE_SCALAR};
 use sy_wrapper::{SyWrapper, SyWrapperClient};
 use tokenizer::{Tokenizer, TokenizerClient};
 use vault::{Vault, VaultClient};
@@ -88,6 +88,40 @@ impl MockBlendPool {
             .get(&PoolDataKey::Supply(address))
             .unwrap_or(0);
         Self::positions_for(&env, supply)
+    }
+
+    /// Identity `b_rate` (1 bToken == 1 underlying): this mock tracks `supply` directly
+    /// in underlying units, so `pool_supplied_value`'s bToken * b_rate / BLEND_RATE_SCALAR
+    /// conversion must be a no-op to keep this mock's existing 1:1 test behavior unchanged.
+    pub fn get_reserve(env: Env, asset: Address) -> Reserve {
+        Reserve {
+            asset,
+            config: ReserveConfig {
+                index: 0,
+                decimals: 7,
+                c_factor: 0,
+                l_factor: 0,
+                util: 0,
+                max_util: 0,
+                r_base: 0,
+                r_one: 0,
+                r_two: 0,
+                r_three: 0,
+                reactivity: 0,
+                supply_cap: 0,
+                enabled: true,
+            },
+            data: ReserveData {
+                d_rate: BLEND_RATE_SCALAR,
+                b_rate: BLEND_RATE_SCALAR,
+                ir_mod: 0,
+                b_supply: 0,
+                d_supply: 0,
+                backstop_credit: 0,
+                last_time: env.ledger().timestamp(),
+            },
+            scalar: 10_000_000,
+        }
     }
 
     fn positions_for(env: &Env, supply: i128) -> Positions {
@@ -308,13 +342,7 @@ fn test_novaire_end_to_end_integration() {
     let alice = Address::generate(&env);
     token_admin_client.mint(&alice, &1000);
 
-    let alice_intent = intent_engine_client.execute_fixed_yield_intent(
-        &alice,
-        &1000,
-        &0,
-        &0,
-        &100,
-    );
+    let alice_intent = intent_engine_client.execute_fixed_yield_intent(&alice, &1000, &0, &0, &100);
     assert_eq!(alice_intent.total_deposited_amount, 1000);
 
     let alice_pt = pt_client.balance(&alice);

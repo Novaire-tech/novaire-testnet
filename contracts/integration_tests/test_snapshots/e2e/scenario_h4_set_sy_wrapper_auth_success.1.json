@@ -256,12 +256,24 @@
                         "key": {
                           "vec": [
                             {
-                              "symbol": "SyWrapper"
+                              "symbol": "PendingSyWrapper"
                             }
                           ]
                         },
                         "val": {
                           "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "SyWrapper"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                         }
                       },
                       {
@@ -349,7 +361,7 @@
           "v0": {
             "topics": [
               {
-                "symbol": "sy_wrapper_set"
+                "symbol": "sy_wrapper_transfer_proposed"
               },
               {
                 "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"

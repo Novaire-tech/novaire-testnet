@@ -1,6 +1,6 @@
 //! End-to-End Lifecycle Scenarios — realistic user journeys across contracts.
 
-use crate::framework::{Protocol, SCALE, MATURITY_LEDGER};
+use crate::framework::{Protocol, MATURITY_LEDGER, SCALE};
 use crate::invariants::InvariantEngine;
 
 // ── Scenario 1: Simple deposit ────────────────────────────────────────────────
@@ -67,7 +67,10 @@ fn scenario_full_lifecycle() {
     let pt_bal = protocol.pt_token.balance(&user_a);
     if pt_bal > 0 {
         let redeemed = protocol.redeem_pt(&user_a, pt_bal);
-        assert!(redeemed > 0, "Full lifecycle: PT redemption must return underlying");
+        assert!(
+            redeemed > 0,
+            "Full lifecycle: PT redemption must return underlying"
+        );
     }
 
     InvariantEngine::assert_everything(&protocol);
@@ -93,17 +96,18 @@ fn scenario_rollover_custody() {
     protocol.register_rollover(&user, rollover_amt, 100, 0);
 
     // INV-9: Rollover contract PT custody
-    let actual_pt  = protocol.pt_token.balance(&protocol.rollover.address);
-    assert!(actual_pt > 0,
-        "Rollover custody: actual PT must be > 0");
+    let actual_pt = protocol.pt_token.balance(&protocol.rollover.address);
+    assert!(actual_pt > 0, "Rollover custody: actual PT must be > 0");
 
     InvariantEngine::assert_everything(&protocol);
 
     // Exit rollover
     protocol.exit_rollover(&user);
-    let actual_pt_after  = protocol.pt_token.balance(&protocol.rollover.address);
-    assert_eq!(actual_pt_after, 0,
-        "Post-exit custody mismatch: actual={actual_pt_after}");
+    let actual_pt_after = protocol.pt_token.balance(&protocol.rollover.address);
+    assert_eq!(
+        actual_pt_after, 0,
+        "Post-exit custody mismatch: actual={actual_pt_after}"
+    );
 
     InvariantEngine::assert_everything(&protocol);
     println!("  ✅ Rollover custody scenario complete");
@@ -126,7 +130,7 @@ fn scenario_pt_converges_near_maturity() {
 
     // Near-maturity price must be closer to SCALE than early price
     let dist_early = (SCALE - spot_early).abs();
-    let dist_late  = (SCALE - spot_late).abs();
+    let dist_late = (SCALE - spot_late).abs();
     assert!(
         dist_late <= dist_early,
         "PT convergence: early dist={dist_early}, late dist={dist_late} — not converging!"
@@ -139,12 +143,14 @@ fn scenario_pt_converges_near_maturity() {
 #[test]
 fn scenario_pt_yt_conservation_multi_user() {
     let protocol = Protocol::new();
-    let users: Vec<_> = (0..5).map(|_| {
-        let u = protocol.create_user();
-        protocol.mint_mock_usdc(&u, 50_000_000);
-        protocol.deposit(&u, 40_000_000);
-        u
-    }).collect();
+    let users: Vec<_> = (0..5)
+        .map(|_| {
+            let u = protocol.create_user();
+            protocol.mint_mock_usdc(&u, 50_000_000);
+            protocol.deposit(&u, 40_000_000);
+            u
+        })
+        .collect();
 
     // Each user mints a different amount
     for (i, u) in users.iter().enumerate() {
@@ -155,8 +161,10 @@ fn scenario_pt_yt_conservation_multi_user() {
         if state == 1 {
             let pt_supply = protocol.pt_token.total_supply();
             let yt_supply = protocol.yt_token.total_supply();
-            assert_eq!(pt_supply, yt_supply,
-                "PT/YT mismatch after user {i} mint: pt={pt_supply}, yt={yt_supply}");
+            assert_eq!(
+                pt_supply, yt_supply,
+                "PT/YT mismatch after user {i} mint: pt={pt_supply}, yt={yt_supply}"
+            );
         }
     }
     InvariantEngine::assert_everything(&protocol);
@@ -177,21 +185,37 @@ fn scenario_intent_engine_zero_balance() {
     // Fixed yield intent
     protocol.execute_fixed_yield_intent(&user, 50_000_000, 1, 100);
     // Check IE has zero balance
-    let pt_held  = protocol.pt_token.balance(&protocol.intent_engine.address);
-    let yt_held  = protocol.yt_token.balance(&protocol.intent_engine.address);
-    let und_held = protocol.underlying_token.balance(&protocol.intent_engine.address);
-    assert_eq!(pt_held,  0, "IE holds PT={pt_held} after fixed yield intent");
-    assert_eq!(yt_held,  0, "IE holds YT={yt_held} after fixed yield intent");
-    assert_eq!(und_held, 0, "IE holds underlying={und_held} after fixed yield intent");
+    let pt_held = protocol.pt_token.balance(&protocol.intent_engine.address);
+    let yt_held = protocol.yt_token.balance(&protocol.intent_engine.address);
+    let und_held = protocol
+        .underlying_token
+        .balance(&protocol.intent_engine.address);
+    assert_eq!(pt_held, 0, "IE holds PT={pt_held} after fixed yield intent");
+    assert_eq!(yt_held, 0, "IE holds YT={yt_held} after fixed yield intent");
+    assert_eq!(
+        und_held, 0,
+        "IE holds underlying={und_held} after fixed yield intent"
+    );
 
     // Yield speculation intent
     protocol.execute_yield_speculation_intent(&user, 50_000_000, 1);
-    let pt_held2  = protocol.pt_token.balance(&protocol.intent_engine.address);
-    let yt_held2  = protocol.yt_token.balance(&protocol.intent_engine.address);
-    let und_held2 = protocol.underlying_token.balance(&protocol.intent_engine.address);
-    assert_eq!(pt_held2,  0, "IE holds PT={pt_held2} after speculation intent");
-    assert_eq!(yt_held2,  0, "IE holds YT={yt_held2} after speculation intent");
-    assert_eq!(und_held2, 0, "IE holds underlying={und_held2} after speculation intent");
+    let pt_held2 = protocol.pt_token.balance(&protocol.intent_engine.address);
+    let yt_held2 = protocol.yt_token.balance(&protocol.intent_engine.address);
+    let und_held2 = protocol
+        .underlying_token
+        .balance(&protocol.intent_engine.address);
+    assert_eq!(
+        pt_held2, 0,
+        "IE holds PT={pt_held2} after speculation intent"
+    );
+    assert_eq!(
+        yt_held2, 0,
+        "IE holds YT={yt_held2} after speculation intent"
+    );
+    assert_eq!(
+        und_held2, 0,
+        "IE holds underlying={und_held2} after speculation intent"
+    );
 
     InvariantEngine::assert_everything(&protocol);
     println!("  ✅ Intent Engine zero-balance guarantee holds for both intent types");
@@ -219,7 +243,10 @@ fn scenario_forced_rollover_slippage_protection() {
 
     // Attempt to execute rollover; this should FAIL due to slippage
     let result = protocol.rollover.try_execute_rollover(&user);
-    assert!(result.is_err(), "Rollover should fail when minimum output requirement cannot be met");
+    assert!(
+        result.is_err(),
+        "Rollover should fail when minimum output requirement cannot be met"
+    );
     println!("  ✅ Forced Rollover slippage protection scenario complete");
 }
 
@@ -255,17 +282,26 @@ fn scenario_h4_yt_yield_transfer() {
     // Since transfer forces an index update, Alice's accrued yield gets locked to her,
     // and Bob starts at the new index.
     let bob_yield_after_transfer = protocol.yt_token.claimable_yield(&bob);
-    assert_eq!(bob_yield_after_transfer, 0, "Bob should not receive yield accrued before the transfer");
+    assert_eq!(
+        bob_yield_after_transfer, 0,
+        "Bob should not receive yield accrued before the transfer"
+    );
 
     let alice_yield_after_transfer = protocol.yt_token.claimable_yield(&alice);
-    assert_eq!(alice_yield_after_transfer, alice_yield_mid, "Alice must retain her accrued yield");
+    assert_eq!(
+        alice_yield_after_transfer, alice_yield_mid,
+        "Alice must retain her accrued yield"
+    );
 
     // 5. Claim the yield to prove it
     let alice_balance_before = protocol.underlying_token.balance(&alice);
     protocol.claim_yield(&alice);
     let alice_balance_after = protocol.underlying_token.balance(&alice);
     let diff = ((alice_balance_after - alice_balance_before) - alice_yield_mid).abs();
-    assert!(diff <= 1, "Yield claimed should match expected within 1 unit of rounding");
+    assert!(
+        diff <= 1,
+        "Yield claimed should match expected within 1 unit of rounding"
+    );
     println!("  ✅ H4 YT yield misassignment scenario complete");
 }
 
@@ -283,21 +319,27 @@ fn scenario_h4_partial_transfer() {
     protocol.generate_yield(10_000);
 
     let alice_yield_mid = protocol.yt_token.claimable_yield(&alice);
-    
+
     protocol.yt_token.transfer(&alice, &bob, &30_000);
 
     let bob_yield = protocol.yt_token.claimable_yield(&bob);
-    assert_eq!(bob_yield, 0, "Bob should not receive Alice's historical yield");
+    assert_eq!(
+        bob_yield, 0,
+        "Bob should not receive Alice's historical yield"
+    );
 
     let alice_yield_after = protocol.yt_token.claimable_yield(&alice);
-    assert_eq!(alice_yield_after, alice_yield_mid, "Alice retains accrued yield on entire position prior to transfer");
-    
+    assert_eq!(
+        alice_yield_after, alice_yield_mid,
+        "Alice retains accrued yield on entire position prior to transfer"
+    );
+
     let alice_balance_before = protocol.underlying_token.balance(&alice);
     protocol.claim_yield(&alice);
     let alice_balance_after = protocol.underlying_token.balance(&alice);
     let diff = ((alice_balance_after - alice_balance_before) - alice_yield_mid).abs();
     assert!(diff <= 1);
-    
+
     let bob_res = protocol.tokenizer.try_claim_yield(&bob);
     assert!(bob_res.is_err(), "Claim should revert since yield is 0");
 }
@@ -317,14 +359,24 @@ fn scenario_h4_transfer_from() {
     protocol.generate_yield(10_000);
     let alice_yield_mid = protocol.yt_token.claimable_yield(&alice);
 
-    protocol.yt_token.approve(&alice, &charlie, &sy_shares, &2000000);
-    protocol.yt_token.transfer_from(&charlie, &alice, &bob, &sy_shares);
+    protocol
+        .yt_token
+        .approve(&alice, &charlie, &sy_shares, &2000000);
+    protocol
+        .yt_token
+        .transfer_from(&charlie, &alice, &bob, &sy_shares);
 
     let bob_yield = protocol.yt_token.claimable_yield(&bob);
-    assert_eq!(bob_yield, 0, "Bob should not receive yield accrued before ownership transfer");
+    assert_eq!(
+        bob_yield, 0,
+        "Bob should not receive yield accrued before ownership transfer"
+    );
 
     let alice_yield_after = protocol.yt_token.claimable_yield(&alice);
-    assert_eq!(alice_yield_after, alice_yield_mid, "Alice retains yield even after delegated transfer");
+    assert_eq!(
+        alice_yield_after, alice_yield_mid,
+        "Alice retains yield even after delegated transfer"
+    );
 }
 
 // ── Regression Test 3: Multiple Sequential Transfers ────────────
@@ -371,9 +423,9 @@ fn scenario_h4_multiple_sequential_transfers() {
 #[test]
 #[should_panic(expected = "Error(Auth, InvalidAction)")]
 fn scenario_h4_set_sy_wrapper_auth_rejection() {
-    use soroban_sdk::{Env, Address, IntoVal};
     use soroban_sdk::testutils::Address as _;
-    
+    use soroban_sdk::{Address, Env, IntoVal};
+
     let env = Env::default();
     let admin = Address::generate(&env);
     let old_sy = Address::generate(&env);
@@ -384,17 +436,23 @@ fn scenario_h4_set_sy_wrapper_auth_rejection() {
     let yt_token_addr = env.register(yt_token::YtToken, ());
     let yt_token_client = yt_token::YtTokenClient::new(&env, &yt_token_addr);
 
-    env.mock_auths(&[
-        soroban_sdk::testutils::MockAuth {
-            address: &admin,
-            invoke: &soroban_sdk::testutils::MockAuthInvoke {
-                contract: &yt_token_addr,
-                fn_name: "initialize",
-                args: (&admin, &tokenizer, &1_000u32, &old_sy, &maturity_engine, &1u32).into_val(&env),
-                sub_invokes: &[],
-            },
-        }
-    ]);
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &yt_token_addr,
+            fn_name: "initialize",
+            args: (
+                &admin,
+                &tokenizer,
+                &1_000u32,
+                &old_sy,
+                &maturity_engine,
+                &1u32,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
     yt_token_client.initialize(&admin, &tokenizer, &1_000, &old_sy, &maturity_engine, &1);
 
     // Calling it without mock_auth should panic the test thread
@@ -403,9 +461,9 @@ fn scenario_h4_set_sy_wrapper_auth_rejection() {
 
 #[test]
 fn scenario_h4_set_sy_wrapper_auth_success() {
-    use soroban_sdk::{Env, Address, IntoVal};
     use soroban_sdk::testutils::Address as _;
-    
+    use soroban_sdk::{Address, Env, IntoVal};
+
     let env = Env::default();
     let admin = Address::generate(&env);
     let old_sy = Address::generate(&env);
@@ -416,31 +474,35 @@ fn scenario_h4_set_sy_wrapper_auth_success() {
     let yt_token_addr = env.register(yt_token::YtToken, ());
     let yt_token_client = yt_token::YtTokenClient::new(&env, &yt_token_addr);
 
-    env.mock_auths(&[
-        soroban_sdk::testutils::MockAuth {
-            address: &admin,
-            invoke: &soroban_sdk::testutils::MockAuthInvoke {
-                contract: &yt_token_addr,
-                fn_name: "initialize",
-                args: (&admin, &tokenizer, &1_000u32, &old_sy, &maturity_engine, &1u32).into_val(&env),
-                sub_invokes: &[],
-            },
-        }
-    ]);
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &yt_token_addr,
+            fn_name: "initialize",
+            args: (
+                &admin,
+                &tokenizer,
+                &1_000u32,
+                &old_sy,
+                &maturity_engine,
+                &1u32,
+            )
+                .into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
     yt_token_client.initialize(&admin, &tokenizer, &1_000, &old_sy, &maturity_engine, &1);
 
-    env.mock_auths(&[
-        soroban_sdk::testutils::MockAuth {
-            address: &admin,
-            invoke: &soroban_sdk::testutils::MockAuthInvoke {
-                contract: &yt_token_addr,
-                fn_name: "set_sy_wrapper",
-                args: (&new_sy,).into_val(&env),
-                sub_invokes: &[],
-            },
-        }
-    ]);
-    
+    env.mock_auths(&[soroban_sdk::testutils::MockAuth {
+        address: &admin,
+        invoke: &soroban_sdk::testutils::MockAuthInvoke {
+            contract: &yt_token_addr,
+            fn_name: "set_sy_wrapper",
+            args: (&new_sy,).into_val(&env),
+            sub_invokes: &[],
+        },
+    }]);
+
     yt_token_client.set_sy_wrapper(&new_sy);
 }
 

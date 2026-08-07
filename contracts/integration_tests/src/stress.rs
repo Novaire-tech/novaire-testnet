@@ -25,7 +25,7 @@ fn stress_test_heavy_load() {
 
     for i in 0..1000usize {
         p.advance_ledger(1);
-        let user   = &users[i % users.len()];
+        let user = &users[i % users.len()];
         let amount = ((i as i128 * 100) % 50_000).max(1);
 
         if i % 3 == 0 {
@@ -73,8 +73,14 @@ fn stress_flash_loan_twap_resistance() {
     let twap_after = p.get_twap();
 
     // TWAP must not have been destroyed
-    assert!(twap_mid  > 0, "Flash-loan: TWAP mid out of range: {twap_mid}");
-    assert!(twap_after > 0, "Flash-loan: TWAP after out of range: {twap_after}");
+    assert!(
+        twap_mid > 0,
+        "Flash-loan: TWAP mid out of range: {twap_mid}"
+    );
+    assert!(
+        twap_after > 0,
+        "Flash-loan: TWAP after out of range: {twap_after}"
+    );
 
     // EMA dampening: TWAP shift ≤ 50% of baseline (not fully displaced)
     let delta = (twap_after - twap_baseline).abs();
@@ -100,8 +106,14 @@ fn stress_tiny_swaps() {
 
     let twap = p.get_twap();
     let spot = p.get_pt_price();
-    assert!(twap > 0 && twap <= SCALE, "Tiny swaps: TWAP={twap} out of range");
-    assert!(spot > 0 && spot <= SCALE, "Tiny swaps: Spot={spot} out of range");
+    assert!(
+        twap > 0 && twap <= SCALE,
+        "Tiny swaps: TWAP={twap} out of range"
+    );
+    assert!(
+        spot > 0 && spot <= SCALE,
+        "Tiny swaps: Spot={spot} out of range"
+    );
     InvariantEngine::assert_everything(&p);
     println!("  ✅ Tiny swaps (amount=1): no panic, invariants hold");
 }
@@ -148,8 +160,10 @@ fn stress_same_ledger_twap_idempotency() {
     p.try_swap_u_for_pt(&user, 1_000_000);
     let twap_2 = p.get_twap();
 
-    assert_eq!(twap_1, twap_2,
-        "Same-ledger TWAP idempotency violated: {twap_1} → {twap_2}");
+    assert_eq!(
+        twap_1, twap_2,
+        "Same-ledger TWAP idempotency violated: {twap_1} → {twap_2}"
+    );
     InvariantEngine::assert_everything(&p);
     println!("  ✅ Same-ledger TWAP idempotency: twap unchanged after multiple swaps");
 }

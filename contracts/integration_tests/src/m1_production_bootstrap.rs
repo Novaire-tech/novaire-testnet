@@ -1,8 +1,8 @@
 #![cfg(test)]
 
 use crate::framework::{Protocol, BOOTSTRAP_PT, BOOTSTRAP_UNDER};
-use soroban_sdk::testutils::LedgerInfo;
 use soroban_sdk::testutils::Ledger;
+use soroban_sdk::testutils::LedgerInfo;
 
 #[test]
 fn test_m1_production_exploit_matrix() {
@@ -20,7 +20,7 @@ fn test_m1_production_exploit_matrix() {
         for &attack_size in &attack_sizes {
             // Re-initialize a fresh protocol environment for each run to isolate state
             let protocol = Protocol::new();
-            
+
             // Bootstrap marketplace
             let provider = protocol.create_user();
             protocol.bootstrap_marketplace(&provider);
@@ -32,10 +32,10 @@ fn test_m1_production_exploit_matrix() {
             });
 
             let attacker = protocol.create_user();
-            
+
             // Mint underlying to attacker for the attack
             protocol.mint_mock_usdc(&attacker, attack_size);
-            
+
             // 1. Deposit & Mint PT/YT
             let minted_shares = protocol.vault.deposit(&attacker, &attack_size);
             let _ = protocol.tokenizer.try_mint_pt_yt(&attacker, &minted_shares);
@@ -43,7 +43,9 @@ fn test_m1_production_exploit_matrix() {
             // 2. Sell entire PT
             let pt_balance = protocol.pt_token.balance(&attacker);
             let pt_proceeds = if pt_balance > 0 {
-                protocol.marketplace.swap_pt_for_underlying(&attacker, &pt_balance, &1)
+                protocol
+                    .marketplace
+                    .swap_pt_for_underlying(&attacker, &pt_balance, &1)
             } else {
                 0
             };
@@ -51,7 +53,9 @@ fn test_m1_production_exploit_matrix() {
             // 3. Sell entire YT
             let yt_balance = protocol.yt_token.balance(&attacker);
             let yt_proceeds = if yt_balance > 0 {
-                protocol.marketplace.swap_yt_for_underlying(&attacker, &yt_balance, &1)
+                protocol
+                    .marketplace
+                    .swap_yt_for_underlying(&attacker, &yt_balance, &1)
             } else {
                 0
             };
@@ -67,12 +71,14 @@ fn test_m1_production_exploit_matrix() {
                 yt_proceeds,
                 net_pnl
             );
-            
+
             // Assert that the exploit is mitigated (Net P&L <= 0)
             assert!(
                 net_pnl <= 0,
                 "Exploit still profitable! Elapsed: {}, Size: {}, Net P&L: {}",
-                elapsed, attack_size, net_pnl
+                elapsed,
+                attack_size,
+                net_pnl
             );
         }
     }
