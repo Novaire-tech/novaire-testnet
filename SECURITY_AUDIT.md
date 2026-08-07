@@ -124,9 +124,9 @@ The external Blend `submit` call (L267) executes before final state commits (L26
 `contracts/intent_engine/src/lib.rs:225`
 `execute_fixed_yield_intent` accepts `_maturity_ledger: u32`, never read or validated. Not an authorization bypass (the wired contract set is fixed at `initialize` — no per-call epoch selection exists), but dead/misleading API surface: a caller might assume passing a stale value has an effect.
 
-**SEC-13 — `add_accrued_yield` silently no-ops on zero amount**
+**SEC-13 — `add_accrued_yield` silently no-ops on zero amount — FIXED**
 `contracts/tokenizer/yt_token/src/lib.rs:547`
-`if amount > 0` silently skips rather than rejecting, inconsistent with the codebase's usual `<=0 → explicit error` convention. Harmless in practice (only caller already gates on `historical_yield > 0`).
+`if amount > 0` silently skips rather than rejecting, inconsistent with the codebase's usual `<=0 → explicit error` convention. Harmless in practice (only caller already gates on `historical_yield > 0`). Now rejects `amount <= 0` with `InvalidAmount`, matching convention; the sole caller (`tokenizer`'s late-mint path) already only invokes this with `historical_yield > 0`, so behavior is unchanged for all real call sites.
 
 **SEC-14 — Zero unit-test coverage in `pt_token` and `yt_token`** *(process finding, not a code defect)*
 `contracts/tokenizer/pt_token/src/lib.rs`, `contracts/tokenizer/yt_token/src/lib.rs`
@@ -150,7 +150,7 @@ Neither file contains a `#[cfg(test)]` module. All confidence in these contracts
 | SEC-10 | Full trust in Blend pool | Informational/Trust | Depends on third party | High if Blend pool compromised |
 | SEC-11 | sy_wrapper deposit CEI ordering | Informational | Very low | None demonstrated — **FIXED** |
 | SEC-12 | Dead `_maturity_ledger` param | Informational | N/A | None |
-| SEC-13 | add_accrued_yield no-op on zero | Informational | N/A | None |
+| SEC-13 | add_accrued_yield no-op on zero | Informational | N/A | None — **FIXED** |
 | SEC-14 | pt_token/yt_token zero unit tests | Process | N/A | Increases risk of undetected regressions |
 
 ---

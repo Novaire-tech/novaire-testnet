@@ -557,19 +557,17 @@ impl YtToken {
         let tokenizer = storage::get_tokenizer(&env)?;
         tokenizer.require_auth();
 
-        if amount < 0 {
+        if amount <= 0 {
             return Err(NovaireYtError::InvalidAmount);
         }
 
-        if amount > 0 {
-            let mut accrued = storage::get_accrued_yield(&env, &user);
-            accrued = accrued
-                .checked_add(amount)
-                .ok_or(NovaireYtError::MathOverflow)?;
-            storage::set_accrued_yield(&env, &user, accrued);
-            env.events()
-                .publish((Symbol::new(&env, "yt_historical_credit"), user), amount);
-        }
+        let mut accrued = storage::get_accrued_yield(&env, &user);
+        accrued = accrued
+            .checked_add(amount)
+            .ok_or(NovaireYtError::MathOverflow)?;
+        storage::set_accrued_yield(&env, &user, accrued);
+        env.events()
+            .publish((Symbol::new(&env, "yt_historical_credit"), user), amount);
 
         Ok(())
     }
