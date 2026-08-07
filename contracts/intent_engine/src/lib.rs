@@ -441,6 +441,7 @@ mod tests {
     use vault::{Vault, VaultClient as RealVaultClient};
     use tokenizer::{Tokenizer, TokenizerClient as RealTokenizerClient};
     use marketplace::{NovaireMarketplace, NovaireMarketplaceClient as RealMarketplaceClient};
+    use maturity_engine::{MaturityEngine, MaturityEngineClient as RealMaturityEngineClient};
 
     fn setup_env() -> (Env, Address, Address, IntentEngineClient<'static>, RealMarketplaceClient<'static>, RealPtClient<'static>, RealYtClient<'static>, token::StellarAssetClient<'static>, token::Client<'static>) {
         let env = Env::default();
@@ -475,15 +476,20 @@ mod tests {
 
         let tokenizer_contract_id = env.register(Tokenizer, ());
         let tokenizer_client = RealTokenizerClient::new(&env, &tokenizer_contract_id);
-        
+
+        let maturity_engine_id = env.register(MaturityEngine, ());
+        let maturity_engine_client = RealMaturityEngineClient::new(&env, &maturity_engine_id);
+        maturity_engine_client.initialize(&admin);
+        let maturity_epoch_id = maturity_engine_client.open_epoch(&maturity_ledger);
+
         pt_client.initialize(&admin, &tokenizer_contract_id);
-        yt_client.initialize(&admin, &tokenizer_contract_id, &maturity_ledger, &sy_contract_id);
-        
-        tokenizer_client.initialize(&admin, &vault_contract_id, &pt_contract_id, &yt_contract_id, &sy_contract_id, &maturity_ledger);
+        yt_client.initialize(&admin, &tokenizer_contract_id, &maturity_ledger, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
+
+        tokenizer_client.initialize(&admin, &vault_contract_id, &pt_contract_id, &yt_contract_id, &sy_contract_id, &maturity_ledger, &maturity_engine_id, &maturity_epoch_id);
 
         let market_contract_id = env.register(NovaireMarketplace, ());
         let market_client = RealMarketplaceClient::new(&env, &market_contract_id);
-        market_client.initialize(&admin, &pt_contract_id, &yt_contract_id, &underlying_token, &sy_contract_id, &tokenizer_contract_id, &maturity_ledger);
+        market_client.initialize(&admin, &pt_contract_id, &yt_contract_id, &underlying_token, &sy_contract_id, &tokenizer_contract_id, &maturity_ledger, &maturity_engine_id, &maturity_epoch_id);
 
         // Seed liquidity
         let lp_provider = Address::generate(&env);

@@ -59,6 +59,16 @@ pub trait SyWrapperInterface {
     fn refresh_rate(env: Env) -> Result<(), soroban_sdk::Error>;
 }
 
+/// Cross-contract client for the canonical epoch FSM. Tokenizer no longer
+/// derives Open/Matured state from a locally stored maturity ledger — it
+/// delegates to MaturityEngine, which is deployed fresh per epoch and always
+/// self-assigns epoch_id 1 for the single epoch it opens.
+#[soroban_sdk::contractclient(name = "MaturityEngineClient")]
+pub trait MaturityEngineInterface {
+    fn live_state(env: Env, epoch_id: u32) -> Result<u32, soroban_sdk::Error>;
+    fn settle_epoch(env: Env, epoch_id: u32) -> Result<(), soroban_sdk::Error>;
+}
+
 #[soroban_sdk::contractclient(name = "PtTokenClient")]
 pub trait PtTokenInterface {
     fn mint(env: Env, to: Address, amount: i128);
@@ -92,6 +102,13 @@ pub enum DataKey {
     EpochStartIndex,
     TotalPtMinted,
     SettlementExchangeRate,
+    /// Canonical epoch-clock contract. Source of truth for Open/Matured state;
+    /// `MaturityLedger` is retained only as a display-only value for `metadata()`.
+    MaturityEngine,
+    /// The epoch_id `MaturityEngine::open_epoch` returned for this deployment —
+    /// captured explicitly rather than assumed, since MaturityEngine's own
+    /// id-assignment behavior is out of this contract's control.
+    MaturityEngineEpochId,
     /// Raw surplus (assets_held_raw - pt_liability_raw) recorded as of the last
     /// reward-per-YT accumulator refresh. See `refresh_yield_index`.
     LastRecordedSurplus,
@@ -128,19 +145,32 @@ mod storage {
         env.storage().instance().set(&DataKey::SettlementExchangeRate, &val);
     }
 
+    /// Delegates to MaturityEngine (the canonical epoch clock) instead of
+    /// re-deriving Open/Matured from a locally stored maturity ledger. Settled
+    /// is still Tokenizer's own concept (driven by `SettlementExchangeRate`
+    /// being set, which `settle_epoch` sets in the same transaction it advances
+    /// MaturityEngine's own state), since freezing the settlement rate is a
+    /// Tokenizer-specific economic action MaturityEngine has no notion of.
     pub fn get_epoch_state(env: &Env) -> Result<EpochState, NovaireTokenizerError> {
-        let maturity = get_u32(env, DataKey::MaturityLedger)?;
-        let current = env.ledger().sequence();
-        
-        if current < maturity {
-            return Ok(EpochState::Open);
-        }
-        
         if get_settlement_rate(env).is_some() {
             return Ok(EpochState::Settled);
         }
-        
-        Ok(EpochState::Matured)
+
+        let maturity_engine = get_address(env, DataKey::MaturityEngine)?;
+        let epoch_id = get_u32(env, DataKey::MaturityEngineEpochId)?;
+        let engine_client = MaturityEngineClient::new(env, &maturity_engine);
+        let live_state = engine_client.live_state(&epoch_id);
+
+        // 0 = Active, 1 = Matured, 2 = Settled, 3 = Archived (MaturityEngine's
+        // EpochState). Tokenizer's own EpochState has no Archived variant —
+        // Settled/Archived both mean "not open for minting", and Settled here
+        // is already handled above via the local settlement-rate check, so any
+        // non-Active engine state at this point means Matured-or-later.
+        if live_state == 0 {
+            Ok(EpochState::Open)
+        } else {
+            Ok(EpochState::Matured)
+        }
     }
 }
 
@@ -164,6 +194,8 @@ impl Tokenizer {
         yt_token: Address,
         sy_wrapper: Address,
         maturity_ledger: u32,
+        maturity_engine: Address,
+        maturity_engine_epoch_id: u32,
     ) -> Result<(), NovaireTokenizerError> {
         if storage::is_initialized(&env) {
             return Err(NovaireTokenizerError::AlreadyInitialized);
@@ -179,6 +211,8 @@ impl Tokenizer {
         env.storage().instance().set(&DataKey::YtToken, &yt_token);
         env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
         env.storage().instance().set(&DataKey::MaturityLedger, &maturity_ledger);
+        env.storage().instance().set(&DataKey::MaturityEngine, &maturity_engine);
+        env.storage().instance().set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
         env.storage().instance().set(&DataKey::EpochId, &1u32);
         
         storage::set_i128(&env, DataKey::EpochStartIndex, epoch_start_index);
@@ -385,9 +419,19 @@ impl Tokenizer {
         let settlement_rate = sy_client.get_exchange_rate();
         storage::set_settlement_rate(&env, settlement_rate);
 
+        // Advance the canonical epoch clock in lockstep, in the same transaction,
+        // now that this contract's own settlement rate is frozen. MaturityEngine's
+        // own `settle_epoch` requires its dynamic state to already be Matured,
+        // which is guaranteed here since `get_epoch_state` above already checked
+        // it via `live_state`.
+        let maturity_engine_addr = storage::get_address(&env, DataKey::MaturityEngine)?;
+        let maturity_engine_epoch_id = storage::get_u32(&env, DataKey::MaturityEngineEpochId)?;
+        let maturity_engine_client = MaturityEngineClient::new(&env, &maturity_engine_addr);
+        maturity_engine_client.settle_epoch(&maturity_engine_epoch_id);
+
         let epoch_id = storage::get_u32(&env, DataKey::EpochId)?;
         env.events().publish((Symbol::new(&env, "tokenizer_settled"),), (epoch_id, settlement_rate));
-        
+
         Self::assert_invariant(env.clone())?;
         Ok(())
     }
@@ -666,6 +710,7 @@ mod tests {
     use yt_token::{YtToken, YtTokenClient as RealYtClient};
     use vault::{Vault, VaultClient as RealVaultClient};
     use sy_wrapper::{SyWrapper, SyWrapperClient as RealSyWrapperClient};
+    use maturity_engine::{MaturityEngine, MaturityEngineClient as RealMaturityEngineClient};
 
     #[test]
     fn test_tokenizer_state_machine() {
@@ -701,9 +746,14 @@ mod tests {
         let tokenizer_client = TokenizerClient::new(&env, &tokenizer_contract_id);
 
         let maturity_ledger = 100;
-        
+
+        let maturity_engine_id = env.register(MaturityEngine, ());
+        let maturity_engine_client = RealMaturityEngineClient::new(&env, &maturity_engine_id);
+        maturity_engine_client.initialize(&admin);
+        let maturity_epoch_id = maturity_engine_client.open_epoch(&maturity_ledger);
+
         pt_client.initialize(&admin, &tokenizer_contract_id);
-        yt_client.initialize(&admin, &tokenizer_contract_id, &maturity_ledger, &sy_contract_id);
+        yt_client.initialize(&admin, &tokenizer_contract_id, &maturity_ledger, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
 
         tokenizer_client.initialize(
             &admin,
@@ -712,6 +762,8 @@ mod tests {
             &yt_contract_id,
             &sy_contract_id,
             &maturity_ledger,
+            &maturity_engine_id,
+            &maturity_epoch_id,
         );
 
         // Vault Deposit

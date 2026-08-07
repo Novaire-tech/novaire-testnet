@@ -20,6 +20,14 @@ pub trait TokenizerInterface {
     fn record_surplus_baseline_pub(env: Env) -> Result<(), soroban_sdk::Error>;
 }
 
+/// Cross-contract client for the canonical epoch FSM. Replaces the local
+/// `ledger_sequence >= maturity_ledger` comparison previously used to
+/// determine expiry.
+#[contractclient(name = "MaturityEngineClient")]
+pub trait MaturityEngineInterface {
+    fn live_state(env: Env, epoch_id: u32) -> Result<u32, soroban_sdk::Error>;
+}
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -49,6 +57,11 @@ pub enum DataKey {
     TotalSupply,
     YieldIndex,
     MaturityLedger,
+    /// Canonical epoch-clock contract. Source of truth for expiry;
+    /// `MaturityLedger` is retained only as a display-only value.
+    MaturityEngine,
+    /// The epoch_id `MaturityEngine::open_epoch` returned for this deployment.
+    MaturityEngineEpochId,
     Paused,
     Balance(Address),
     Allowance(Address, Address),
@@ -97,6 +110,14 @@ mod storage {
 
     pub fn get_maturity_ledger(env: &Env) -> Result<u32, NovaireYtError> {
         env.storage().instance().get(&DataKey::MaturityLedger).ok_or(NovaireYtError::StorageMissing)
+    }
+
+    pub fn get_maturity_engine(env: &Env) -> Result<Address, NovaireYtError> {
+        env.storage().instance().get(&DataKey::MaturityEngine).ok_or(NovaireYtError::StorageMissing)
+    }
+
+    pub fn get_maturity_engine_epoch_id(env: &Env) -> Result<u32, NovaireYtError> {
+        env.storage().instance().get(&DataKey::MaturityEngineEpochId).ok_or(NovaireYtError::StorageMissing)
     }
 
     pub fn get_total_supply(env: &Env) -> i128 {
@@ -158,9 +179,16 @@ mod storage {
         Ok(())
     }
     
+    /// Delegates to MaturityEngine (the canonical epoch clock) rather than
+    /// comparing the locally stored maturity ledger to the current sequence.
+    /// Anything other than Active (0) — Matured, Settled, or Archived — counts
+    /// as expired, matching the previous semantics where accrual stops once
+    /// maturity is reached.
     pub fn is_expired(env: &Env) -> Result<bool, NovaireYtError> {
-        let maturity = get_maturity_ledger(env)?;
-        Ok(env.ledger().sequence() >= maturity)
+        let maturity_engine = get_maturity_engine(env)?;
+        let epoch_id = get_maturity_engine_epoch_id(env)?;
+        let engine_client = MaturityEngineClient::new(env, &maturity_engine);
+        Ok(engine_client.live_state(&epoch_id) != 0)
     }
 }
 
@@ -192,7 +220,7 @@ impl YtToken {
     ///
     /// # Errors
     /// Returns `AlreadyInitialized` if called more than once.
-    pub fn initialize(env: Env, admin: Address, tokenizer: Address, maturity_ledger: u32, sy_wrapper: Address) -> Result<(), NovaireYtError> {
+    pub fn initialize(env: Env, admin: Address, tokenizer: Address, maturity_ledger: u32, sy_wrapper: Address, maturity_engine: Address, maturity_engine_epoch_id: u32) -> Result<(), NovaireYtError> {
         if storage::is_initialized(&env) {
             return Err(NovaireYtError::AlreadyInitialized);
         }
@@ -202,7 +230,9 @@ impl YtToken {
         env.storage().instance().set(&DataKey::Tokenizer, &tokenizer);
         env.storage().instance().set(&DataKey::MaturityLedger, &maturity_ledger);
         env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
-        
+        env.storage().instance().set(&DataKey::MaturityEngine, &maturity_engine);
+        env.storage().instance().set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
+
         storage::set_total_supply(&env, 0i128);
         storage::set_yield_index(&env, 0i128);
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -286,11 +316,11 @@ impl YtToken {
     /// - Skipped post-maturity (yield is frozen at settlement).
     /// - Best-effort: swallows failures rather than blocking a transfer.
     fn refresh_index_locally(env: &Env) {
-        // Skip if past maturity — yield accrual is frozen.
-        if let Ok(maturity) = storage::get_maturity_ledger(env) {
-            if env.ledger().sequence() >= maturity {
-                return;
-            }
+        // Skip if past maturity — yield accrual is frozen. Delegates to
+        // MaturityEngine (the canonical epoch clock) rather than a local
+        // ledger-vs-maturity comparison.
+        if let Ok(true) = storage::is_expired(env) {
+            return;
         }
 
         let tokenizer_addr = match storage::get_tokenizer(env) {

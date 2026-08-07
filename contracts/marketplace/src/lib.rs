@@ -23,6 +23,14 @@ pub trait TokenizerInterface {
     fn claim_yield(env: Env, user: Address) -> i128;
 }
 
+/// Cross-contract client for the canonical epoch FSM. Replaces the local
+/// `ledger_sequence >= maturity_ledger` comparison previously duplicated at
+/// every `EpochExpired` guard site.
+#[soroban_sdk::contractclient(name = "MaturityEngineClient")]
+pub trait MaturityEngineInterface {
+    fn live_state(env: Env, epoch_id: u32) -> u32;
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DataKey {
@@ -33,6 +41,11 @@ pub enum DataKey {
     SyWrapper,
     Tokenizer,
     MaturityLedger,
+    /// Canonical epoch-clock contract. Source of truth for `EpochExpired`
+    /// checks; `MaturityLedger` is retained only as a display-only value.
+    MaturityEngine,
+    /// The epoch_id `MaturityEngine::open_epoch` returned for this deployment.
+    MaturityEngineEpochId,
     CreatedLedger,
     PtReserves,
     UnderlyingReserves,
@@ -166,6 +179,8 @@ impl NovaireMarketplace {
         sy_wrapper: Address,
         tokenizer: Address,
         maturity_ledger: u32,
+        maturity_engine: Address,
+        maturity_engine_epoch_id: u32,
     ) -> Result<(), NovaireMarketError> {
         admin.require_auth();
         if storage::is_initialized(&env) {
@@ -178,6 +193,8 @@ impl NovaireMarketplace {
         env.storage().instance().set(&DataKey::SyWrapper, &sy_wrapper);
         env.storage().instance().set(&DataKey::Tokenizer, &tokenizer);
         env.storage().instance().set(&DataKey::MaturityLedger, &maturity_ledger);
+        env.storage().instance().set(&DataKey::MaturityEngine, &maturity_engine);
+        env.storage().instance().set(&DataKey::MaturityEngineEpochId, &maturity_engine_epoch_id);
         env.storage().instance().set(&DataKey::CreatedLedger, &env.ledger().sequence());
         
         storage::set_i128(&env, DataKey::PtReserves, 0);
@@ -186,6 +203,20 @@ impl NovaireMarketplace {
         storage::set_i128(&env, DataKey::TotalLpShares, 0);
         storage::set_i128(&env, DataKey::ImpliedRateTwap, 0);
 
+        Ok(())
+    }
+
+    /// Delegates the `EpochExpired` gate to MaturityEngine (the canonical
+    /// epoch clock) — a single cross-contract call per swap function, reused
+    /// internally rather than re-queried at multiple points, to keep the
+    /// per-transaction cross-contract call count on this hot path minimal.
+    fn require_not_expired(env: &Env) -> Result<(), NovaireMarketError> {
+        let maturity_engine = storage::get_address(env, DataKey::MaturityEngine)?;
+        let epoch_id = storage::get_u32(env, DataKey::MaturityEngineEpochId)?;
+        let engine_client = MaturityEngineClient::new(env, &maturity_engine);
+        if engine_client.live_state(&epoch_id) != 0 {
+            return Err(NovaireMarketError::EpochExpired);
+        }
         Ok(())
     }
 
@@ -371,10 +402,8 @@ impl NovaireMarketplace {
             return Err(NovaireMarketError::ZeroInput);
         }
 
+        Self::require_not_expired(&env)?;
         let maturity = storage::get_u32(&env, DataKey::MaturityLedger)?;
-        if env.ledger().sequence() >= maturity {
-            return Err(NovaireMarketError::EpochExpired);
-        }
 
         let pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
         let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
@@ -431,10 +460,8 @@ impl NovaireMarketplace {
             return Err(NovaireMarketError::ZeroInput);
         }
 
+        Self::require_not_expired(&env)?;
         let maturity = storage::get_u32(&env, DataKey::MaturityLedger)?;
-        if env.ledger().sequence() >= maturity {
-            return Err(NovaireMarketError::EpochExpired);
-        }
 
         let pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
         let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
@@ -491,10 +518,8 @@ impl NovaireMarketplace {
             return Err(NovaireMarketError::ZeroInput);
         }
 
+        Self::require_not_expired(&env)?;
         let maturity = storage::get_u32(&env, DataKey::MaturityLedger)?;
-        if env.ledger().sequence() >= maturity {
-            return Err(NovaireMarketError::EpochExpired);
-        }
 
         let pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
         let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
@@ -568,16 +593,14 @@ impl NovaireMarketplace {
             return Err(NovaireMarketError::ZeroInput);
         }
 
+        Self::require_not_expired(&env)?;
         let maturity = storage::get_u32(&env, DataKey::MaturityLedger)?;
-        if env.ledger().sequence() >= maturity {
-            return Err(NovaireMarketError::EpochExpired);
-        }
 
         let pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
         let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
 
         let pt_twap = Self::get_twap_rate(env.clone())?;
-        
+
         let capped_pt_price = if pt_twap > 1_000_000_000_i128 {
             1_000_000_000_i128
         } else {
@@ -742,6 +765,7 @@ mod tests {
     use pt_token::{PtToken, PtTokenClient as RealPtClient};
     use yt_token::{YtToken, YtTokenClient as RealYtClient};
     use vault::{Vault, VaultClient as RealVaultClient};
+    use maturity_engine::{MaturityEngine, MaturityEngineClient as RealMaturityEngineClient};
 
     // ── CONSTANTS ────────────────────────────────────────────────────────────
     const CREATED_AT: u32 = 10;
@@ -775,9 +799,12 @@ mod tests {
         let pt_client = RealPtClient::new(&env, &pt_contract_id);
         pt_client.initialize(&admin, &Address::generate(&env));
 
+        let maturity_engine_id = env.register(MaturityEngine, ());
+        let maturity_engine_client = RealMaturityEngineClient::new(&env, &maturity_engine_id);
+        maturity_engine_client.initialize(&admin);
+
         let yt_contract_id = env.register(YtToken, ());
         let yt_client = RealYtClient::new(&env, &yt_contract_id);
-        yt_client.initialize(&admin, &Address::generate(&env), &1_000, &sy_contract_id);
 
         let market_contract_id = env.register(NovaireMarketplace, ());
         let market_client = NovaireMarketplaceClient::new(&env, &market_contract_id);
@@ -787,6 +814,9 @@ mod tests {
             ..env.ledger().get()
         });
 
+        let maturity_epoch_id = maturity_engine_client.open_epoch(&MATURITY_AT);
+        yt_client.initialize(&admin, &Address::generate(&env), &1_000, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
+
         market_client.initialize(
             &admin,
             &pt_contract_id,
@@ -795,6 +825,8 @@ mod tests {
             &sy_contract_id,
             &Address::generate(&env),
             &MATURITY_AT,
+            &maturity_engine_id,
+            &maturity_epoch_id,
         );
 
         (env, admin, underlying_token, pt_contract_id, market_client, sy_client, token_admin_client)
@@ -1167,9 +1199,12 @@ mod tests {
         let pt_client = RealPtClient::new(&env, &pt_contract_id);
         pt_client.initialize(&admin, &Address::generate(&env));
 
+        let maturity_engine_id = env.register(MaturityEngine, ());
+        let maturity_engine_client = RealMaturityEngineClient::new(&env, &maturity_engine_id);
+        maturity_engine_client.initialize(&admin);
+
         let yt_contract_id = env.register(YtToken, ());
         let yt_client = RealYtClient::new(&env, &yt_contract_id);
-        yt_client.initialize(&admin, &Address::generate(&env), &1_000, &sy_contract_id);
 
         let market_contract_id = env.register(NovaireMarketplace, ());
         let market_client = NovaireMarketplaceClient::new(&env, &market_contract_id);
@@ -1179,6 +1214,9 @@ mod tests {
             ..env.ledger().get()
         });
 
+        let maturity_epoch_id = maturity_engine_client.open_epoch(&MATURITY_AT);
+        yt_client.initialize(&admin, &Address::generate(&env), &1_000, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
+
         market_client.initialize(
             &admin,
             &pt_contract_id,
@@ -1187,6 +1225,8 @@ mod tests {
             &sy_contract_id,
             &Address::generate(&env),
             &MATURITY_AT,
+            &maturity_engine_id,
+            &maturity_epoch_id,
         );
 
         (env, admin, underlying_token, pt_contract_id, yt_contract_id, market_client, token_admin_client)

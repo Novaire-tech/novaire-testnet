@@ -199,6 +199,15 @@ impl MaturityEngine {
         storage::get_epoch(&env, epoch_id)
     }
 
+    /// Cross-contract-friendly live state getter. Returns the dynamically evaluated
+    /// state (not the possibly-stale persisted `state` field) as a plain u32, so
+    /// external callers (Tokenizer, YtToken, Marketplace) don't need to depend on
+    /// this contract's `EpochState` contracttype to decode the result.
+    pub fn live_state(env: Env, epoch_id: u32) -> Result<u32, NovaireMaturityError> {
+        let epoch = storage::get_epoch(&env, epoch_id)?;
+        Ok(Self::evaluate_state(&env, &epoch) as u32)
+    }
+
     pub fn current_epoch(env: Env) -> Result<EpochRecord, NovaireMaturityError> {
         let current_id = storage::get_current_epoch_id(&env);
         if current_id == 0 {

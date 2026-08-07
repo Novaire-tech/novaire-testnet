@@ -62,7 +62,7 @@ pub mod mock_yt {
     use soroban_sdk::Symbol;
     #[contract] pub struct MockYtToken;
     #[contractimpl] impl MockYtToken { 
-        pub fn initialize(env: Env, admin: Address, tokenizer: Address, maturity_ledger: u32, sy_wrapper: Address) {
+        pub fn initialize(env: Env, admin: Address, tokenizer: Address, maturity_ledger: u32, sy_wrapper: Address, _maturity_engine: Address, _maturity_epoch_id: u32) {
             let meta = YtMetadata { admin, tokenizer, total_supply: 0, yield_index: 0, maturity_ledger, is_paused: false, is_expired: false, version: 1 };
             env.storage().instance().set(&Symbol::new(&env, "meta"), &meta);
         }
@@ -74,7 +74,7 @@ pub mod mock_tokenizer {
     use soroban_sdk::Symbol;
     #[contract] pub struct MockTokenizer;
     #[contractimpl] impl MockTokenizer { 
-        pub fn initialize(env: Env, admin: Address, vault: Address, pt_token: Address, yt_token: Address, sy_token: Address, maturity_ledger: u32) {
+        pub fn initialize(env: Env, admin: Address, vault: Address, pt_token: Address, yt_token: Address, sy_token: Address, maturity_ledger: u32, _maturity_engine: Address, _maturity_epoch_id: u32) {
             let meta = TokenizerMetadata { admin, vault, pt_token, yt_token, sy_wrapper: sy_token, maturity_ledger, epoch_id: 0, epoch_start_index: 0, total_pt_minted: 0, settlement_exchange_rate: None, epoch_state: 0, version: 1 };
             env.storage().instance().set(&Symbol::new(&env, "meta"), &meta);
         }
@@ -84,7 +84,7 @@ pub mod mock_tokenizer {
 pub mod mock_market {
     use super::*;
     #[contract] pub struct MockMarketplace;
-    #[contractimpl] impl MockMarketplace { pub fn initialize(_env: Env, _admin: Address, _pt_token: Address, _yt_token: Address, _underlying_token: Address, _sy_token: Address, _tokenizer: Address, _maturity_ledger: u32) {} }
+    #[contractimpl] impl MockMarketplace { pub fn initialize(_env: Env, _admin: Address, _pt_token: Address, _yt_token: Address, _underlying_token: Address, _sy_token: Address, _tokenizer: Address, _maturity_ledger: u32, _maturity_engine: Address, _maturity_epoch_id: u32) {} }
 }
 pub mod mock_intent {
     use super::*;
@@ -95,6 +95,31 @@ pub mod mock_rollover {
     use super::*;
     #[contract] pub struct MockRolloverEngine;
     #[contractimpl] impl MockRolloverEngine { pub fn initialize(_env: Env, _admin: Address, _tokenizer: Address, _vault: Address, _marketplace: Address, _intent_engine: Address, _keeper: Address, _pt_token: Address, _underlying_token: Address, _factory: Address, _grace_period_ledgers: u32) {} }
+}
+pub mod mock_maturity {
+    use super::*;
+    use soroban_sdk::Symbol;
+    #[contract] pub struct MockMaturityEngine;
+    #[contractimpl] impl MockMaturityEngine {
+        pub fn initialize(_env: Env, _admin: Address) {}
+        pub fn open_epoch(env: Env, _maturity_ledger: u32) -> u32 {
+            let id: u32 = env.storage().instance().get(&Symbol::new(&env, "id")).unwrap_or(0) + 1;
+            env.storage().instance().set(&Symbol::new(&env, "id"), &id);
+            id
+        }
+        pub fn live_state(_env: Env, _epoch_id: u32) -> u32 { 0 }
+    }
+}
+pub mod mock_bad_maturity {
+    use super::*;
+    #[contract] pub struct MockBadMaturityEngine;
+    #[contractimpl] impl MockBadMaturityEngine {
+        pub fn initialize(_env: Env, _admin: Address) {}
+        pub fn open_epoch(_env: Env, _maturity_ledger: u32) -> u32 { 1 }
+        // Always reports Matured (1), never Active — used to exercise the
+        // Factory's post-open live_state wiring-verification check.
+        pub fn live_state(_env: Env, _epoch_id: u32) -> u32 { 1 }
+    }
 }
 
 // ==========================================
@@ -130,6 +155,7 @@ fn deploy_mock_epoch(s: &Setup, maturity: u32) -> Result<u32, NovaireFactoryErro
     let marketplace = env.register(mock_market::MockMarketplace, ());
     let intent = env.register(mock_intent::MockIntentEngine, ());
     let rollover = env.register(mock_rollover::MockRolloverEngine, ());
+    let maturity_engine = env.register(mock_maturity::MockMaturityEngine, ());
     let keeper = Address::generate(env);
 
     let params = DeployEpochParams {
@@ -146,6 +172,7 @@ fn deploy_mock_epoch(s: &Setup, maturity: u32) -> Result<u32, NovaireFactoryErro
         rollover_engine: rollover,
         keeper,
         grace_period_ledgers: 17280,
+        maturity_engine,
     };
 
     Ok(s.factory.try_deploy_epoch(&params).unwrap().unwrap())
@@ -172,6 +199,7 @@ fn test_successful_deployment_and_wiring() {
     assert_eq!(record.maturity_ledger, 100000);
     assert_eq!(record.version, 1);
     assert!(record.is_active);
+    assert_eq!(record.maturity_epoch_id, 1);
     
     // Test direct lookup
     let direct_record = s.factory.get_epoch(&1);
@@ -219,6 +247,7 @@ fn test_duplicate_maturity_panic() {
         rollover_engine: Address::generate(&s.env),
         keeper: Address::generate(&s.env),
         grace_period_ledgers: 17280,
+        maturity_engine: Address::generate(&s.env),
     };
     s.factory.deploy_epoch(&params);
 }
@@ -258,6 +287,7 @@ fn test_invalid_wiring_rejected() {
         rollover_engine: s.env.register(mock_rollover::MockRolloverEngine, ()),
         keeper: Address::generate(&s.env),
         grace_period_ledgers: 17280,
+        maturity_engine: s.env.register(mock_maturity::MockMaturityEngine, ()),
     };
     s.factory.deploy_epoch(&params);
 }
@@ -302,6 +332,7 @@ fn test_wiring_mismatch_fails() {
     let marketplace = env.register(mock_market::MockMarketplace, ());
     let intent = env.register(mock_intent::MockIntentEngine, ());
     let rollover = env.register(mock_rollover::MockRolloverEngine, ());
+    let maturity_engine = env.register(mock_maturity::MockMaturityEngine, ());
     let keeper = Address::generate(env);
 
     let params = DeployEpochParams {
@@ -318,6 +349,46 @@ fn test_wiring_mismatch_fails() {
         rollover_engine: rollover,
         keeper,
         grace_period_ledgers: 17280,
+        maturity_engine,
+    };
+
+    s.factory.deploy_epoch(&params);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #11)")]
+fn test_maturity_engine_wiring_mismatch_fails() {
+    let s = setup();
+    let env = &s.env;
+    let underlying = Address::generate(env);
+    let sy = env.register(mock_sy::MockSyWrapper, ());
+    let vault = env.register(mock_vault::MockVault, ());
+    let pt = env.register(mock_pt::MockPtToken, ());
+    let yt = env.register(mock_yt::MockYtToken, ());
+    let tokenizer = env.register(mock_tokenizer::MockTokenizer, ());
+    let marketplace = env.register(mock_market::MockMarketplace, ());
+    let intent = env.register(mock_intent::MockIntentEngine, ());
+    let rollover = env.register(mock_rollover::MockRolloverEngine, ());
+    // Reports Matured immediately after open_epoch — should trip the
+    // post-open live_state verification in Factory::deploy_epoch.
+    let maturity_engine = env.register(mock_bad_maturity::MockBadMaturityEngine, ());
+    let keeper = Address::generate(env);
+
+    let params = DeployEpochParams {
+        maturity_ledger: 100000,
+        underlying_token: underlying,
+        sy_wrapper: sy,
+        vault,
+        blend_pool: Address::generate(env),
+        pt_token: pt,
+        yt_token: yt,
+        tokenizer,
+        marketplace,
+        intent_engine: intent,
+        rollover_engine: rollover,
+        keeper,
+        grace_period_ledgers: 17280,
+        maturity_engine,
     };
 
     s.factory.deploy_epoch(&params);

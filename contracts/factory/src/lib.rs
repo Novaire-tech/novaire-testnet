@@ -31,6 +31,8 @@ pub struct EpochRecord {
     pub marketplace: Address,
     pub intent_engine: Address,
     pub rollover_engine: Address,
+    pub maturity_engine: Address,
+    pub maturity_epoch_id: u32,
     pub deployment_ledger: u32,
     pub version: u32,
     pub is_active: bool,
@@ -65,6 +67,7 @@ pub struct DeployEpochParams {
     pub rollover_engine: Address,
     pub keeper: Address,
     pub grace_period_ledgers: u32,
+    pub maturity_engine: Address,
 }
 
 // ==========================================
@@ -144,19 +147,26 @@ pub trait PtTokenInterface {
 
 #[soroban_sdk::contractclient(name = "YtTokenClient")]
 pub trait YtTokenInterface {
-    fn initialize(env: Env, admin: Address, tokenizer: Address, maturity_ledger: u32, sy_wrapper: Address);
+    fn initialize(env: Env, admin: Address, tokenizer: Address, maturity_ledger: u32, sy_wrapper: Address, maturity_engine: Address, maturity_epoch_id: u32);
     fn metadata(env: Env) -> YtMetadata;
 }
 
 #[soroban_sdk::contractclient(name = "TokenizerClient")]
 pub trait TokenizerInterface {
-    fn initialize(env: Env, admin: Address, vault: Address, pt_token: Address, yt_token: Address, sy_token: Address, maturity_ledger: u32);
+    fn initialize(env: Env, admin: Address, vault: Address, pt_token: Address, yt_token: Address, sy_token: Address, maturity_ledger: u32, maturity_engine: Address, maturity_epoch_id: u32);
     fn metadata(env: Env) -> TokenizerMetadata;
 }
 
 #[soroban_sdk::contractclient(name = "MarketplaceClient")]
 pub trait MarketplaceInterface {
-    fn initialize(env: Env, admin: Address, pt_token: Address, yt_token: Address, underlying_token: Address, sy_token: Address, tokenizer: Address, maturity_ledger: u32);
+    fn initialize(env: Env, admin: Address, pt_token: Address, yt_token: Address, underlying_token: Address, sy_token: Address, tokenizer: Address, maturity_ledger: u32, maturity_engine: Address, maturity_epoch_id: u32);
+}
+
+#[soroban_sdk::contractclient(name = "MaturityEngineClient")]
+pub trait MaturityEngineInterface {
+    fn initialize(env: Env, admin: Address);
+    fn open_epoch(env: Env, maturity_ledger: u32) -> u32;
+    fn live_state(env: Env, epoch_id: u32) -> u32;
 }
 
 #[soroban_sdk::contractclient(name = "IntentEngineClient")]
@@ -250,8 +260,9 @@ impl Factory {
             &params.marketplace,
             &params.intent_engine,
             &params.rollover_engine,
+            &params.maturity_engine,
         ];
-        
+
         for i in 0..addresses.len() {
             for j in (i + 1)..addresses.len() {
                 if addresses[i] == addresses[j] {
@@ -273,14 +284,24 @@ impl Factory {
         let pt_client = PtTokenClient::new(&env, &params.pt_token);
         pt_client.initialize(&admin, &params.tokenizer);
 
+        // Maturity Engine is the canonical epoch clock. It's deployed fresh per
+        // epoch (same as every other contract here), but we don't assume its
+        // self-assigned epoch_id — we capture the real value `open_epoch` returns
+        // and thread it through to every contract that needs to query it, so the
+        // wiring stays correct even if MaturityEngine's own id-assignment logic
+        // ever changes (e.g. a shared instance reused across epochs).
+        let maturity_engine_client = MaturityEngineClient::new(&env, &params.maturity_engine);
+        maturity_engine_client.initialize(&admin);
+        let maturity_epoch_id = maturity_engine_client.open_epoch(&params.maturity_ledger);
+
         let yt_client = YtTokenClient::new(&env, &params.yt_token);
-        yt_client.initialize(&admin, &params.tokenizer, &params.maturity_ledger, &params.sy_wrapper);
+        yt_client.initialize(&admin, &params.tokenizer, &params.maturity_ledger, &params.sy_wrapper, &params.maturity_engine, &maturity_epoch_id);
 
         let tokenizer_client = TokenizerClient::new(&env, &params.tokenizer);
-        tokenizer_client.initialize(&admin, &params.vault, &params.pt_token, &params.yt_token, &params.sy_wrapper, &params.maturity_ledger);
+        tokenizer_client.initialize(&admin, &params.vault, &params.pt_token, &params.yt_token, &params.sy_wrapper, &params.maturity_ledger, &params.maturity_engine, &maturity_epoch_id);
 
         let marketplace_client = MarketplaceClient::new(&env, &params.marketplace);
-        marketplace_client.initialize(&admin, &params.pt_token, &params.yt_token, &params.underlying_token, &params.sy_wrapper, &params.tokenizer, &params.maturity_ledger);
+        marketplace_client.initialize(&admin, &params.pt_token, &params.yt_token, &params.underlying_token, &params.sy_wrapper, &params.tokenizer, &params.maturity_ledger, &params.maturity_engine, &maturity_epoch_id);
 
         let intent_client = IntentEngineClient::new(&env, &params.intent_engine);
         intent_client.initialize(&admin, &params.vault, &params.tokenizer, &params.marketplace, &params.sy_wrapper, &params.underlying_token, &params.pt_token, &params.yt_token);
@@ -289,6 +310,11 @@ impl Factory {
         rollover_client.initialize(&admin, &params.tokenizer, &params.vault, &params.marketplace, &params.intent_engine, &params.keeper, &params.pt_token, &params.underlying_token, &env.current_contract_address(), &params.grace_period_ledgers);
 
         if sy_client.underlying_asset() != params.underlying_token {
+            return Err(NovaireFactoryError::WiringMismatch);
+        }
+
+        // 0 == EpochState::Active, matching the just-opened epoch's expected state.
+        if maturity_engine_client.live_state(&maturity_epoch_id) != 0 {
             return Err(NovaireFactoryError::WiringMismatch);
         }
 
@@ -325,6 +351,8 @@ impl Factory {
             marketplace: params.marketplace,
             intent_engine: params.intent_engine,
             rollover_engine: params.rollover_engine,
+            maturity_engine: params.maturity_engine,
+            maturity_epoch_id,
             deployment_ledger: current_ledger,
             version,
             is_active: true,

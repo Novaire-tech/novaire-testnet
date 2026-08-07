@@ -379,7 +379,8 @@ fn scenario_h4_set_sy_wrapper_auth_rejection() {
     let old_sy = Address::generate(&env);
     let new_sy = Address::generate(&env);
     let tokenizer = Address::generate(&env);
-    
+    let maturity_engine = Address::generate(&env);
+
     let yt_token_addr = env.register(yt_token::YtToken, ());
     let yt_token_client = yt_token::YtTokenClient::new(&env, &yt_token_addr);
 
@@ -389,13 +390,13 @@ fn scenario_h4_set_sy_wrapper_auth_rejection() {
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &yt_token_addr,
                 fn_name: "initialize",
-                args: (&admin, &tokenizer, &1_000u32, &old_sy).into_val(&env),
+                args: (&admin, &tokenizer, &1_000u32, &old_sy, &maturity_engine, &1u32).into_val(&env),
                 sub_invokes: &[],
             },
         }
     ]);
-    yt_token_client.initialize(&admin, &tokenizer, &1_000, &old_sy);
-    
+    yt_token_client.initialize(&admin, &tokenizer, &1_000, &old_sy, &maturity_engine, &1);
+
     // Calling it without mock_auth should panic the test thread
     yt_token_client.set_sy_wrapper(&new_sy);
 }
@@ -410,7 +411,8 @@ fn scenario_h4_set_sy_wrapper_auth_success() {
     let old_sy = Address::generate(&env);
     let new_sy = Address::generate(&env);
     let tokenizer = Address::generate(&env);
-    
+    let maturity_engine = Address::generate(&env);
+
     let yt_token_addr = env.register(yt_token::YtToken, ());
     let yt_token_client = yt_token::YtTokenClient::new(&env, &yt_token_addr);
 
@@ -420,13 +422,13 @@ fn scenario_h4_set_sy_wrapper_auth_success() {
             invoke: &soroban_sdk::testutils::MockAuthInvoke {
                 contract: &yt_token_addr,
                 fn_name: "initialize",
-                args: (&admin, &tokenizer, &1_000u32, &old_sy).into_val(&env),
+                args: (&admin, &tokenizer, &1_000u32, &old_sy, &maturity_engine, &1u32).into_val(&env),
                 sub_invokes: &[],
             },
         }
     ]);
-    yt_token_client.initialize(&admin, &tokenizer, &1_000, &old_sy);
-    
+    yt_token_client.initialize(&admin, &tokenizer, &1_000, &old_sy, &maturity_engine, &1);
+
     env.mock_auths(&[
         soroban_sdk::testutils::MockAuth {
             address: &admin,

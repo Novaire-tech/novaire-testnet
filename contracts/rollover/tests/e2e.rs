@@ -12,6 +12,7 @@ use intent_engine::{IntentEngine, IntentEngineClient};
 use rollover::{AutonomousRollover, AutonomousRolloverClient, DataKey};
 use soroban_sdk::{contract, contractimpl, contracttype};
 use sy_wrapper::{Positions, Request};
+use maturity_engine::{MaturityEngine, MaturityEngineClient};
 
 // Minimal stand-in for the real Blend Capital Pool contract (see
 // `sy_wrapper::{BlendPool, Request, Positions}`), mirroring `MockBlendPool` in
@@ -162,10 +163,6 @@ fn test_novaire_end_to_end_integration() {
     let pt_client = PtTokenClient::new(&env, &pt_contract_id);
     pt_client.initialize(&admin, &tokenizer_contract_id);
 
-    let yt_contract_id = env.register(YtToken, ());
-    let yt_client = YtTokenClient::new(&env, &yt_contract_id);
-    yt_client.initialize(&admin, &tokenizer_contract_id, &1000, &sy_contract_id);
-
     let vault_contract_id = env.register(Vault, ());
     let vault_client = VaultClient::new(&env, &vault_contract_id);
     vault_client.initialize(&admin, &sy_contract_id, &underlying_token);
@@ -175,12 +172,22 @@ fn test_novaire_end_to_end_integration() {
         sequence_number: 100,
         ..env.ledger().get()
     });
+
+    let maturity_engine_id = env.register(MaturityEngine, ());
+    let maturity_engine_client = MaturityEngineClient::new(&env, &maturity_engine_id);
+    maturity_engine_client.initialize(&admin);
+    let maturity_epoch_id = maturity_engine_client.open_epoch(&maturity_ledger);
+
+    let yt_contract_id = env.register(YtToken, ());
+    let yt_client = YtTokenClient::new(&env, &yt_contract_id);
+    yt_client.initialize(&admin, &tokenizer_contract_id, &1000, &sy_contract_id, &maturity_engine_id, &maturity_epoch_id);
+
     let tokenizer_client = TokenizerClient::new(&env, &tokenizer_contract_id);
-    tokenizer_client.initialize(&admin, &vault_contract_id, &pt_contract_id, &yt_contract_id, &sy_contract_id, &maturity_ledger);
+    tokenizer_client.initialize(&admin, &vault_contract_id, &pt_contract_id, &yt_contract_id, &sy_contract_id, &maturity_ledger, &maturity_engine_id, &maturity_epoch_id);
 
     let market_contract_id = env.register(NovaireMarketplace, ());
     let market_client = NovaireMarketplaceClient::new(&env, &market_contract_id);
-    market_client.initialize(&admin, &pt_contract_id, &yt_contract_id, &underlying_token, &sy_contract_id, &tokenizer_contract_id, &maturity_ledger);
+    market_client.initialize(&admin, &pt_contract_id, &yt_contract_id, &underlying_token, &sy_contract_id, &tokenizer_contract_id, &maturity_ledger, &maturity_engine_id, &maturity_epoch_id);
 
     let intent_engine_contract_id = env.register(IntentEngine, ());
     let intent_engine_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
@@ -370,12 +377,18 @@ fn test_novaire_end_to_end_integration() {
     let yt2_id = env.register(YtToken, ());
     let tokenizer2_id = env.register(Tokenizer, ());
     PtTokenClient::new(&env, &pt2_id).initialize(&admin, &tokenizer2_id);
-    YtTokenClient::new(&env, &yt2_id).initialize(&admin, &tokenizer2_id, &epoch_2_maturity, &sy_contract_id);
 
-    TokenizerClient::new(&env, &tokenizer2_id).initialize(&admin, &vault_contract_id, &pt2_id, &yt2_id, &sy_contract_id, &epoch_2_maturity);
+    let maturity_engine2_id = env.register(MaturityEngine, ());
+    let maturity_engine2_client = MaturityEngineClient::new(&env, &maturity_engine2_id);
+    maturity_engine2_client.initialize(&admin);
+    let maturity_epoch2_id = maturity_engine2_client.open_epoch(&epoch_2_maturity);
+
+    YtTokenClient::new(&env, &yt2_id).initialize(&admin, &tokenizer2_id, &epoch_2_maturity, &sy_contract_id, &maturity_engine2_id, &maturity_epoch2_id);
+
+    TokenizerClient::new(&env, &tokenizer2_id).initialize(&admin, &vault_contract_id, &pt2_id, &yt2_id, &sy_contract_id, &epoch_2_maturity, &maturity_engine2_id, &maturity_epoch2_id);
 
     let market2_id = env.register(NovaireMarketplace, ());
-    NovaireMarketplaceClient::new(&env, &market2_id).initialize(&admin, &pt2_id, &yt2_id, &underlying_token, &sy_contract_id, &tokenizer2_id, &epoch_2_maturity);
+    NovaireMarketplaceClient::new(&env, &market2_id).initialize(&admin, &pt2_id, &yt2_id, &underlying_token, &sy_contract_id, &tokenizer2_id, &epoch_2_maturity, &maturity_engine2_id, &maturity_epoch2_id);
 
     let intent_engine2_id = env.register(IntentEngine, ());
     IntentEngineClient::new(&env, &intent_engine2_id).initialize(

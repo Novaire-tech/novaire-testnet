@@ -91,14 +91,18 @@ impl<'a> Protocol<'a> {
         sy_wrapper.initialize(&admin, &underlying_token_addr, &blend_pool_addr);
         vault.initialize(&admin, &sy_wrapper_addr, &underlying_token_addr);
         pt_token.initialize(&admin, &tokenizer_addr);
-        yt_token.initialize(&admin, &tokenizer_addr, &MATURITY_LEDGER, &sy_wrapper_addr);
+
+        maturity_engine.initialize(&admin);
+        let maturity_epoch_id = maturity_engine.open_epoch(&MATURITY_LEDGER);
+
+        yt_token.initialize(&admin, &tokenizer_addr, &MATURITY_LEDGER, &sy_wrapper_addr, &maturity_engine_addr, &maturity_epoch_id);
         tokenizer.initialize(
             &admin, &vault_addr, &pt_token_addr, &yt_token_addr,
-            &sy_wrapper_addr, &MATURITY_LEDGER,
+            &sy_wrapper_addr, &MATURITY_LEDGER, &maturity_engine_addr, &maturity_epoch_id,
         );
         marketplace.initialize(
             &admin, &pt_token_addr, &yt_token_addr, &underlying_token_addr,
-            &sy_wrapper_addr, &tokenizer_addr, &MATURITY_LEDGER,
+            &sy_wrapper_addr, &tokenizer_addr, &MATURITY_LEDGER, &maturity_engine_addr, &maturity_epoch_id,
         );
         intent_engine.initialize(
             &admin, &vault_addr, &tokenizer_addr, &marketplace_addr,
@@ -109,7 +113,6 @@ impl<'a> Protocol<'a> {
             &intent_engine_addr, &keeper, &pt_token_addr, &underlying_token_addr,
             &admin, &17_280,
         );
-        maturity_engine.initialize(&admin);
 
         Protocol {
             env, admin, keeper, underlying_token, underlying_admin,

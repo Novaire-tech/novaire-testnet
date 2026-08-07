@@ -15,6 +15,7 @@ yt_token = { path = "../tokenizer/yt_token" }
 tokenizer = { path = "../tokenizer/tokenizer" }
 marketplace = { path = "../marketplace" }
 intent_engine = { path = "../intent_engine" }
+maturity_engine = { path = "../maturity_engine" }
 
 [lib]
 crate-type = ["cdylib", "rlib"]
