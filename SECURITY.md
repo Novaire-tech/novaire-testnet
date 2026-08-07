@@ -109,12 +109,22 @@ Each epoch's contract set is deployed fresh by `factory.deploy_epoch`, which wir
 
 ## Known Risks
 
-1. **External yield-source trust.** The protocol's core exchange rate is fully dependent on the correctness and honesty of an external Blend Capital lending pool contract. This is an inherent risk of any yield-wrapping design and is only partially mitigated (rate-of-change limiter, not a correctness check). Users should understand that PT/YT value ultimately depends on a third-party contract outside this repository.
+1. **External yield-source trust.** The protocol's core exchange rate is fully dependent on the correctness and honesty of an external Blend Capital lending pool contract. This is an inherent risk of any yield-wrapping design and is only partially mitigated (rate-of-change limiter, not a correctness check). Users should understand that PT/YT value ultimately depends on a third-party contract outside this repository. `sy_wrapper`'s `YieldSource` is set once at `initialize` with no rotation function, so the correctness of this trust boundary hinges entirely on the `blend_pool` address passed at deploy time being the genuine, official Blend Capital pool — see "Deployment Verification" below. (SEC-10)
 2. **Single-key admin.** Admin authority in every contract is currently a single `Address`, not a multisig or timelock-gated address. A compromised admin key could pause the protocol, reassign mint/burn authority (in `pt_token`/`yt_token`, instantly, with no delay), or misconfigure new epoch deployments.
 3. ~~**TWAP staleness not yet enforced protocol-wide.**~~ **Fixed.** `intent_engine` now calls `marketplace`'s staleness-checked `get_twap_rate_checked()` for its slippage gate (previously used the plain, unchecked variant) — see SEC-01 in the audit.
 4. ~~**`sy_wrapper` storage TTL is not actively managed.**~~ **Fixed.** Instance storage TTL is now extended on every meaningful call via `storage::get_admin` — see SEC-02 in the audit.
 
 For the complete, code-cited list of findings, see [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md).
+
+### Deployment Verification (required before every deploy)
+
+Because `sy_wrapper`'s `blend_pool` address is set once at `initialize` and cannot be rotated, a wrong or malicious address wired in at deploy time is **not** caught by `factory.deploy_epoch`'s metadata cross-validation (that check confirms the *contracts wired to each other* are self-consistent, not that `blend_pool` is the genuine Blend Capital deployment). Whoever runs `factory.deploy_epoch` MUST, before submitting the transaction:
+
+- [ ] Confirm the `blend_pool` address matches the official Blend Capital pool listed in Blend's own deployment registry/docs for the target network (mainnet vs. testnet), not a value copied from a prior epoch, a fork, or an unverified third-party source.
+- [ ] Confirm the underlying asset accepted by that pool matches `params.underlying_token` for this epoch.
+- [ ] Record the verified `blend_pool` address (and the source used to verify it) alongside the epoch's deployment record for later audit.
+
+This is an operational step, not a code-enforceable one — no on-chain check can distinguish a genuine Blend pool address from a convincing fake at deploy time.
 
 ---
 
@@ -175,9 +185,9 @@ All items below are **outstanding** as of this document's publication (none have
 - [x] SEC-07 — Consolidate instance-storage TTL-bump logic into a single shared helper used by all read paths. *(Fixed: `contracts/sy_wrapper/src/lib.rs` — added `bump_instance_ttl`, called from every instance-storage getter instead of relying on `get_admin` incidentally running first.)*
 
 ### Best Practices / Informational
-- [ ] SEC-08 — Replace silent `max(0, …)` floors in `rollover` with explicit error handling where a negative delta indicates a real anomaly.
-- [ ] SEC-09 — Restore a live test for rollover's keeper-vs-permissionless access-control boundary.
-- [ ] SEC-10 — Independently verify the deployed Blend Capital pool address; document the yield-source trust assumption in user-facing materials.
+- [x] SEC-08 — Replace silent `max(0, …)` floors in `rollover` with explicit error handling where a negative delta indicates a real anomaly. *(Fixed: `contracts/rollover/src/lib.rs` — `yt_proceeds`, `pt_growth`, and `new_pt` now use `checked_sub(...).ok_or(NovaireRolloverError::MathOverflow)?` instead of `core::cmp::max(0, …)`. `expected_balance` keeps its floor, documented in place, since `balance_before` is 0 by the contract's own zero-custody invariant and a negative delta there is the expected case, not an anomaly.)*
+- [x] SEC-09 — Restore a live test for rollover's keeper-vs-permissionless access-control boundary. *(Fixed: `contracts/rollover/src/test.rs` — added `test_execute_rollover_keeper_vs_permissionless_boundary`, which rolls one position through three phases and inspects `env.auths()` to confirm the keeper's authorization is requested while inside the grace period, still requested exactly at `grace_expiration` (inclusive boundary), and not requested once the grace period has strictly passed.)*
+- [x] SEC-10 — Yield-source trust assumption documented ("Deployment Verification" above); independent on-chain address verification remains a required manual operational step at every deploy (see `factory::DeployEpochParams::blend_pool` doc comment), not code-enforceable.
 - [ ] SEC-11 — Reorder `sy_wrapper.deposit` to decrement/commit state before the external Blend `submit` call, mirroring `withdraw`.
 - [ ] SEC-12 — Remove or wire up the unused `_maturity_ledger` parameter in `intent_engine.execute_fixed_yield_intent`.
 - [ ] SEC-13 — Make `yt_token.add_accrued_yield` explicitly reject (or explicitly no-op with a comment) on zero amount, for convention consistency.

@@ -58,6 +58,12 @@ pub struct DeployEpochParams {
     pub vault: Address,
     /// Address of the Blend Capital lending pool that `sy_wrapper` will supply the
     /// underlying asset into (distinct from `vault`, which is Novaire's own vault contract).
+    ///
+    /// SECURITY (SEC-10): set once here and never rotated by `sy_wrapper` after `initialize`.
+    /// The caller of `deploy_epoch` MUST independently verify this is the genuine, official
+    /// Blend Capital pool for the target network before submitting the deploy transaction —
+    /// see "Deployment Verification" in SECURITY.md. No on-chain check in this contract can
+    /// distinguish a genuine pool address from a convincing fake.
     pub blend_pool: Address,
     pub pt_token: Address,
     pub yt_token: Address,
