@@ -16,6 +16,7 @@ pub enum NovaireMarketError {
     StorageMissing = 9,
     InvariantViolated = 10,
     MathOverflow = 11,
+    Paused = 12,
 }
 
 #[soroban_sdk::contractclient(name = "TokenizerClient")]
@@ -54,6 +55,7 @@ pub enum DataKey {
     ImpliedRateTwap,
     LastTwapLedger,
     LpBalance(Address),
+    Paused,
 }
 
 #[soroban_sdk::contractclient(name = "SyWrapperClient")]
@@ -123,6 +125,20 @@ mod storage {
 
     pub fn set_i128(env: &Env, key: DataKey, val: i128) {
         env.storage().instance().set(&key, &val);
+    }
+
+    pub fn is_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
+    }
+
+    pub fn require_not_paused(env: &Env) -> Result<(), NovaireMarketError> {
+        if is_paused(env) {
+            return Err(NovaireMarketError::Paused);
+        }
+        Ok(())
     }
 }
 
@@ -469,11 +485,45 @@ impl NovaireMarketplace {
         storage::set_i128(&env, DataKey::YtReserves, 0);
         storage::set_i128(&env, DataKey::TotalLpShares, 0);
         storage::set_i128(&env, DataKey::ImpliedRateTwap, 0);
+        env.storage().instance().set(&DataKey::Paused, &false);
         env.storage()
             .instance()
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         Ok(())
+    }
+
+    /// Pauses the marketplace, blocking swaps and new-liquidity deposits.
+    /// `remove_liquidity` stays available so LPs/admins can always recover
+    /// funds even while paused.
+    pub fn pause(env: Env) -> Result<(), NovaireMarketError> {
+        let admin: Address = storage::get_address(&env, DataKey::Admin)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &true);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "market_paused"), admin),
+            env.ledger().sequence(),
+        );
+        Ok(())
+    }
+
+    /// Unpauses the marketplace, restoring normal operations.
+    pub fn unpause(env: Env) -> Result<(), NovaireMarketError> {
+        let admin: Address = storage::get_address(&env, DataKey::Admin)?;
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Paused, &false);
+
+        env.events().publish(
+            (soroban_sdk::Symbol::new(&env, "market_unpaused"), admin),
+            env.ledger().sequence(),
+        );
+        Ok(())
+    }
+
+    /// Returns true if the marketplace is currently paused.
+    pub fn is_paused(env: Env) -> bool {
+        storage::is_paused(&env)
     }
 
     /// Delegates the `EpochExpired` gate to MaturityEngine (the canonical
@@ -497,6 +547,7 @@ impl NovaireMarketplace {
         underlying_amount: i128,
     ) -> Result<i128, NovaireMarketError> {
         provider.require_auth();
+        storage::require_not_paused(&env)?;
         if pt_amount <= 0 || underlying_amount <= 0 {
             return Err(NovaireMarketError::ZeroInput);
         }
@@ -613,6 +664,7 @@ impl NovaireMarketplace {
         yt_amount: i128,
     ) -> Result<i128, NovaireMarketError> {
         provider.require_auth();
+        storage::require_not_paused(&env)?;
         if yt_amount <= 0 {
             return Err(NovaireMarketError::ZeroInput);
         }
@@ -735,6 +787,7 @@ impl NovaireMarketplace {
         min_pt_out: i128,
     ) -> Result<i128, NovaireMarketError> {
         buyer.require_auth();
+        storage::require_not_paused(&env)?;
         if underlying_in <= 0 || min_pt_out < 0 {
             return Err(NovaireMarketError::ZeroInput);
         }
@@ -811,6 +864,7 @@ impl NovaireMarketplace {
         min_underlying_out: i128,
     ) -> Result<i128, NovaireMarketError> {
         seller.require_auth();
+        storage::require_not_paused(&env)?;
         if pt_in <= 0 || min_underlying_out < 0 {
             return Err(NovaireMarketError::ZeroInput);
         }
@@ -887,6 +941,7 @@ impl NovaireMarketplace {
         min_yt_out: i128,
     ) -> Result<i128, NovaireMarketError> {
         buyer.require_auth();
+        storage::require_not_paused(&env)?;
         if underlying_in <= 0 || min_yt_out < 0 {
             return Err(NovaireMarketError::ZeroInput);
         }
@@ -972,6 +1027,7 @@ impl NovaireMarketplace {
         min_underlying_out: i128,
     ) -> Result<i128, NovaireMarketError> {
         seller.require_auth();
+        storage::require_not_paused(&env)?;
         if yt_in <= 0 || min_underlying_out < 0 {
             env.events().publish(
                 (
@@ -2481,6 +2537,82 @@ mod tests {
         assert_ne!(
             yt_price_before, yt_price_after,
             "YT price must move immediately when PT curve state changes, with no TWAP lag"
+        );
+    }
+
+    // ── PAUSE TESTS ───────────────────────────────────────────────────────────
+    #[test]
+    fn test_pause_and_unpause_toggle_state() {
+        let (_env, admin, _, _, market_client, _, _) = setup_env();
+        assert!(!market_client.is_paused());
+
+        market_client.pause();
+        assert!(market_client.is_paused());
+
+        market_client.unpause();
+        assert!(!market_client.is_paused());
+        let _ = admin;
+    }
+
+    #[test]
+    fn test_unauthorized_pause_fails() {
+        let (env, _, _, _, market_client, _, _) = setup_env();
+        // Drop mocked auths so `admin.require_auth()` inside `pause` has no
+        // matching authorization entry and must fail.
+        env.set_auths(&[]);
+        let result = market_client.try_pause();
+        assert!(result.is_err(), "pause must require admin authorization");
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #12)")]
+    fn test_paused_swap_fails() {
+        let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
+        bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            10_000_000,
+            10_000_000,
+        );
+        market_client.pause();
+
+        let buyer = Address::generate(&env);
+        token_admin_client.mint(&buyer, &1_000_000);
+        market_client.swap_underlying_for_pt(&buyer, &1_000_000, &1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #12)")]
+    fn test_paused_add_liquidity_fails() {
+        let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
+        market_client.pause();
+
+        let provider = Address::generate(&env);
+        let pt_client = pt_token::PtTokenClient::new(&env, &pt_token);
+        token_admin_client.mint(&provider, &10_000_000);
+        pt_client.mint(&provider, &10_000_000);
+        market_client.add_liquidity(&provider, &1_000_000, &1_000_000);
+    }
+
+    #[test]
+    fn test_paused_remove_liquidity_still_allows_recovery() {
+        let (env, _, _, pt_token, market_client, _, token_admin_client) = setup_env();
+        let provider = bootstrap(
+            &env,
+            &market_client,
+            &token_admin_client,
+            &pt_token,
+            10_000_000,
+            10_000_000,
+        );
+        market_client.pause();
+
+        let (pt_out, underlying_out, _) = market_client.remove_liquidity(&provider, &1_000);
+        assert!(
+            pt_out > 0 && underlying_out > 0,
+            "remove_liquidity must stay available for recovery while paused"
         );
     }
 }
