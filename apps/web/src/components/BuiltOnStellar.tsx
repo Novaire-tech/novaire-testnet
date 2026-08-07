@@ -4,7 +4,7 @@ import Image from 'next/image';
 
 export default function BuiltOnStellar() {
   return (
-    <section className="relative w-full h-[700px] bg-transparent overflow-hidden flex items-center">
+    <section className="relative w-full h-[700px] bg-[#050505] overflow-hidden flex items-center">
       
       {/* ARTWORK (last.png) */}
       <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">

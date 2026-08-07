@@ -2,14 +2,16 @@
 @plugin "@tailwindcss/typography";
 
 @theme {
-  --color-nova-bg: #0A0A0C;
-  --color-nova-text: #F5F5F3;
-  --color-nova-muted: rgba(245, 245, 243, 0.55);
-  --color-nova-surface: rgba(255, 255, 255, 0.04);
-  --color-nova-border: rgba(255, 255, 255, 0.08);
+  --color-nova-bg: #e7e2ce;
+  --color-nova-text: #211D16;
+  --color-nova-muted: rgba(33, 29, 22, 0.62);
+  --color-nova-surface: rgba(0, 0, 0, 0.035);
+  --color-nova-border: rgba(0, 0, 0, 0.12);
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-serif: var(--font-antic), "Antic Didone", ui-serif, Georgia, serif;
+  --font-poppins: var(--font-poppins-google), "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-editorial: var(--font-instrument-serif), "Instrument Serif", ui-serif, Georgia, serif;
 
   --animate-pulse-slow: pulse-slow 8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   --animate-spin-extremely-slow: spin 60s linear infinite;
@@ -70,13 +72,13 @@ html {
 /* --- Novaire Landing Page Styles --- */
 
 :root {
-  --black: #050505;
+  --black: #e7e2ce;
   --charcoal: #111111;
   --white: #F5F5F5;
   --silver: #D5D8DE;
   --blue: #6BA8FF;
   --green: #3ECF8E;
-  --border: rgba(255, 255, 255, 0.12);
+  --border: rgba(0, 0, 0, 0.12);
   --card-hover: rgba(62, 207, 142, 0.04);
 }
 
@@ -86,8 +88,6 @@ html {
 
 body {
   font-family: var(--font-sans), 'Inter', sans-serif;
-  background-color: var(--black);
-  color: var(--silver);
   line-height: 1.7;
   font-size: 15px;
   overflow-x: hidden;
@@ -402,7 +402,7 @@ transparent 72%
 .section-heading {
   font-size: 40px;
   font-weight: 600;
-  color: var(--white);
+  color: var(--color-nova-text);
   margin-bottom: 64px;
   line-height: 1.2;
 }
@@ -483,23 +483,25 @@ transparent 72%
 .step-icon {
   width: 32px;
   height: 32px;
+  padding: 6px;
+  border-radius: 8px;
   color: var(--silver);
   background: var(--charcoal);
 }
 .step-num {
   font-size: 11px;
-  color: var(--silver);
+  color: var(--color-nova-muted);
   margin-top: 20px;
 }
 .step-title {
   font-size: 14px;
   font-weight: 600;
-  color: var(--white);
+  color: var(--color-nova-text);
   margin-top: 6px;
 }
 .step-desc {
   font-size: 12px;
-  color: var(--silver);
+  color: var(--color-nova-muted);
   line-height: 1.6;
   margin-top: 8px;
 }
@@ -519,7 +521,7 @@ transparent 72%
 .eco-right {
   flex: 1;
   font-size: 16px;
-  color: var(--silver);
+  color: var(--color-nova-muted);
   line-height: 1.7;
   max-width: 400px;
 }

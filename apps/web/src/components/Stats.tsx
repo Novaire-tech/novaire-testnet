@@ -58,7 +58,7 @@ export default function Stats() {
   }, []);
 
   return (
-    <section className="relative z-30 -mt-[820px] pb-12">
+    <section className="relative z-30 pt-16 pb-12">
       <div className="container reveal" id="stats" ref={statsRef}>
         <div className="flex h-[116px] w-full max-w-[860px] items-center justify-between rounded-[16px] border border-nova-border bg-[#0B0B0B] px-[56px] shadow-[0_8px_32px_rgba(0,0,0,0.4)]">
           
