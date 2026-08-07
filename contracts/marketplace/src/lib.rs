@@ -415,7 +415,7 @@ impl NovaireMarketplace {
             if initial_lp <= MINIMUM_LIQUIDITY {
                 return Err(NovaireMarketError::InsufficientLiquidity);
             }
-            lp_shares = initial_lp.checked_sub(MINIMUM_LIQUIDITY).unwrap();
+            lp_shares = initial_lp.checked_sub(MINIMUM_LIQUIDITY).ok_or(NovaireMarketError::MathOverflow)?;
             
             // Permanently lock MINIMUM_LIQUIDITY by minting to the contract's own address
             storage::set_lp_balance(&env, &env.current_contract_address(), MINIMUM_LIQUIDITY);
