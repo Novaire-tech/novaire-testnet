@@ -399,7 +399,12 @@ fn test_novaire_end_to_end_integration() {
     token_admin_client.mint(&lp, &2_000_000);
     vault_client.deposit(&lp, &1_000_000);
     TokenizerClient::new(&env, &tokenizer2_id).mint_pt_yt(&lp, &vault_client.balance_of(&lp));
-    NovaireMarketplaceClient::new(&env, &market2_id).add_liquidity(&lp, &500_000, &500_000);
+    // A small (~1%) discount, not an exact 1:1 par pool: at literal par PT
+    // trades at face value and YT is genuinely worth ~0, so any YT sale
+    // (as the rollover's fixed-yield intent performs) correctly nets ~0
+    // under curve-consistent pricing — that's not a bug, but it defeats the
+    // point of this fixture, which wants a normal, tradeable pool.
+    NovaireMarketplaceClient::new(&env, &market2_id).add_liquidity(&lp, &500_000, &495_000);
 
     // Update Rollover Storage pointing to Epoch 2 Intent Engine
     env.as_contract(&rollover_contract_id, || {

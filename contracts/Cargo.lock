@@ -835,6 +835,7 @@ name = "intent_engine"
 version = "0.1.0"
 dependencies = [
  "marketplace",
+ "maturity_engine",
  "pt_token",
  "soroban-sdk",
  "sy_wrapper",
@@ -918,6 +919,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 name = "marketplace"
 version = "0.1.0"
 dependencies = [
+ "maturity_engine",
  "pt_token",
  "soroban-sdk",
  "sy_wrapper",
@@ -1235,6 +1237,7 @@ version = "0.1.0"
 dependencies = [
  "intent_engine",
  "marketplace",
+ "maturity_engine",
  "pt_token",
  "soroban-sdk",
  "sy_wrapper",
@@ -1811,6 +1814,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 name = "tokenizer"
 version = "0.1.0"
 dependencies = [
+ "maturity_engine",
  "pt_token",
  "soroban-sdk",
  "sy_wrapper",

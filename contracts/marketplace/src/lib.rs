@@ -164,6 +164,171 @@ fn get_spot_price(a_pool: i128, x: i128, y: i128) -> Result<i128, NovaireMarketE
 }
 
 const MINIMUM_LIQUIDITY: i128 = 1000;
+const SWAP_FEE_NUM: i128 = 997;
+const SWAP_FEE_DEN: i128 = 1000;
+/// Number of bisection iterations used to solve the YT-buy pricing equation.
+/// 2^100 vastly exceeds the i128 magnitude range, so this always converges to
+/// an exact integer boundary well before the budget is exhausted.
+const YT_PRICE_SEARCH_ITERS: u32 = 100;
+/// Max age (in ledgers) before `get_twap_rate` is considered stale for
+/// oracle/analytics callers using `get_twap_rate_checked`. ~20 ledgers is the
+/// EMA's own full-weight convergence window (see `update_twap`); anything
+/// beyond that is genuinely idle-market staleness, not manipulation.
+const MAX_TWAP_AGE_LEDGERS: u32 = 200;
+
+/// YieldSpace-consistent pricing for the YT leg.
+///
+/// Economic identity: 1 unit of SY == 1 PT + 1 YT. Buying `p` YT is therefore
+/// modeled as (a) minting `p` SY into a paired PT+YT position and (b)
+/// immediately selling the `p` PT leg into the *real* PT/underlying curve
+/// (same `a_pool`/`k` the PT swap functions use). The proceeds of that
+/// simulated PT sale reduce the buyer's net cost:
+///
+/// ```text
+///     proceeds(p) = under_r - get_y(a_pool, k, pt_r + p)
+///     net_cost(p) = p - proceeds(p)
+/// ```
+///
+/// Deliberately fee-free: this is a *reference-price* curve simulation, not
+/// a real trade, and baking `SWAP_FEE_NUM/DEN` into it here would make the
+/// fee dominate the marginal price whenever the real PT/underlying discount
+/// is small relative to the fee (e.g. a fresh near-par epoch bootstrap,
+/// where a 0.3% fee otherwise swamps a genuine ~0.05% discount and produces
+/// grossly distorted YT leverage). The protocol fee is instead applied once,
+/// as a plain output haircut, in the callers that use this curve to solve
+/// for a quoted amount — see `solve_yt_out_for_underlying_in` and
+/// `compute_yt_sell_proceeds`.
+///
+/// `net_cost` is monotonically increasing and convex in `p`: as `p -> 0` the
+/// marginal cost converges exactly to `1 - spot_PT_price` (the correct
+/// instantaneous YT price), and for larger `p` curve slippage makes each
+/// additional unit of YT strictly more expensive. No real PT ever moves —
+/// this is a read-only simulation against the live curve state purely to
+/// price the YT leg consistently with it, which is why `PtReserves` is
+/// untouched by the YT swap functions below (see
+/// `test_c1_yt_purchase_updates_reserves`).
+fn simulate_pt_sale_proceeds(
+    a_pool: i128,
+    k: i128,
+    pt_reserves: i128,
+    underlying_reserves: i128,
+    virtual_pt_in: i128,
+) -> Result<i128, NovaireMarketError> {
+    if virtual_pt_in == 0 {
+        return Ok(0);
+    }
+    let new_pt = pt_reserves.checked_add(virtual_pt_in).ok_or(NovaireMarketError::MathOverflow)?;
+    let new_under = get_y(a_pool, k, new_pt)?;
+    Ok(underlying_reserves.checked_sub(new_under).unwrap_or(0))
+}
+
+fn net_cost_for_yt(
+    a_pool: i128,
+    k: i128,
+    pt_reserves: i128,
+    underlying_reserves: i128,
+    virtual_pt_in: i128,
+) -> Result<i128, NovaireMarketError> {
+    let proceeds = simulate_pt_sale_proceeds(a_pool, k, pt_reserves, underlying_reserves, virtual_pt_in)?;
+    Ok(virtual_pt_in.checked_sub(proceeds).unwrap_or(virtual_pt_in).max(0))
+}
+
+/// Solves `net_cost_for_yt(p) == underlying_in` for the largest `p` with
+/// `net_cost(p) <= underlying_in` (floor — protocol-favorable, mirrors the
+/// rounding-down convention used elsewhere for LP shares and yield accrual).
+/// `net_cost` is monotone increasing in `p` (proven in the doc comment on
+/// `simulate_pt_sale_proceeds`), so bisection is well-founded.
+fn solve_yt_out_for_underlying_in(
+    a_pool: i128,
+    k: i128,
+    pt_reserves: i128,
+    underlying_reserves: i128,
+    underlying_in: i128,
+) -> Result<i128, NovaireMarketError> {
+    let mut lo: i128 = 0;
+    // proceeds(p) < underlying_reserves always (can't extract more than the
+    // pool holds), so net_cost(p) > p - underlying_reserves, giving a safe
+    // upper bound with slack.
+    let mut hi: i128 = underlying_in.checked_add(underlying_reserves).ok_or(NovaireMarketError::MathOverflow)?
+        .checked_add(1_000_000).ok_or(NovaireMarketError::MathOverflow)?;
+
+    if net_cost_for_yt(a_pool, k, pt_reserves, underlying_reserves, hi)? < underlying_in {
+        // Degenerate/near-empty pool: even the generous upper bound can't
+        // absorb this trade at any finite price.
+        return Err(NovaireMarketError::InsufficientLiquidity);
+    }
+
+    for _ in 0..YT_PRICE_SEARCH_ITERS {
+        if lo >= hi {
+            break;
+        }
+        let mid = lo.checked_add(hi.checked_sub(lo).ok_or(NovaireMarketError::MathOverflow)?
+            .checked_add(1).ok_or(NovaireMarketError::MathOverflow)?
+            .checked_div(2).ok_or(NovaireMarketError::MathOverflow)?)
+            .ok_or(NovaireMarketError::MathOverflow)?;
+        let cost = net_cost_for_yt(a_pool, k, pt_reserves, underlying_reserves, mid)?;
+        if cost <= underlying_in {
+            lo = mid;
+        } else {
+            hi = mid.checked_sub(1).ok_or(NovaireMarketError::MathOverflow)?;
+        }
+    }
+    Ok(lo)
+}
+
+/// Protocol fee applied once, as a plain output haircut, to the fee-free
+/// curve-derived YT quantity solved above.
+fn apply_output_fee(amount: i128) -> Result<i128, NovaireMarketError> {
+    amount.checked_mul(SWAP_FEE_NUM).ok_or(NovaireMarketError::MathOverflow)?
+        .checked_div(SWAP_FEE_DEN).ok_or(NovaireMarketError::MathOverflow)
+}
+
+/// Sell-side YT pricing: the dual of the buy side, using the *current* (live)
+/// curve state. Selling `yt_in` YT is modeled as buying back the paired
+/// `yt_in` PT from the real curve and redeeming the reunited SY at par:
+///
+/// ```text
+///     underlying_out(yt_in) = yt_in - cost_to_buy_back(yt_in)
+/// ```
+///
+/// `target_pt = pt_reserves - yt_in` is evaluated against `a_pool`/`k`
+/// computed from the *current* reserves — critically, if `yt_in` PT was just
+/// sold into this exact pool for real (e.g. a mint-PT+YT-then-dump-both
+/// sequence), `pt_reserves` already reflects that sale, so `target_pt`
+/// collapses back toward the pool's pre-sale PT level and this formula
+/// naturally prices the buy-back at ~what was just received for it (plus
+/// fees) — this self-correction is what keeps mint-and-dump-both
+/// non-profitable (see `integration_tests::m1_regression`), unlike a formula
+/// that reuses the buy-side "virtual sale" function irrespective of what the
+/// live reserves just absorbed.
+fn compute_yt_sell_proceeds(
+    a_pool: i128,
+    k: i128,
+    pt_reserves: i128,
+    underlying_reserves: i128,
+    yt_in: i128,
+) -> Result<i128, NovaireMarketError> {
+    let target_pt = pt_reserves.checked_sub(yt_in).ok_or(NovaireMarketError::MathOverflow)?;
+    // target_pt == 0 is a valid (if extreme) edge in general: get_y(a, k, 0)
+    // = k / a is a well-defined, finite "cost to buy back every last PT
+    // unit" — very expensive due to scarcity, but not undefined. The one
+    // degenerate sub-case is `a_pool == 0` (epoch genesis, before any
+    // YieldSpace time-decay has accrued — see `compute_a_pool`): then
+    // `a_pool + target_pt` is also 0, and get_y's division is genuinely
+    // undefined (the curve is pure constant-product there, and buying back
+    // the pool's very last PT unit really does cost infinite underlying).
+    // Reject both that case and a genuinely negative target (selling more YT
+    // than the pool's PT depth could ever have paired).
+    if target_pt < 0 || a_pool.checked_add(target_pt).unwrap_or(0) <= 0 {
+        return Err(NovaireMarketError::InsufficientLiquidity);
+    }
+    let new_under_needed = get_y(a_pool, k, target_pt)?;
+    // Fee-free curve cost (see `simulate_pt_sale_proceeds` for why the fee
+    // is deliberately kept out of the curve simulation itself).
+    let cost = new_under_needed.checked_sub(underlying_reserves).unwrap_or(0);
+    let fair_value = yt_in.checked_sub(cost).unwrap_or(0).max(0);
+    apply_output_fee(fair_value)
+}
 
 #[contract]
 pub struct NovaireMarketplace;
@@ -524,31 +689,26 @@ impl NovaireMarketplace {
         let pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
         let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
 
-        let pt_twap = Self::get_twap_rate(env.clone())?;
-        let capped_pt_price = if pt_twap > 1_000_000_000_i128 {
-            1_000_000_000_i128
-        } else {
-            pt_twap
-        };
-        let yt_price = 1_000_000_000_i128.checked_sub(capped_pt_price).unwrap_or(0);
-        soroban_sdk::log!(&env, "pt_twap={}, capped_pt_price={}, yt_price={}", pt_twap, capped_pt_price, yt_price);
-        if yt_price == 0 {
-            return Err(NovaireMarketError::MathOverflow);
+        // YT pricing derived from the SAME YieldSpace curve state as the PT
+        // leg (a_pool/k over live PtReserves/UnderlyingReserves) — see
+        // `solve_yt_out_for_underlying_in`. Replaces the old flat
+        // `1 - TWAP` oracle-priced quote: this is size-dependent (large
+        // trades get progressively worse pricing via curve slippage) and
+        // updates immediately on every PT-leg state change, with no TWAP
+        // lag to arbitrage.
+        let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
+        let k = compute_k(a_pool, pt_reserves, underlying_reserves)?;
+        let raw_yt_out = solve_yt_out_for_underlying_in(a_pool, k, pt_reserves, underlying_reserves, underlying_in)?;
+        let actual_yt_out = apply_output_fee(raw_yt_out)?;
+
+        if actual_yt_out <= 0 {
+            return Err(NovaireMarketError::SlippageExceeded);
         }
-
-        
-        let yt_out_raw = underlying_in.checked_mul(1_000_000_000).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_div(yt_price).ok_or(NovaireMarketError::MathOverflow)?;
-            
-        let actual_yt_out = yt_out_raw.checked_mul(995).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_div(1000).ok_or(NovaireMarketError::MathOverflow)?;
-
         if actual_yt_out < min_yt_out {
             return Err(NovaireMarketError::SlippageExceeded);
         }
 
         let mut yt_reserves = storage::get_i128(&env, DataKey::YtReserves).unwrap_or(0);
-        soroban_sdk::log!(&env, "actual_yt_out={}, yt_reserves={}", actual_yt_out, yt_reserves);
         if yt_reserves < actual_yt_out {
             return Err(NovaireMarketError::InsufficientLiquidity);
         }
@@ -556,8 +716,11 @@ impl NovaireMarketplace {
         yt_reserves = yt_reserves.checked_sub(actual_yt_out).ok_or(NovaireMarketError::MathOverflow)?;
         storage::set_i128(&env, DataKey::YtReserves, yt_reserves);
 
-        let a_pool = compute_a_pool(&env, maturity, underlying_reserves, pt_reserves)?;
-        Self::update_twap(&env, a_pool, pt_reserves, underlying_reserves)?;
+        // TWAP retained purely as an analytics/oracle signal (see
+        // `get_twap_rate_checked`) — no longer part of the YT execution
+        // pricing path.
+        let twap_a_pool = compute_a_pool(&env, maturity, underlying_reserves, pt_reserves)?;
+        Self::update_twap(&env, twap_a_pool, pt_reserves, underlying_reserves)?;
 
         // C1 fix: credit underlying reserves with incoming amount
         storage::set_i128(&env, DataKey::UnderlyingReserves,
@@ -599,22 +762,17 @@ impl NovaireMarketplace {
         let pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
         let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
 
-        let pt_twap = Self::get_twap_rate(env.clone())?;
+        // Closed-form dual of the buy-side curve pricing — see
+        // `compute_yt_sell_proceeds`. Same a_pool/k orientation as
+        // `swap_pt_for_underlying` (x=pt, y=underlying) since this models
+        // buying back the paired PT leg from that exact curve.
+        let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
+        let k = compute_k(a_pool, pt_reserves, underlying_reserves)?;
+        let actual_underlying_out = compute_yt_sell_proceeds(a_pool, k, pt_reserves, underlying_reserves, yt_in)?;
 
-        let capped_pt_price = if pt_twap > 1_000_000_000_i128 {
-            1_000_000_000_i128
-        } else {
-            pt_twap
-        };
-        let yt_price = 1_000_000_000_i128.checked_sub(capped_pt_price).unwrap_or(0);
-
-        
-        let underlying_out_raw = yt_in.checked_mul(yt_price).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_div(1_000_000_000).ok_or(NovaireMarketError::MathOverflow)?;
-            
-        let actual_underlying_out = underlying_out_raw.checked_mul(995).ok_or(NovaireMarketError::MathOverflow)?
-            .checked_div(1000).ok_or(NovaireMarketError::MathOverflow)?;
-
+        if actual_underlying_out <= 0 || actual_underlying_out > underlying_reserves {
+            return Err(NovaireMarketError::InsufficientLiquidity);
+        }
         if actual_underlying_out < min_underlying_out {
             env.events().publish((soroban_sdk::Symbol::new(&env, "diag_slip"), actual_underlying_out, min_underlying_out), 0);
             return Err(NovaireMarketError::SlippageExceeded);
@@ -633,8 +791,10 @@ impl NovaireMarketplace {
         yt_client.transfer(&seller, &env.current_contract_address(), &yt_in);
         underlying_client.transfer(&env.current_contract_address(), &seller, &actual_underlying_out);
 
-        let a_pool = compute_a_pool(&env, maturity, underlying_reserves, pt_reserves)?;
-        Self::update_twap(&env, a_pool, pt_reserves, underlying_reserves)?;
+        // TWAP retained purely as an analytics/oracle signal — no longer
+        // part of the YT execution pricing path.
+        let twap_a_pool = compute_a_pool(&env, maturity, underlying_reserves, pt_reserves)?;
+        Self::update_twap(&env, twap_a_pool, pt_reserves, underlying_reserves)?;
 
         let new_underlying_reserves = underlying_reserves.checked_sub(actual_underlying_out).ok_or(NovaireMarketError::MathOverflow)?;
         storage::set_i128(&env, DataKey::UnderlyingReserves, new_underlying_reserves);
@@ -684,6 +844,74 @@ impl NovaireMarketplace {
             return get_spot_price(a_pool, pt_reserves, underlying_reserves);
         }
         Ok(stored_twap)
+    }
+
+    /// Ledger-age of the stored TWAP checkpoint. Callers that need a
+    /// freshness guarantee (analytics dashboards, off-chain keepers) should
+    /// use `get_twap_rate_checked` instead of raw `get_twap_rate`.
+    pub fn get_twap_age(env: Env) -> u32 {
+        let last_ledger = storage::get_u32(&env, DataKey::LastTwapLedger).unwrap_or(0);
+        if last_ledger == 0 {
+            return 0;
+        }
+        env.ledger().sequence().saturating_sub(last_ledger)
+    }
+
+    /// Oracle-safe TWAP accessor: reverts with `InvariantViolated` if the
+    /// checkpoint is older than `MAX_TWAP_AGE_LEDGERS` (i.e. the market has
+    /// gone quiet long enough that the EMA is no longer representative).
+    /// Intentionally a *separate* function from `get_twap_rate` so existing
+    /// callers (e.g. Intent Engine's slippage gate) are unaffected — this is
+    /// additive oracle-safety tooling, not a behavior change to the existing
+    /// TWAP consumer. Not used by the PT or YT swap execution paths, which
+    /// price entirely off live curve state and have no staleness exposure.
+    pub fn get_twap_rate_checked(env: Env) -> Result<i128, NovaireMarketError> {
+        let age = Self::get_twap_age(env.clone());
+        if age > MAX_TWAP_AGE_LEDGERS {
+            return Err(NovaireMarketError::InvariantViolated);
+        }
+        Self::get_twap_rate(env)
+    }
+
+    /// Instantaneous (zero-size) YT spot price, derived from the live curve:
+    /// `1 - PT_spot_price`. This is the correct *marginal* reference price
+    /// for UI quoting; actual execution against nonzero size must go through
+    /// `swap_underlying_for_yt`/`swap_yt_for_underlying`, which price the
+    /// full trade against curve slippage rather than this single point.
+    pub fn get_yt_price(env: Env) -> Result<i128, NovaireMarketError> {
+        let pt_price = Self::get_pt_price(env)?;
+        Ok(1_000_000_000_i128.checked_sub(pt_price).unwrap_or(0))
+    }
+
+    /// Read-only quote for a prospective YT purchase of `underlying_in`,
+    /// useful for frontends/routers to preview size-dependent slippage
+    /// before submitting a swap. Mirrors `swap_underlying_for_yt`'s pricing
+    /// exactly (same curve, same fee), but touches no state.
+    pub fn quote_underlying_for_yt(env: Env, underlying_in: i128) -> Result<i128, NovaireMarketError> {
+        if underlying_in <= 0 {
+            return Err(NovaireMarketError::ZeroInput);
+        }
+        let maturity = storage::get_u32(&env, DataKey::MaturityLedger)?;
+        let pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
+        let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
+        let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
+        let k = compute_k(a_pool, pt_reserves, underlying_reserves)?;
+        let raw_yt_out = solve_yt_out_for_underlying_in(a_pool, k, pt_reserves, underlying_reserves, underlying_in)?;
+        apply_output_fee(raw_yt_out)
+    }
+
+    /// Read-only quote for a prospective YT sale of `yt_in`. Mirrors
+    /// `swap_yt_for_underlying`'s pricing exactly; touches no state.
+    pub fn quote_yt_for_underlying(env: Env, yt_in: i128) -> Result<i128, NovaireMarketError> {
+        if yt_in <= 0 {
+            return Err(NovaireMarketError::ZeroInput);
+        }
+        let maturity = storage::get_u32(&env, DataKey::MaturityLedger)?;
+        let pt_reserves = storage::get_i128(&env, DataKey::PtReserves)?;
+        let underlying_reserves = storage::get_i128(&env, DataKey::UnderlyingReserves)?;
+        let a_pool = compute_a_pool(&env, maturity, pt_reserves, underlying_reserves)?;
+        let k = compute_k(a_pool, pt_reserves, underlying_reserves)?;
+        compute_yt_sell_proceeds(a_pool, k, pt_reserves, underlying_reserves, yt_in)
     }
 
     pub fn get_reserves(env: Env) -> Result<(i128, i128, i128), NovaireMarketError> {
@@ -1471,6 +1699,235 @@ mod tests {
             u_out1 > 499_750_000,
             "C1: LP must receive more underlying than initially deposited (got {})",
             u_out1
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // YT CURVE-PRICING TESTS — replaces `1 - TWAP` flat/donated-reserve pricing
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Deep bootstrap + large YT reserve so whale-sized trades don't hit
+    /// `InsufficientLiquidity` before we can observe slippage behavior.
+    fn setup_deep_market() -> (Env, Address, Address, Address, Address, NovaireMarketplaceClient<'static>, token::StellarAssetClient<'static>) {
+        let (env, admin, underlying_token, pt_token, yt_token, market_client, token_admin_client) = setup_env_with_yt();
+        // A realistic (~20%) discount, not a near-par corner case: at a
+        // near-par (~0.05%) discount the 0.3% swap fee dominates the actual
+        // yield discount and produces pathological YT leverage that isn't
+        // representative of normal market conditions.
+        let deep_pt: i128 = 100_000_000_000;
+        let deep_under: i128 = 80_000_000_000;
+        bootstrap(&env, &market_client, &token_admin_client, &pt_token, deep_pt, deep_under);
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: CREATED_AT + 1,
+            ..env.ledger().get()
+        });
+        seed_yt_reserves(&env, &market_client, &yt_token, 50_000_000_000);
+        (env, admin, underlying_token, pt_token, yt_token, market_client, token_admin_client)
+    }
+
+    // ── YT-TEST 1: size-dependent slippage — larger trades pay a strictly
+    // worse average price per YT than smaller ones ──────────────────────────
+    #[test]
+    fn test_yt_size_dependent_slippage() {
+        let (env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) = setup_deep_market();
+
+        let small_in: i128 = 1_000;
+        let medium_in: i128 = 1_000_000;
+        let whale_in: i128 = 500_000_000;
+
+        let small_out = market_client.quote_underlying_for_yt(&small_in);
+        let medium_out = market_client.quote_underlying_for_yt(&medium_in);
+        let whale_out = market_client.quote_underlying_for_yt(&whale_in);
+
+        assert!(small_out > 0 && medium_out > 0 && whale_out > 0, "all quotes must be positive");
+
+        // Average price paid per unit YT (scaled 1e9), must increase with size.
+        let avg_price = |underlying_in: i128, yt_out: i128| -> i128 {
+            underlying_in * 1_000_000_000 / yt_out
+        };
+        let p_small = avg_price(small_in, small_out);
+        let p_medium = avg_price(medium_in, medium_out);
+        let p_whale = avg_price(whale_in, whale_out);
+
+        assert!(
+            p_medium >= p_small,
+            "medium trade avg price ({}) must be >= small trade avg price ({}) — slippage must not decrease with size",
+            p_medium, p_small
+        );
+        assert!(
+            p_whale > p_medium,
+            "whale trade avg price ({}) must be strictly worse than medium trade avg price ({}) — no constant-price execution should remain",
+            p_whale, p_medium
+        );
+
+        let _ = env;
+    }
+
+    // ── YT-TEST 2: no negative/zero outputs across a size sweep ──────────────
+    #[test]
+    fn test_yt_no_negative_or_zero_price() {
+        let (_env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) = setup_deep_market();
+
+        // Buy-side quotes must always be strictly positive: even a tiny
+        // underlying input still buys *some* YT under this deep-discount
+        // curve (leverage on the buy side is large near maturity-far par).
+        for &size in &[1_i128, 100, 10_000, 1_000_000, 100_000_000] {
+            let yt_out = market_client.quote_underlying_for_yt(&size);
+            assert!(yt_out > 0, "quote for size {} must be positive, got {}", size, yt_out);
+        }
+
+        // Sell-side quotes on dust-sized YT amounts (well below 1e9 scale)
+        // may legitimately floor to zero once fees are applied — this is
+        // correct, protocol-favorable rounding, not a pricing bug. Only
+        // non-dust sizes are required to be strictly positive.
+        for &size in &[10_000, 1_000_000, 100_000_000] {
+            let underlying_out = market_client.quote_yt_for_underlying(&size);
+            assert!(underlying_out > 0, "sell quote for size {} must be positive, got {}", size, underlying_out);
+        }
+        let dust_out = market_client.quote_yt_for_underlying(&1_i128);
+        assert!(dust_out >= 0, "dust sell quote must never be negative, got {}", dust_out);
+    }
+
+    // ── YT-TEST 3: PT + YT spot prices sum to face value (1e9) ───────────────
+    #[test]
+    fn test_yt_pt_price_consistency() {
+        let (_env, _, _, _pt_token, _yt_token, market_client, _token_admin_client) = setup_deep_market();
+
+        let pt_price = market_client.get_pt_price();
+        let yt_price = market_client.get_yt_price();
+
+        let sum = pt_price + yt_price;
+        assert!(
+            (sum - SCALE).abs() <= 2,
+            "PT price ({}) + YT price ({}) = {} must equal face value ({}) within rounding",
+            pt_price, yt_price, sum, SCALE
+        );
+    }
+
+    // ── YT-TEST 4: buy-then-sell round trip only loses to fees, never profits ─
+    #[test]
+    fn test_yt_round_trip_no_free_profit() {
+        let (env, _, underlying_token, _pt_token, yt_token, market_client, token_admin_client) = setup_deep_market();
+
+        let trader = Address::generate(&env);
+        let underlying_in: i128 = 10_000_000;
+        token_admin_client.mint(&trader, &underlying_in);
+
+        let yt_out = market_client.swap_underlying_for_yt(&trader, &underlying_in, &1);
+
+        let underlying_client = token::Client::new(&env, &underlying_token);
+        let balance_after_buy = underlying_client.balance(&trader);
+        assert_eq!(balance_after_buy, 0, "trader must have spent all underlying on the buy");
+
+        let yt_client = yt_token::YtTokenClient::new(&env, &yt_token);
+        assert_eq!(yt_client.balance(&trader), yt_out);
+
+        let underlying_back = market_client.swap_yt_for_underlying(&trader, &yt_out, &1);
+
+        assert!(
+            underlying_back < underlying_in,
+            "round trip must lose value to fees/slippage: paid {}, got back {}",
+            underlying_in, underlying_back
+        );
+        assert!(underlying_back > 0, "round trip must not zero out for a modest trade size");
+
+        let _ = env;
+    }
+
+    // ── YT-TEST 5: quote functions match actual execution exactly ────────────
+    #[test]
+    fn test_yt_quote_matches_execution() {
+        let (env, _, _, _pt_token, _yt_token, market_client, token_admin_client) = setup_deep_market();
+
+        let buyer = Address::generate(&env);
+        let underlying_in: i128 = 2_500_000;
+        token_admin_client.mint(&buyer, &underlying_in);
+
+        let quoted = market_client.quote_underlying_for_yt(&underlying_in);
+        let actual = market_client.swap_underlying_for_yt(&buyer, &underlying_in, &1);
+
+        assert_eq!(quoted, actual, "quote must exactly match execution (no state drift between quote and swap)");
+    }
+
+    // ── YT-TEST 6: whale trade cannot be executed at the same price as a
+    // trivially small trade (proves the removal of flat/oracle pricing) ──────
+    #[test]
+    fn test_yt_whale_trade_rejected_at_small_trade_price() {
+        let (env, _, _, _pt_token, _yt_token, market_client, token_admin_client) = setup_deep_market();
+
+        let small_in: i128 = 1_000;
+        let small_out = market_client.quote_underlying_for_yt(&small_in);
+        let implied_flat_price = small_in * 1_000_000_000 / small_out; // underlying per YT, small-trade rate
+
+        // If a whale traded at the SAME flat per-unit price as the small trade,
+        // this is how much YT they'd expect. A real curve must deliver strictly less.
+        let whale_in: i128 = 500_000_000;
+        let flat_expected_yt = whale_in * 1_000_000_000 / implied_flat_price;
+        let whale_actual_yt = market_client.quote_underlying_for_yt(&whale_in);
+
+        assert!(
+            whale_actual_yt < flat_expected_yt,
+            "whale trade ({} YT) must receive strictly less than flat small-trade-rate would imply ({} YT) — flat pricing must be gone",
+            whale_actual_yt, flat_expected_yt
+        );
+
+        let buyer = Address::generate(&env);
+        token_admin_client.mint(&buyer, &whale_in);
+        let _ = buyer;
+    }
+
+    // ── YT-TEST 7: TWAP staleness guard reverts after long idle period ───────
+    #[test]
+    fn test_twap_staleness_guard() {
+        let (env, _, _, pt_token, _yt_token, market_client, token_admin_client) = setup_env_with_yt();
+        bootstrap(&env, &market_client, &token_admin_client, &pt_token, BOOTSTRAP_PT, BOOTSTRAP_UNDER);
+
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: CREATED_AT + 1,
+            ..env.ledger().get()
+        });
+        let buyer = Address::generate(&env);
+        token_admin_client.mint(&buyer, &10_000_000);
+        market_client.swap_underlying_for_pt(&buyer, &1_000, &1);
+
+        // Fresh TWAP must pass the staleness check.
+        let fresh = market_client.get_twap_rate_checked();
+        assert!(fresh > 0);
+
+        // Advance far beyond MAX_TWAP_AGE_LEDGERS with no further trades.
+        env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: CREATED_AT + 1 + MAX_TWAP_AGE_LEDGERS + 50,
+            ..env.ledger().get()
+        });
+
+        let result = market_client.try_get_twap_rate_checked();
+        assert!(result.is_err(), "stale TWAP must be rejected by get_twap_rate_checked");
+
+        // The raw accessor (used by existing Intent Engine callers) is
+        // intentionally unaffected — no behavior change to existing consumers.
+        let raw = market_client.get_twap_rate();
+        assert!(raw > 0, "raw get_twap_rate must remain available for existing callers");
+    }
+
+    // ── YT-TEST 8: YT price tracks curve state immediately after a PT trade ──
+    #[test]
+    fn test_yt_price_updates_immediately_with_pt_state() {
+        let (env, _, _, pt_token, _yt_token, market_client, token_admin_client) = setup_deep_market();
+
+        let yt_price_before = market_client.get_yt_price();
+
+        // A large PT sale shifts the curve state within the same ledger.
+        let trader = Address::generate(&env);
+        let pt_client = pt_token::PtTokenClient::new(&env, &pt_token);
+        pt_client.mint(&trader, &10_000_000_000);
+        token_admin_client.mint(&trader, &10_000_000_000);
+        market_client.swap_pt_for_underlying(&trader, &5_000_000_000, &1);
+
+        let yt_price_after = market_client.get_yt_price();
+
+        assert_ne!(
+            yt_price_before, yt_price_after,
+            "YT price must move immediately when PT curve state changes, with no TWAP lag"
         );
     }
 }
