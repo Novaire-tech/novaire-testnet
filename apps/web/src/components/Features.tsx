@@ -43,21 +43,16 @@ export default function Features() {
           Multiple ways<br />
           <span className="playfair">to earn.</span>
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mt-12">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-12 max-w-3xl mx-auto">
           <FeatureCard 
             href="/docs#principal-tokens"
             imageSrc="/images/yield.png"
             altText="Lock Fixed Yield - Deposit PT tokens and secure your return upfront with confidence."
           />
-          <FeatureCard 
+          <FeatureCard
             href="/docs#yield-tokens"
             imageSrc="/images/variableyieldv2.png"
             altText="Earn Variable Yield - Hold YT tokens and capture the upside of future yield."
-          />
-          <FeatureCard 
-            href="/docs#automation-features"
-            imageSrc="/images/automation.png"
-            altText="Automate Everything - Smart Accounts execute, rollover, and compound automatically so you don't have to."
           />
         </div>
       </div>

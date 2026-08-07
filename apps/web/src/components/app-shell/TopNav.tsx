@@ -14,7 +14,6 @@ const TOP_LINKS = [
   { label: 'Dashboard', href: '/app' },
   { label: 'Portfolio', href: '/app/portfolio' },
   { label: 'Vaults', href: '/app/vaults' },
-  { label: 'Automation', href: '/app/automation' },
   { label: 'Analytics', href: '/app/analytics' },
   { label: 'Resources', href: '/docs' },
 ];

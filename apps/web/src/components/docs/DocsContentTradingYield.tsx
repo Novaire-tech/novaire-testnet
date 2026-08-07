@@ -99,32 +99,6 @@ export default function DocsContentTradingYield() {
           Yield accrued by YT tokens does not automatically compound back into your wallet. It builds up as a claimable balance within the Tokenizer contract. Users must actively invoke the <code>claim_yield</code> function (available via the Portfolio UI) to realize these gains.
         </p>
       </section>
-
-      {/* --- Automation Features --- */}
-      <hr className="border-nova-border my-16" />
-      <section id="automation-features" className="mb-16 scroll-mt-24">
-        <h2 className="text-3xl font-bold text-white mb-8">Automation Features</h2>
-
-        <h3 id="auto-rollovers" className="text-2xl font-semibold text-white mt-8 mb-4 scroll-mt-24">Auto Rollovers</h3>
-        <p className="text-gray-300 mb-4">
-          Unlike perpetual markets, Novaire operates in distinct epochs with fixed maturity dates. When an epoch matures, PT must be redeemed. To prevent cash drag, users can opt-in to the Rollover contract, which automatically redeems expired PT and reinvests it into the subsequent epoch's fixed yield strategy.
-        </p>
-
-        <MermaidDiagram chart={`
-sequenceDiagram
-    participant User
-    participant Rollover
-    participant Tokenizer (Epoch 1)
-    participant Tokenizer (Epoch 2)
-    
-    User->>Rollover: Opt-in (100 PT)
-    Note over Tokenizer (Epoch 1): Maturity Reached
-    Rollover->>Tokenizer (Epoch 1): Redeem PT
-    Tokenizer (Epoch 1)-->>Rollover: 100 Underlying
-    Rollover->>Tokenizer (Epoch 2): Zap into Fixed Yield
-    Tokenizer (Epoch 2)-->>User: New PT Delivered
-        `} />
-      </section>
     </>
   );
 }

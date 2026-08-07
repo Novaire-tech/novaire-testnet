@@ -1,4 +1,4 @@
-export type NotificationCategory = 'transaction' | 'automation' | 'yield' | 'network';
+export type NotificationCategory = 'transaction' | 'yield' | 'network';
 
 export interface AppNotification {
   id: string;
@@ -24,7 +24,6 @@ class NotificationServiceClass {
     }
     return {
       transaction: true,
-      automation: true,
       yield: true,
       network: true // Implicitly true if not in settings
     };

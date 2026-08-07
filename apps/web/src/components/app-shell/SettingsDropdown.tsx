@@ -9,7 +9,6 @@ interface SettingsDropdownProps {
 export function SettingsDropdown({ isOpen, onClose }: SettingsDropdownProps) {
   const [notifications, setNotifications] = useState({
     transaction: true,
-    automation: true,
     yield: true
   });
   
@@ -76,7 +75,6 @@ export function SettingsDropdown({ isOpen, onClose }: SettingsDropdownProps) {
               <div className="space-y-3">
                 {[
                   { key: 'transaction', label: 'Transaction Notifications' },
-                  { key: 'automation', label: 'Automation Notifications' },
                   { key: 'yield', label: 'Yield Notifications' },
                 ].map(({ key, label }) => (
                   <div key={key} className="flex items-center justify-between">

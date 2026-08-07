@@ -25,7 +25,6 @@ const searchIndex = [
   { id: 'market-mechanics', url: '/docs/trading-yield#market-mechanics', title: 'Market Mechanics', type: 'heading', content: 'Because PT is a zero-coupon bond, it must mathematically converge to 1.0 (relative to the underlying asset) as the maturity date approaches.' },
   { id: 'marketplace-deep-dive', url: '/docs/trading-yield#marketplace-deep-dive', title: 'Marketplace Deep Dive', type: 'heading', content: 'Market Driven Pricing, TWAP (Time-Weighted Average Price).' },
   { id: 'portfolio-analytics', url: '/docs/trading-yield#portfolio-analytics', title: 'Portfolio & Analytics', type: 'heading', content: 'Portfolio Value, Claimable Yield.' },
-  { id: 'automation-features', url: '/docs/trading-yield#automation-features', title: 'Automation Features', type: 'heading', content: 'Auto Rollovers. Unlike perpetual markets, Novaire operates in distinct epochs with fixed maturity dates.' },
   { id: 'developers', url: '/docs/developers#developers', title: 'Developers', type: 'heading', content: 'Smart Contracts API, Integration Guide.' },
   { id: 'faq', url: '/docs/developers#faq', title: 'FAQ', type: 'heading', content: 'Are my funds locked until maturity? What happens if I don\'t redeem at maturity? Is Novaire audited?' }
 ];
