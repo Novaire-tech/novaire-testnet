@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Antic_Didone } from "next/font/google";
+import { Inter, Antic_Didone, Poppins, Instrument_Serif } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
@@ -10,6 +10,19 @@ const inter = Inter({
 const anticDidone = Antic_Didone({
   variable: "--font-antic",
   weight: "400",
+  subsets: ["latin"],
+});
+
+const poppins = Poppins({
+  variable: "--font-poppins-google",
+  weight: ["400", "700", "800"],
+  subsets: ["latin"],
+});
+
+const instrumentSerif = Instrument_Serif({
+  variable: "--font-instrument-serif",
+  weight: "400",
+  style: ["italic", "normal"],
   subsets: ["latin"],
 });
 
@@ -26,7 +39,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${anticDidone.variable} dark scroll-smooth`}
+      className={`${inter.variable} ${anticDidone.variable} ${poppins.variable} ${instrumentSerif.variable} scroll-smooth`}
     >
       <body className="antialiased text-nova-text bg-nova-bg w-full min-h-screen">
         {children}
