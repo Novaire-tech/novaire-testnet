@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
-import Image from "next/image";
 import { Menu, X } from "lucide-react";
 
 export default function NavHeader() {
@@ -48,38 +47,30 @@ export default function NavHeader() {
 
   return (
     <>
-      <nav className="absolute top-0 left-0 z-50 w-full font-sans bg-transparent border-b border-transparent">
+      <nav className="absolute top-0 left-0 z-50 w-full font-poppins bg-transparent border-b border-transparent">
         <div className="max-w-[1440px] mx-auto h-[88px] px-8 md:px-12 xl:px-16 flex items-center justify-between">
-          
+
           {/* Left: Logo */}
-          <div className="flex-1 flex items-center z-50">
-            <Link
-              href="/"
-              className="flex items-center transition-opacity hover:opacity-80"
-              onClick={() => setIsMobileMenuOpen(false)}
-            >
-              <Image
-                src="/images/logos-v2.png"
-                alt="Novaire"
-                width={240}
-                height={48}
-                priority
-                className="h-[34px] md:h-[38px] w-auto object-contain"
-              />
-            </Link>
-          </div>
+          <Link
+            href="/"
+            className="flex items-center z-50 transition-opacity hover:opacity-80"
+            onClick={() => setIsMobileMenuOpen(false)}
+          >
+            <span
+              role="img"
+              aria-label="Novaire"
+              className="block h-[34px] w-[152px] bg-[#112a46] [mask-image:url('/images/logos-v2.png')] [mask-repeat:no-repeat] [mask-size:contain] [mask-position:left_center] [-webkit-mask-image:url('/images/logos-v2.png')] [-webkit-mask-repeat:no-repeat] [-webkit-mask-size:contain] [-webkit-mask-position:left_center] md:h-[38px] md:w-[170px]"
+            />
+          </Link>
 
-          {/* Center spacing empty block */}
-          <div className="hidden md:flex flex-1"></div>
-
-          {/* Right: Navigation Links & Actions */}
-          <div className="flex-1 flex items-center justify-end gap-6 z-50">
-            <ul className="hidden md:flex items-center justify-center gap-6 mr-2">
-              <Tab 
+          {/* Right: Navigation + CTA cluster */}
+          <div className="hidden md:flex items-center gap-5 z-50">
+            <ul className="flex items-center gap-6">
+              <Tab
                 isActive={activeSection === "how-it-works"}
                 onClick={handleScrollToHowItWorks}
               >
-                How It Works
+                Workflow
               </Tab>
               <Tab href="https://stellar.org/" external>
                 Ecosystem
@@ -88,22 +79,26 @@ export default function NavHeader() {
                 Docs
               </Tab>
             </ul>
+
             <Link
               href="/app"
-              className="hidden md:inline-flex items-center justify-center px-6 py-3 rounded-full border border-[rgba(255,255,255,0.12)] bg-transparent text-white text-[14px] font-medium transition-all duration-[250ms] ease-out hover:bg-[rgba(255,255,255,0.04)] hover:border-[rgba(255,255,255,0.22)] whitespace-nowrap"
+              style={{ color: '#112a46' }}
+              className="inline-flex items-center justify-center px-6 py-3 rounded-full border border-[rgba(17,42,70,0.15)] bg-transparent text-[16px] font-medium tracking-[0.01em] transition-all duration-[250ms] ease-out hover:bg-[rgba(17,42,70,0.06)] hover:border-[rgba(17,42,70,0.3)] whitespace-nowrap"
             >
-              Launch App ↗
+              <span style={{ color: '#112a46' }}>Get Early Access</span>
+              <span style={{ color: '#112a46' }} className="ml-2">↗</span>
             </Link>
-
-            {/* Hamburger Toggle */}
-            <button
-              className="md:hidden text-nova-text focus:outline-none transition-transform active:scale-95 p-2"
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              aria-label="Toggle mobile menu"
-            >
-              {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-            </button>
           </div>
+
+          {/* Hamburger Toggle */}
+          <button
+            style={{ color: '#112a46' }}
+            className="md:hidden focus:outline-none transition-transform active:scale-95 p-2"
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            aria-label="Toggle mobile menu"
+          >
+            {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          </button>
         </div>
       </nav>
 
@@ -115,11 +110,11 @@ export default function NavHeader() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.3, ease: "easeInOut" }}
-            className="fixed inset-0 z-40 bg-nova-bg flex flex-col pt-[100px] px-8 pb-12 font-sans"
+            className="fixed inset-0 z-40 bg-nova-bg flex flex-col pt-[100px] px-8 pb-12 font-poppins"
           >
             <div className="flex flex-col gap-6 items-start flex-1 overflow-y-auto">
               {[
-                { label: 'How It Works', id: 'how-it-works' },
+                { label: 'Workflow', id: 'how-it-works' },
                 { label: 'Ecosystem', href: 'https://stellar.org/', external: true },
                 { label: 'Docs', href: '/docs' }
               ].map((item, idx) => (
@@ -134,9 +129,8 @@ export default function NavHeader() {
                     <a
                       href={`#${item.id}`}
                       onClick={handleScrollToHowItWorks}
-                      className={`text-[24px] font-medium transition-colors duration-200 block py-2 ${
-                        activeSection === item.id ? 'text-white' : 'text-[#B8B8B8] hover:text-nova-text'
-                      }`}
+                      style={{ color: '#112a46' }}
+                      className="text-[24px] font-medium tracking-[0.01em] transition-colors duration-200 block py-2 hover:text-[#0c2035]"
                     >
                       {item.label}
                     </a>
@@ -146,7 +140,8 @@ export default function NavHeader() {
                         href={item.href}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="text-[#B8B8B8] hover:text-nova-text text-[24px] font-medium transition-colors duration-200 block py-2"
+                        style={{ color: '#112a46' }}
+                        className="text-[24px] font-medium tracking-[0.01em] transition-colors duration-200 block py-2 hover:text-[#0c2035]"
                         onClick={() => setIsMobileMenuOpen(false)}
                       >
                         {item.label}
@@ -154,7 +149,8 @@ export default function NavHeader() {
                     ) : (
                       <Link
                         href={item.href}
-                        className="text-[#B8B8B8] hover:text-nova-text text-[24px] font-medium transition-colors duration-200 block py-2"
+                        style={{ color: '#112a46' }}
+                        className="text-[24px] font-medium tracking-[0.01em] transition-colors duration-200 block py-2 hover:text-[#0c2035]"
                         onClick={() => setIsMobileMenuOpen(false)}
                       >
                         {item.label}
@@ -163,7 +159,8 @@ export default function NavHeader() {
                   ) : (
                     <Link
                       href="#"
-                      className="text-[#B8B8B8] hover:text-nova-text text-[24px] font-medium transition-colors duration-200 block py-2"
+                      style={{ color: '#112a46' }}
+                      className="text-[24px] font-medium tracking-[0.01em] transition-colors duration-200 block py-2 hover:text-[#0c2035]"
                       onClick={() => setIsMobileMenuOpen(false)}
                     >
                       {item.label}
@@ -172,7 +169,7 @@ export default function NavHeader() {
                 </motion.div>
               ))}
             </div>
-            
+
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -181,10 +178,12 @@ export default function NavHeader() {
             >
               <Link
                 href="/app"
-                className="flex items-center justify-center w-full px-6 py-3 rounded-full border border-[rgba(255,255,255,0.12)] bg-transparent text-white text-[16px] font-medium transition-all duration-[250ms] ease-out hover:bg-[rgba(255,255,255,0.04)] hover:border-[rgba(255,255,255,0.22)] whitespace-nowrap"
+                style={{ color: '#112a46' }}
+                className="flex items-center justify-center w-full px-6 py-3 rounded-full border border-[rgba(17,42,70,0.15)] bg-transparent text-[16px] font-medium tracking-[0.01em] transition-all duration-[250ms] ease-out hover:bg-[rgba(17,42,70,0.06)] hover:border-[rgba(17,42,70,0.3)] whitespace-nowrap"
                 onClick={() => setIsMobileMenuOpen(false)}
               >
-                Launch App ↗
+                <span style={{ color: '#112a46' }}>Get Early Access</span>
+                <span style={{ color: '#112a46' }} className="ml-2">↗</span>
               </Link>
             </motion.div>
           </motion.div>
@@ -207,28 +206,16 @@ const Tab = ({
   href?: string;
   external?: boolean;
 }) => {
-  const innerContent = (
-    <>
-      <div 
-        className={`absolute inset-0 w-full h-full rounded-full border transition-all duration-300 ease-out pointer-events-none backdrop-blur-[8px] ${
-          isActive 
-            ? 'opacity-100 scale-100 bg-[#0F5E3A]/80 border-nova-accent/20' 
-            : 'border-transparent opacity-0 scale-[0.97] group-hover:opacity-100 group-hover:scale-100 group-hover:bg-[#0F5E3A]/80 group-hover:border-nova-accent/20'
-        }`} 
-      />
-      <span className="relative z-10">{children}</span>
-    </>
-  );
+  const innerContent = <span className="relative z-10" style={{ color: 'inherit' }}>{children}</span>;
 
-  const className = `relative group block cursor-pointer px-[18px] py-[10px] text-[14px] font-medium transition-colors duration-300 ${
-    isActive ? 'text-white' : 'text-[#B8B8B8] hover:text-white'
-  }`;
+  const className = `relative group block cursor-pointer px-[6px] py-[10px] text-[16px] font-medium tracking-[0.01em] transition-colors duration-[250ms] ease-out hover:!text-[#0c2035]`;
+  const color = isActive ? '#0c2035' : '#112a46';
 
   if (href) {
     if (external) {
       return (
         <li className="list-none">
-          <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick as any} className={className}>
+          <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick as any} className={className} style={{ color }}>
             {innerContent}
           </a>
         </li>
@@ -236,7 +223,7 @@ const Tab = ({
     }
     return (
       <li className="list-none">
-        <Link href={href} onClick={onClick as any} className={className}>
+        <Link href={href} onClick={onClick as any} className={className} style={{ color }}>
           {innerContent}
         </Link>
       </li>
@@ -244,7 +231,7 @@ const Tab = ({
   }
 
   return (
-    <li onClick={onClick as any} className={className}>
+    <li onClick={onClick as any} className={className} style={{ color }}>
       {innerContent}
     </li>
   );

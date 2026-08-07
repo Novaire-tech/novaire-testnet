@@ -1,21 +1,10 @@
-import { HeroContent } from "./hero/HeroContent";
-import { HeroVisual } from "./hero/HeroVisual";
+import { HeroVideo } from "./hero/HeroVideo";
 
 export function Hero() {
   return (
-    <section className="relative w-full overflow-visible bg-transparent pt-[160px]">
-
-      <div className="container mx-auto grid grid-cols-12 relative z-10">
-
-        <div className="col-span-5 z-20">
-          <HeroContent />
-        </div>
-
-        {/* Added pointer-events-none to prevent the 1350px tall visual from intercepting clicks below it */}
-        <div className="col-span-7 relative overflow-visible pointer-events-none">
-          <HeroVisual />
-        </div>
-
+    <section className="relative w-full bg-nova-bg px-4 pt-[78px] pb-4 md:px-5 md:pt-[79px] md:pb-5 lg:px-6 lg:pt-[80px] lg:pb-8">
+      <div className="mx-auto w-full max-w-[1760px]">
+        <HeroVideo />
       </div>
     </section>
   );
