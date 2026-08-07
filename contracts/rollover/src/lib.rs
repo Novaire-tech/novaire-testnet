@@ -75,6 +75,7 @@ pub enum NovaireRolloverError {
     InvariantViolation = 13,
     InvalidKeeper = 14,
     InvalidEpoch = 15,
+    PositionAlreadyActive = 16,
 }
 
 #[contracttype]
@@ -225,6 +226,12 @@ impl AutonomousRollover {
 
         if pt_amount <= 0 {
             return Err(NovaireRolloverError::ZeroAmount);
+        }
+
+        if let Ok(existing) = storage::get_position(&env, &user) {
+            if existing.active {
+                return Err(NovaireRolloverError::PositionAlreadyActive);
+            }
         }
 
         let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;

@@ -207,6 +207,41 @@ fn test_exit_rollover() {
 }
 
 #[test]
+fn test_register_rollover_rejects_double_registration() {
+    let (env, _, _, rollover, pt_client, token_admin, intent_engine_contract_id, _) = setup_env();
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &4000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &100, &0);
+
+    let total_pt = pt_client.balance(&user);
+    let first_amount = total_pt / 2;
+    let second_amount = total_pt - first_amount;
+
+    // First registration succeeds and custodies `first_amount` PT.
+    rollover.register_rollover(&user, &first_amount, &1000, &0, &0);
+    assert_eq!(pt_client.balance(&user), second_amount);
+
+    // A second registration while the first position is still active must be
+    // rejected, not silently overwrite the stored position and orphan the
+    // already-custodied PT.
+    let result = rollover.try_register_rollover(&user, &second_amount, &1000, &0, &0);
+    assert!(result.is_err());
+
+    // The user's remaining PT was never pulled in by the rejected call, and
+    // the original position is untouched.
+    assert_eq!(pt_client.balance(&user), second_amount);
+    let position = rollover.get_position(&user);
+    assert_eq!(position.pt_balance, first_amount);
+
+    // The user can still recover their original funds in full.
+    rollover.exit_rollover(&user);
+    assert_eq!(pt_client.balance(&user), total_pt);
+}
+
+#[test]
 #[should_panic(expected = "Error(Contract, #5)")]
 fn test_next_epoch_not_set() {
     let (env, _, _, rollover, pt_client, token_admin, intent_engine_contract_id, factory_contract_id) = setup_env();
