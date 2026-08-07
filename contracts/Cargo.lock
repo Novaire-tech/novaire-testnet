@@ -920,6 +920,7 @@ name = "marketplace"
 version = "0.1.0"
 dependencies = [
  "maturity_engine",
+ "proptest",
  "pt_token",
  "soroban-sdk",
  "sy_wrapper",
