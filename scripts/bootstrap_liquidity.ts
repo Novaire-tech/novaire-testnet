@@ -168,7 +168,7 @@ async function run() {
                 const { TransactionBuilder } = await import('@stellar/stellar-sdk');
                 const tx = TransactionBuilder.fromXDR(xdrStr, NETWORK_PASSPHRASE);
                 tx.sign(adminKp);
-                return tx.toXDR();
+                return { signedTxXdr: tx.toXDR() };
             }
         });
         console.log('Existing liquidity removed. Pool is now clean.');

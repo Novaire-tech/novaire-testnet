@@ -22,6 +22,8 @@ async function run() {
         const tx = await client.deploy_epoch({
             params: {
                 maturity_ledger: ledger.sequence + 50000,
+                blend_pool: deployments.blend_pool,
+                maturity_engine: deployments.maturity_engine,
                 underlying_token: deployments.underlying_token,
                 sy_wrapper: deployments.sy_wrapper,
                 vault: deployments.vault,

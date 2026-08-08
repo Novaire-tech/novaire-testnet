@@ -3,7 +3,7 @@ import { Client as IntentEngineClient } from '../packages/bindings/intent_engine
 import { Client as PtClient } from '../packages/bindings/pt_token/src/index';
 import { Client as YtClient } from '../packages/bindings/yt_token/src/index';
 import { Client as TokenizerClient } from '../packages/bindings/tokenizer/src/index';
-import { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } from '../src/config/contracts';
+import { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } from '../apps/web/src/config/contracts';
 import { TransactionBuilder, Keypair } from '@stellar/stellar-sdk';
 
 async function main() {
@@ -49,7 +49,7 @@ async function main() {
             user: user.publicKey(),
             usdc_amount: amount,
             min_implied_rate: 0n,
-            _maturity_ledger: maturityLedger,
+            min_underlying_out: 0n,
             yt_sale_percentage: 0
         });
         

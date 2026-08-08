@@ -51,27 +51,27 @@ async function testXlmMint() {
         user: testWallet.publicKey(),
         usdc_amount: BigInt(amountToMint), // The parameter is named usdc_amount in the contract, but it represents the underlying token (XLM)
         min_implied_rate: BigInt(0), // Accept any rate for testing
-        _maturity_ledger: currentMaturityLedger,
+        min_underlying_out: BigInt(0),
         yt_sale_percentage: 100
     });
+    void currentMaturityLedger;
 
     // The bindings return a generic AssembledTransaction. We need to sign and send.
     console.log('Simulating transaction...');
     // We can use signAndSend which simulates and signs it
-    const { result, error } = await txBuilder.signAndSend({
-        signTransaction: async (xdr: string) => {
-            const tx = TransactionBuilder.fromXDR(xdr, NETWORK_PASSPHRASE);
-            tx.sign(testWallet);
-            return tx.toXDR();
-        }
-    });
-
-    if (error) {
+    try {
+        const sent = await txBuilder.signAndSend({
+            signTransaction: async (xdr: string) => {
+                const tx = TransactionBuilder.fromXDR(xdr, NETWORK_PASSPHRASE);
+                tx.sign(testWallet);
+                return { signedTxXdr: tx.toXDR() };
+            }
+        });
+        console.log('Transaction Success!');
+        console.log('Mint Intent Record:', sent.result);
+    } catch (error) {
         console.error('Transaction Failed:', error);
         throw new Error('Mint transaction failed!');
-    } else {
-        console.log('Transaction Success!');
-        console.log('Mint Intent Record:', result);
     }
 
     console.log('✅ Native XLM successfully minted PT and YT without requiring any trustlines.');

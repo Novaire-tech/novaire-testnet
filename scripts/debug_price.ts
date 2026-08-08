@@ -1,5 +1,5 @@
 import { Client as MarketplaceClient } from '../packages/bindings/marketplace/src/index';
-import { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } from '../src/config/contracts';
+import { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } from '../apps/web/src/config/contracts';
 
 function unwrapResult(rawResult: any): any {
   if (rawResult !== undefined && typeof rawResult === 'object' && rawResult !== null) {

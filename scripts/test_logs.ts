@@ -1,4 +1,4 @@
-import { ProtocolService } from './src/services/protocolService.js';
+import { ProtocolService } from '../apps/web/src/services/protocolService';
 async function run() {
   await ProtocolService.getProtocolState();
 }

@@ -1,4 +1,4 @@
-import { Contract, rpc, Networks } from '@stellar/stellar-sdk';
+import { Account, Contract, rpc, Networks, TransactionBuilder, BASE_FEE } from '@stellar/stellar-sdk';
 import fs from 'fs';
 import path from 'path';
 
@@ -12,20 +12,17 @@ async function readTokenizerState() {
         const latestLedger = await server.getLatestLedger();
         console.log('Current Ledger:', latestLedger.sequence);
         
-        const builder = await server.prepareTransaction({
-            account: {
-                accountId: () => 'GBULVWCJSEZOBASS4PM2KLIMTDOLIY2MTDNA6M3YZBRNWPICEGI3754U',
-                sequenceNumber: () => '1',
-                incrementSequenceNumber: () => {}
-            } as any,
-            networkPassphrase: Networks.TESTNET,
-            fee: "100",
-            timebounds: { minTime: 0, maxTime: 0 }
-        } as any);
+        const sourceAccount = new Account('GBULVWCJSEZOBASS4PM2KLIMTDOLIY2MTDNA6M3YZBRNWPICEGI3754U', '1');
 
         async function simulate(method: string, args: any[] = []) {
             try {
-                const tx = builder.addOperation(tokenizer.call(method, ...args)).build();
+                const tx = new TransactionBuilder(sourceAccount, {
+                    fee: BASE_FEE,
+                    networkPassphrase: Networks.TESTNET
+                })
+                    .addOperation(tokenizer.call(method, ...args))
+                    .setTimeout(30)
+                    .build();
                 const sim = await server.simulateTransaction(tx);
                 if (rpc.Api.isSimulationSuccess(sim)) {
                     return sim.result?.retval;

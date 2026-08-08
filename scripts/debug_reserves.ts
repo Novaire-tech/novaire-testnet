@@ -13,7 +13,7 @@ function unwrapResult(rawResult: any): any {
 async function run() {
   const { Client: MarketplaceClient } = await import('../packages/bindings/marketplace/src/index');
   const { Client: TokenizerClient } = await import('../packages/bindings/tokenizer/src/index');
-  const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../src/config/contracts');
+  const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../apps/web/src/config/contracts');
 
   const clientOptions = {
     rpcUrl: RPC_URL,

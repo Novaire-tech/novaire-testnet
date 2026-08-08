@@ -1,5 +1,5 @@
-import { PortfolioService } from '../src/services/portfolioService';
-import { WalletService } from '../src/services/walletService';
+import { PortfolioService } from '../apps/web/src/services/portfolioService';
+import { WalletService } from '../apps/web/src/services/walletService';
 
 // Mock the wallet service to return our admin address
 WalletService.getWalletAddress = async () => 'GCOPNTJERGKW43QGKGCCBKMBCR2MCJW3Q36C5JIPHCYGABJAG4ZFXRM5';

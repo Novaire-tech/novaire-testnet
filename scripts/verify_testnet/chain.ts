@@ -134,7 +134,7 @@ export async function waitForTransaction(hash: string, server: rpc.Server, timeo
   throw new Error(`Timed out waiting for transaction ${hash}`);
 }
 
-function clientFor<T extends { new (opts: any): any }>(Ctor: T, contractId: string, wallet: Wallet) {
+function clientFor<T>(Ctor: new (opts: any) => T, contractId: string, wallet: Wallet): T {
   const signer = basicNodeSigner(wallet.keypair, NETWORK_PASSPHRASE);
   return new Ctor({ contractId, rpcUrl: RPC_URL, networkPassphrase: NETWORK_PASSPHRASE, publicKey: wallet.publicKey, ...signer });
 }
