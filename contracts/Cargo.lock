@@ -588,7 +588,7 @@ checksum = "40404c3f5f511ec4da6fe866ddf6a717c309fdbb69fbbad7b0f3edab8f2e835f"
 
 [[package]]
 name = "factory"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "soroban-sdk",
 ]
@@ -815,7 +815,7 @@ checksum = "8e04e2fd2b8188ea827b32ef11de88377086d690286ab35747ef7f9bf3ccb590"
 
 [[package]]
 name = "integration_tests"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "intent_engine",
  "marketplace",
@@ -832,7 +832,7 @@ dependencies = [
 
 [[package]]
 name = "intent_engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "marketplace",
  "maturity_engine",
@@ -917,7 +917,7 @@ checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
 name = "marketplace"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "maturity_engine",
  "proptest",
@@ -931,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "maturity_engine"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "pt_token",
  "soroban-sdk",
@@ -1096,7 +1096,7 @@ dependencies = [
 
 [[package]]
 name = "pt_token"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "soroban-sdk",
 ]
@@ -1234,7 +1234,7 @@ dependencies = [
 
 [[package]]
 name = "rollover"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "intent_engine",
  "marketplace",
@@ -1706,7 +1706,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "sy_wrapper"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "soroban-sdk",
 ]
@@ -1813,7 +1813,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokenizer"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "maturity_engine",
  "pt_token",
@@ -1843,7 +1843,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "vault"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "soroban-sdk",
  "sy_wrapper",
@@ -2037,7 +2037,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "yt_token"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "maturity_engine",
  "soroban-sdk",
