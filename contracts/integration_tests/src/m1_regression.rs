@@ -321,7 +321,7 @@ fn test_m1_exploit_reproduction_at_epoch_start() {
 
 #[test]
 fn test_m1_delayed_yt_sale() {
-    let mut protocol = Protocol::new();
+    let protocol = Protocol::new();
     let alice = protocol.create_user();
 
     // Bootstrap

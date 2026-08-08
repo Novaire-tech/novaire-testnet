@@ -1,14 +1,11 @@
 #![cfg(test)]
 
-use crate::framework::{Protocol, BOOTSTRAP_PT, BOOTSTRAP_UNDER};
+use crate::framework::Protocol;
 use soroban_sdk::testutils::Ledger;
 use soroban_sdk::testutils::LedgerInfo;
 
 #[test]
 fn test_m1_production_exploit_matrix() {
-    let pt_bootstrap = BOOTSTRAP_PT;
-    let u_bootstrap = BOOTSTRAP_UNDER;
-
     let elapsed_ledgers = [0, 1, 3, 10, 100, 500];
     let attack_sizes = [1_000_000i128, 5_000_000, 10_000_000, 25_000_000, 50_000_000];
 

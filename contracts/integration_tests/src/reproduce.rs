@@ -55,12 +55,7 @@ fn reproduce_budget_mint_pt_yt() {
         );
         let env = &p.env;
         let p_ref = &p;
-        run_and_capture(
-            env,
-            "mint_pt_yt",
-            &ctx,
-            || p_ref.mint_pt_yt(user, shares),
-        );
+        run_and_capture(env, "mint_pt_yt", &ctx, || p_ref.mint_pt_yt(user, shares));
 
         if i % DUMP_EVERY == 0 {
             dump_budget(&p.env, &format!("mint_pt_yt iteration {i}"));
@@ -92,29 +87,16 @@ fn reproduce_budget_full_lifecycle() {
             let ctx = format!("epoch={epoch} position={pos} sy_shares={shares}");
             let env = &p.env;
             let p_ref = &p;
-            run_and_capture(
-                env,
-                "lifecycle_mint",
-                &ctx,
-                || p_ref.mint_pt_yt(&user, shares),
-            );
+            run_and_capture(env, "lifecycle_mint", &ctx, || {
+                p_ref.mint_pt_yt(&user, shares)
+            });
 
-            run_and_capture(
-                env,
-                "lifecycle_claim",
-                &ctx,
-                || p_ref.claim_yield(&user),
-            );
+            run_and_capture(env, "lifecycle_claim", &ctx, || p_ref.claim_yield(&user));
         }
 
         p.advance_ledger(200);
         let ctx = format!("epoch={epoch} settle_epoch");
-        run_and_capture(
-            &p.env,
-            "settle_epoch",
-            &ctx,
-            || p.settle_epoch(),
-        );
+        run_and_capture(&p.env, "settle_epoch", &ctx, || p.settle_epoch());
 
         dump_budget(&p.env, &format!("epoch {epoch} settled"));
     }

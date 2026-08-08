@@ -6,8 +6,7 @@ use soroban_sdk::{
     token, Address, Env,
 };
 
-use intent_engine::{CumulativeIntentRecord, IntentEngine, IntentEngineClient};
-use marketplace::{NovaireMarketplace, NovaireMarketplaceClient};
+use intent_engine::{CumulativeIntentRecord, IntentEngineClient};
 use pt_token::{PtToken, PtTokenClient};
 
 use soroban_sdk::{contract, contractimpl};
@@ -20,7 +19,7 @@ impl MockIntentEngine {
         env: Env,
         user: Address,
         usdc_amount: i128,
-        min_implied_rate: i128,
+        _min_implied_rate: i128,
         _min_underlying_out: i128,
         _yt_sale_percentage: u32,
     ) -> CumulativeIntentRecord {

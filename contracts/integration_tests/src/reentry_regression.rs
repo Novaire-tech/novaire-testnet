@@ -54,7 +54,10 @@ fn reentry_external_claimable_yield_matches_claim() {
     p.advance_ledger(10);
 
     let previewed = p.yt_token.claimable_yield(&user);
-    assert!(previewed > 0, "expected nonzero live preview, got {previewed}");
+    assert!(
+        previewed > 0,
+        "expected nonzero live preview, got {previewed}"
+    );
 
     let claimed = p.tokenizer.claim_yield(&user);
     let diff = (claimed - previewed).abs();
@@ -83,7 +86,11 @@ fn reentry_checkpoint_user_via_claim_does_not_panic() {
 
     // try_claim_yield exercises checkpoint_user internally; must succeed.
     p.try_claim_yield(&user);
-    assert_eq!(p.yt_token.claimable_yield(&user), 0, "claim should have cleared pending yield");
+    assert_eq!(
+        p.yt_token.claimable_yield(&user),
+        0,
+        "claim should have cleared pending yield"
+    );
 }
 
 /// Value-equivalence: claiming twice in a row (second claim with zero new

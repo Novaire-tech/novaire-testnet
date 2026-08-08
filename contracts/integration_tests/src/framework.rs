@@ -263,6 +263,7 @@ impl<'a> Protocol<'a> {
         let minted_shares = self.vault.deposit(provider, &(BOOTSTRAP_PT * 2));
         self.tokenizer
             .try_mint_pt_yt(provider, &minted_shares)
+            .unwrap()
             .unwrap();
 
         self.marketplace

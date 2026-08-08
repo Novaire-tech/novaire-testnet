@@ -1,12 +1,10 @@
 #![cfg(test)]
 
 use crate::framework::Protocol;
-use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // The test imports the YtToken Client directly to invoke checkpoint_user,
 // bypassing the Tokenizer which only exposes try_claim_yield etc.
 use yt_token::DataKey;
-use yt_token::NovaireYtError;
 use yt_token::YtTokenClient;
 
 #[test]

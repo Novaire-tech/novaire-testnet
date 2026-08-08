@@ -224,6 +224,7 @@ impl MockYieldVault {
 // SETUP UTILITIES
 // ==========================================
 
+#[allow(dead_code)]
 struct AuditSetup {
     env: Env,
     admin: Address,

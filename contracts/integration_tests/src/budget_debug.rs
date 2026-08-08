@@ -29,8 +29,16 @@ fn artifacts_dir() -> PathBuf {
 pub fn budget_report(env: &Env) -> String {
     let budget = env.cost_estimate().budget();
     let mut out = String::new();
-    let _ = writeln!(out, "cpu_instructions_consumed = {}", budget.cpu_instruction_cost());
-    let _ = writeln!(out, "memory_bytes_consumed     = {}", budget.memory_bytes_cost());
+    let _ = writeln!(
+        out,
+        "cpu_instructions_consumed = {}",
+        budget.cpu_instruction_cost()
+    );
+    let _ = writeln!(
+        out,
+        "memory_bytes_consumed     = {}",
+        budget.memory_bytes_cost()
+    );
     let _ = writeln!(out, "\n--- per-cost-type trackers (iterations, inputs) ---");
     for ct in ContractCostType::VARIANTS.iter() {
         // tracker() panics if the type was never invoked in some SDK versions;
@@ -62,7 +70,10 @@ pub fn dump_budget(env: &Env, label: &str) {
 pub fn events_report(env: &Env) -> String {
     let mut out = String::new();
     for (i, (contract_id, topics, data)) in env.events().all().iter().enumerate() {
-        let _ = writeln!(out, "[{i}] contract={contract_id:?}\n     topics={topics:?}\n     data={data:?}");
+        let _ = writeln!(
+            out,
+            "[{i}] contract={contract_id:?}\n     topics={topics:?}\n     data={data:?}"
+        );
     }
     out
 }
@@ -72,8 +83,16 @@ pub fn events_report(env: &Env) -> String {
 ///   events.txt   — every contract/diagnostic event emitted before the failure
 ///   panic.txt    — the panic payload, if any
 ///   context.txt  — free-form caller-supplied context (invocation description, args, etc.)
-pub fn write_failure_bundle(env: &Env, label: &str, context: &str, panic_msg: Option<&str>) -> PathBuf {
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+pub fn write_failure_bundle(
+    env: &Env,
+    label: &str,
+    context: &str,
+    panic_msg: Option<&str>,
+) -> PathBuf {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
     let dir = artifacts_dir().join(format!("{label}-{ts}"));
     let _ = fs::create_dir_all(&dir);
 

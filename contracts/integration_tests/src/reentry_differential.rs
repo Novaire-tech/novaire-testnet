@@ -17,6 +17,7 @@
 //!   - `result_new` = a genuine call to `YtToken::claimable_yield_with_snapshot`,
 //!     fed the snapshot read via the same `get_surplus_snapshot()` (also a
 //!     plain external call here).
+//!
 //! Both are real invocations of real, currently-compiled contract code — not
 //! a hand-reimplemented model of either.
 
@@ -42,7 +43,7 @@ fn run_case(case: &DiffCase) -> Result<(), String> {
         capture_snapshot_at_drop: false,
     });
 
-    let n = case.num_users.max(1).min(6);
+    let n = case.num_users.clamp(1, 6);
     let mut users = vec![];
     for i in 0..n {
         let u = p.create_user();

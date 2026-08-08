@@ -5,6 +5,7 @@ use crate::audit_tests::{MockBlendPool, MockBlendPoolClient};
 use soroban_sdk::{testutils::Address as _, token, Address, Env};
 
 // --- Setup Helpers ---
+#[allow(dead_code)]
 struct Setup {
     env: Env,
     admin: Address,

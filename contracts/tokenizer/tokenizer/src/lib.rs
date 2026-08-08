@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::too_many_arguments)]
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, Address, Env, IntoVal, Symbol,
 };
@@ -385,6 +386,7 @@ impl Tokenizer {
         // Checkpoint the user so their internal math catches up to the global index
         yt_client
             .try_checkpoint_user(&user)
+            .map_err(|_| NovaireTokenizerError::MathUnderflow)?
             .map_err(|_| NovaireTokenizerError::MathUnderflow)?;
         // Use the snapshot-taking variant, not `claimable_yield`: Tokenizer's own
         // frame is still active here, so YtToken must not call back into it (that

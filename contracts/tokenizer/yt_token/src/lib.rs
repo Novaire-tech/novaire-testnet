@@ -119,6 +119,7 @@ mod storage {
             .ok_or(NovaireYtError::StorageMissing)
     }
 
+    #[allow(dead_code)]
     pub fn get_sy_wrapper(env: &Env) -> Option<Address> {
         env.storage().instance().get(&DataKey::SyWrapper)
     }

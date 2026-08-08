@@ -1,4 +1,5 @@
 #![cfg(test)]
+#![allow(clippy::too_many_arguments)]
 
 use super::*;
 use soroban_sdk::{
@@ -124,7 +125,7 @@ pub mod mock_yt {
             admin: Address,
             tokenizer: Address,
             maturity_ledger: u32,
-            sy_wrapper: Address,
+            _sy_wrapper: Address,
             _maturity_engine: Address,
             _maturity_epoch_id: u32,
         ) {
