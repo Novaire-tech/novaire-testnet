@@ -6,7 +6,7 @@ on:
       - "contracts/**"
       - ".github/workflows/protocol-integrity.yml"
   push:
-    branches: [main, develop]
+    branches: [main, master, develop]
     paths:
       - "contracts/**"
   workflow_call: {}

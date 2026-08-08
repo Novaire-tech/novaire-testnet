@@ -3,7 +3,7 @@ name: Documentation Validation
 on:
   pull_request:
   push:
-    branches: [main, develop]
+    branches: [main, master, develop]
   workflow_call: {}
   workflow_dispatch:
 

@@ -9,7 +9,7 @@ on:
       - ".github/scripts/validate-deployment.mjs"
       - ".github/workflows/deployment-validation.yml"
   push:
-    branches: [main, develop]
+    branches: [main, master, develop]
     paths:
       - "scripts/deployments.*.json"
   workflow_dispatch:

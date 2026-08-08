@@ -3,7 +3,7 @@ name: Security
 on:
   pull_request:
   push:
-    branches: [main, develop]
+    branches: [main, master, develop]
   schedule:
     - cron: "17 3 * * *" # daily, offset from nightly.yml's 02:00 run
   workflow_call: {}
