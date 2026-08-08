@@ -137,12 +137,13 @@ fn test_burn_with_zero_balance_rejected() {
 }
 
 #[test]
-#[should_panic]
-fn test_burn_while_paused_rejected() {
+fn test_burn_works_while_paused() {
+    // Phase 3: pause blocks new mints, never blocks a user's redemption exit.
     let s = setup();
     s.client.mint(&s.user1, &1000);
     s.client.pause();
     s.client.burn(&s.user1, &100);
+    assert_eq!(s.client.balance(&s.user1), 900);
 }
 
 #[test]
@@ -326,38 +327,6 @@ fn test_new_admin_can_pause_after_acceptance() {
     s.client.accept_admin();
     s.client.pause();
     assert!(s.client.is_paused());
-}
-
-// ==========================================
-// TWO-STEP TOKENIZER TRANSFER
-// ==========================================
-
-#[test]
-fn test_tokenizer_transfer_two_step() {
-    let s = setup();
-    let new_tokenizer = Address::generate(&s.env);
-    s.client.set_tokenizer(&new_tokenizer);
-    // Old tokenizer can still mint until the transfer is accepted.
-    assert_eq!(s.client.metadata().tokenizer, s.tokenizer);
-    s.client.accept_tokenizer();
-    assert_eq!(s.client.metadata().tokenizer, new_tokenizer);
-}
-
-#[test]
-#[should_panic]
-fn test_accept_tokenizer_without_pending_transfer_rejected() {
-    let s = setup();
-    s.client.accept_tokenizer();
-}
-
-#[test]
-fn test_new_tokenizer_can_mint_after_acceptance() {
-    let s = setup();
-    let new_tokenizer = Address::generate(&s.env);
-    s.client.set_tokenizer(&new_tokenizer);
-    s.client.accept_tokenizer();
-    s.client.mint(&s.user1, &1000);
-    assert_eq!(s.client.balance(&s.user1), 1000);
 }
 
 // ==========================================

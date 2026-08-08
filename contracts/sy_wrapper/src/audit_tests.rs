@@ -494,6 +494,23 @@ fn test_mark_loss_total_loss_to_zero_balance() {
 }
 
 #[test]
+fn test_mark_loss_is_permissionless() {
+    // Phase 5: mark_loss only ever pushes TotalUnderlying toward a value read
+    // straight from on-chain state, so no caller can lie through it. Anyone
+    // should be able to call it, not just the admin.
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    s.pool_client.simulate_yield(&s.contract_id, &-1_000);
+
+    // No auths mocked at all for this call - proves it needs no signature.
+    s.env.set_auths(&[]);
+    let loss = s.client.mark_loss();
+    assert_eq!(loss, 1_000);
+}
+
+#[test]
 fn test_deposit_tiny_amount_above_minimum() {
     let s = setup();
     // Minimum first deposit is > 1000; 1001 is the smallest tiny amount that clears it.

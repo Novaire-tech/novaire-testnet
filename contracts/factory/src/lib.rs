@@ -16,6 +16,8 @@ pub enum NovaireFactoryError {
     DuplicateAddress = 9,
     EpochNotLinked = 10,
     WiringMismatch = 11,
+    NoPendingDeploy = 12,
+    TimelockNotElapsed = 13,
 }
 
 #[contracttype]
@@ -47,6 +49,7 @@ pub enum DataKey {
     Epoch(u32),
     Maturity(u32),
     NextEpoch(u32),
+    PendingDeploy,
 }
 
 #[contracttype]
@@ -74,6 +77,13 @@ pub struct DeployEpochParams {
     pub keeper: Address,
     pub grace_period_ledgers: u32,
     pub maturity_engine: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingDeploy {
+    pub params: DeployEpochParams,
+    pub eta: u32,
 }
 
 // ==========================================
@@ -245,6 +255,14 @@ const PERSISTENT_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
 const INSTANCE_LIFETIME_THRESHOLD: u32 = DAY_IN_LEDGERS * 30;
 const INSTANCE_BUMP_AMOUNT: u32 = DAY_IN_LEDGERS * 60;
 
+/// Phase 4 decentralization: `deploy_epoch` wires a caller-supplied
+/// `blend_pool`/`underlying_token` into a fresh epoch's `sy_wrapper`, and
+/// nothing on-chain can distinguish a genuine pool from a convincing fake
+/// (SEC-10). Proposing publicly and delaying execution gives the community a
+/// review window to catch a malicious epoch before any deposit can reach it,
+/// instead of trusting a single admin signature at the instant of the call.
+const DEPLOY_TIMELOCK_LEDGERS: u32 = DAY_IN_LEDGERS;
+
 mod storage {
     use super::*;
 
@@ -363,6 +381,23 @@ mod storage {
         );
         Ok(next_epoch_id)
     }
+
+    pub fn get_pending_deploy(env: &Env) -> Result<PendingDeploy, NovaireFactoryError> {
+        env.storage()
+            .instance()
+            .get(&DataKey::PendingDeploy)
+            .ok_or(NovaireFactoryError::NoPendingDeploy)
+    }
+
+    pub fn set_pending_deploy(env: &Env, pending: &PendingDeploy) {
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingDeploy, pending);
+    }
+
+    pub fn clear_pending_deploy(env: &Env) {
+        env.storage().instance().remove(&DataKey::PendingDeploy);
+    }
 }
 
 // ==========================================
@@ -394,7 +429,16 @@ impl Factory {
         Ok(())
     }
 
-    pub fn deploy_epoch(env: Env, params: DeployEpochParams) -> Result<u32, NovaireFactoryError> {
+    /// Proposes a new epoch deployment. Admin-gated (the caller supplies
+    /// `blend_pool`/`underlying_token`, which nothing on-chain can verify as
+    /// genuine — see SEC-10), but no longer takes effect instantly:
+    /// `execute_deploy_epoch` cannot run until `DEPLOY_TIMELOCK_LEDGERS`
+    /// ledgers later, giving the community a public window to catch a
+    /// malicious proposal before it can accept a single deposit.
+    pub fn propose_deploy_epoch(
+        env: Env,
+        params: DeployEpochParams,
+    ) -> Result<u32, NovaireFactoryError> {
         let admin = storage::get_admin(&env)?;
         admin.require_auth();
 
@@ -425,6 +469,36 @@ impl Factory {
                     return Err(NovaireFactoryError::DuplicateAddress);
                 }
             }
+        }
+
+        let eta = current_ledger
+            .checked_add(DEPLOY_TIMELOCK_LEDGERS)
+            .ok_or(NovaireFactoryError::MathOverflow)?;
+        storage::set_pending_deploy(&env, &PendingDeploy { params, eta });
+
+        env.events()
+            .publish((Symbol::new(&env, "epoch_deploy_proposed"),), eta);
+
+        Ok(eta)
+    }
+
+    /// Executes a previously proposed epoch deployment once its timelock has
+    /// elapsed. Deliberately permissionless: the admin already committed to
+    /// these exact params in `propose_deploy_epoch`, so anyone can carry the
+    /// already-approved deployment across the finish line — the protocol
+    /// keeps working even if the admin key goes silent after proposing.
+    pub fn execute_deploy_epoch(env: Env) -> Result<u32, NovaireFactoryError> {
+        let admin = storage::get_admin(&env)?;
+        let pending = storage::get_pending_deploy(&env)?;
+        let current_ledger = env.ledger().sequence();
+        if current_ledger < pending.eta {
+            return Err(NovaireFactoryError::TimelockNotElapsed);
+        }
+        storage::clear_pending_deploy(&env);
+        let params = pending.params;
+
+        if storage::epoch_exists_for_maturity(&env, params.maturity_ledger) {
+            return Err(NovaireFactoryError::EpochAlreadyExists);
         }
 
         let current_count = storage::get_epoch_count(&env);

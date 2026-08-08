@@ -1,7 +1,11 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::{contract, contractimpl, testutils::Address as _, Address, Env};
+use soroban_sdk::{
+    contract, contractimpl,
+    testutils::{Address as _, Ledger as _},
+    Address, Env,
+};
 
 // ==========================================
 // MOCK PROTOCOL CONTRACTS
@@ -306,6 +310,14 @@ struct Setup {
 fn setup() -> Setup {
     let env = Env::default();
     env.mock_all_auths();
+    // Deployment-timelock tests advance the ledger by DEPLOY_TIMELOCK_LEDGERS;
+    // raise entry TTLs up front so contracts registered later in the test
+    // don't get archived by the jump before deploy_epoch is executed.
+    env.ledger().set_max_entry_ttl(DEPLOY_TIMELOCK_LEDGERS * 10);
+    env.ledger()
+        .set_min_persistent_entry_ttl(DEPLOY_TIMELOCK_LEDGERS + 500);
+    env.ledger()
+        .set_min_temp_entry_ttl(DEPLOY_TIMELOCK_LEDGERS + 500);
 
     let admin = Address::generate(&env);
     let factory_id = env.register(Factory, ());
@@ -347,7 +359,17 @@ fn deploy_mock_epoch(s: &Setup, maturity: u32) -> Result<u32, NovaireFactoryErro
         maturity_engine,
     };
 
-    Ok(s.factory.try_deploy_epoch(&params).unwrap().unwrap())
+    Ok(deploy_via_timelock(s, &params))
+}
+
+/// Runs a full propose -> wait out the timelock -> execute cycle, panicking
+/// on failure the same way a direct `deploy_epoch` call used to.
+fn deploy_via_timelock(s: &Setup, params: &DeployEpochParams) -> u32 {
+    s.factory.propose_deploy_epoch(params);
+    s.env.ledger().with_mut(|li| {
+        li.sequence_number += DEPLOY_TIMELOCK_LEDGERS;
+    });
+    s.factory.execute_deploy_epoch()
 }
 
 // ==========================================
@@ -421,7 +443,7 @@ fn test_duplicate_maturity_panic() {
         grace_period_ledgers: 17280,
         maturity_engine: Address::generate(&s.env),
     };
-    s.factory.deploy_epoch(&params);
+    deploy_via_timelock(&s, &params);
 }
 
 #[test]
@@ -461,7 +483,7 @@ fn test_invalid_wiring_rejected() {
         grace_period_ledgers: 17280,
         maturity_engine: s.env.register(mock_maturity::MockMaturityEngine, ()),
     };
-    s.factory.deploy_epoch(&params);
+    deploy_via_timelock(&s, &params);
 }
 
 #[test]
@@ -524,7 +546,7 @@ fn test_wiring_mismatch_fails() {
         maturity_engine,
     };
 
-    s.factory.deploy_epoch(&params);
+    deploy_via_timelock(&s, &params);
 }
 
 #[test]
@@ -563,5 +585,69 @@ fn test_maturity_engine_wiring_mismatch_fails() {
         maturity_engine,
     };
 
-    s.factory.deploy_epoch(&params);
+    deploy_via_timelock(&s, &params);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #13)")]
+fn test_execute_deploy_epoch_before_timelock_elapses_rejected() {
+    let s = setup();
+    let env = &s.env;
+    let underlying = Address::generate(env);
+    let params = DeployEpochParams {
+        maturity_ledger: 100000,
+        underlying_token: underlying,
+        sy_wrapper: env.register(mock_sy::MockSyWrapper, ()),
+        vault: env.register(mock_vault::MockVault, ()),
+        blend_pool: Address::generate(env),
+        pt_token: env.register(mock_pt::MockPtToken, ()),
+        yt_token: env.register(mock_yt::MockYtToken, ()),
+        tokenizer: env.register(mock_tokenizer::MockTokenizer, ()),
+        marketplace: env.register(mock_market::MockMarketplace, ()),
+        intent_engine: env.register(mock_intent::MockIntentEngine, ()),
+        rollover_engine: env.register(mock_rollover::MockRolloverEngine, ()),
+        keeper: Address::generate(env),
+        grace_period_ledgers: 17280,
+        maturity_engine: env.register(mock_maturity::MockMaturityEngine, ()),
+    };
+
+    s.factory.propose_deploy_epoch(&params);
+    // No ledger advance: the timelock hasn't elapsed yet.
+    s.factory.execute_deploy_epoch();
+}
+
+#[test]
+fn test_execute_deploy_epoch_is_permissionless() {
+    // Phase 4: once the admin has proposed, anyone (not just the admin) can
+    // carry the deployment across the finish line after the timelock.
+    let s = setup();
+    let env = &s.env;
+    let underlying = Address::generate(env);
+    let params = DeployEpochParams {
+        maturity_ledger: 100000,
+        underlying_token: underlying,
+        sy_wrapper: env.register(mock_sy::MockSyWrapper, ()),
+        vault: env.register(mock_vault::MockVault, ()),
+        blend_pool: Address::generate(env),
+        pt_token: env.register(mock_pt::MockPtToken, ()),
+        yt_token: env.register(mock_yt::MockYtToken, ()),
+        tokenizer: env.register(mock_tokenizer::MockTokenizer, ()),
+        marketplace: env.register(mock_market::MockMarketplace, ()),
+        intent_engine: env.register(mock_intent::MockIntentEngine, ()),
+        rollover_engine: env.register(mock_rollover::MockRolloverEngine, ()),
+        keeper: Address::generate(env),
+        grace_period_ledgers: 17280,
+        maturity_engine: env.register(mock_maturity::MockMaturityEngine, ()),
+    };
+
+    s.factory.propose_deploy_epoch(&params);
+    env.ledger().with_mut(|li| {
+        li.sequence_number += DEPLOY_TIMELOCK_LEDGERS;
+    });
+
+    // Executed with no auths mocked for any caller at all - proves the call
+    // itself requires no authorization, unlike the old single-tx admin path.
+    env.set_auths(&[]);
+    let epoch_id = s.factory.execute_deploy_epoch();
+    assert_eq!(epoch_id, 1);
 }

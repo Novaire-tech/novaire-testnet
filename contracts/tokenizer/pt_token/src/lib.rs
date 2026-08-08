@@ -19,7 +19,6 @@ pub enum NovairePtError {
     MathUnderflow = 9,
     StorageMissing = 10,
     InvalidAdminTransfer = 11,
-    InvalidTokenizerTransfer = 12,
 }
 
 #[contracttype]
@@ -28,7 +27,6 @@ pub enum DataKey {
     Admin,
     PendingAdmin,
     Tokenizer,
-    PendingTokenizer,
     TotalSupply,
     Paused,
     Balance(Address),
@@ -253,10 +251,13 @@ impl PtToken {
     ///
     /// # Errors
     /// Returns `Unauthorized`, `Paused`, `InvalidAmount`, `InsufficientBalance`, or `MathUnderflow`.
+    /// Burns PT, called by the Tokenizer on `redeem_pt`.
+    ///
+    /// Note: Burn intentionally bypasses the `pause` mechanism (Phase 3:
+    /// pause must block new issuance, never trap users who are exiting).
     pub fn burn(env: Env, from: Address, amount: i128) -> Result<(), NovairePtError> {
         let tokenizer = storage::get_tokenizer(&env)?;
         tokenizer.require_auth();
-        storage::require_not_paused(&env)?;
 
         if amount <= 0 {
             return Err(NovairePtError::InvalidAmount);
@@ -437,44 +438,9 @@ impl PtToken {
         Ok(())
     }
 
-    /// Updates the trusted Tokenizer contract address.
-    /// Initiates a two-step update of the trusted Tokenizer contract address
-    /// (SEC-06: instant reassignment is a centralization risk on a
-    /// single-key admin, so this now requires a second confirming call).
-    pub fn set_tokenizer(env: Env, new_tokenizer: Address) -> Result<(), NovairePtError> {
-        let admin = storage::get_admin(&env)?;
-        admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingTokenizer, &new_tokenizer);
-
-        env.events().publish(
-            (Symbol::new(&env, "tokenizer_transfer_proposed"), admin),
-            new_tokenizer,
-        );
-        Ok(())
-    }
-
-    /// Confirms a pending Tokenizer address change, requiring admin auth again.
-    pub fn accept_tokenizer(env: Env) -> Result<(), NovairePtError> {
-        let admin = storage::get_admin(&env)?;
-        admin.require_auth();
-        let pending_tokenizer: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PendingTokenizer)
-            .ok_or(NovairePtError::InvalidTokenizerTransfer)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::Tokenizer, &pending_tokenizer);
-        env.storage().instance().remove(&DataKey::PendingTokenizer);
-
-        env.events().publish(
-            (Symbol::new(&env, "tokenizer_transferred"), admin),
-            pending_tokenizer,
-        );
-        Ok(())
-    }
+    // The Tokenizer address is immutable after `initialize` (Phase 2
+    // decentralization: no admin key, however authenticated, may redirect
+    // mint/burn authority once the contract is live).
 
     /// Initiates a two-step admin transfer to a new address.
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), NovairePtError> {

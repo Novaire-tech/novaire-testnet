@@ -281,13 +281,14 @@ impl Vault {
     ///
     /// # Errors
     /// Returns `Paused`, `InvalidAmount`, `InsufficientShares`, `StorageMissing`, or `MathUnderflow`.
+    /// Note: Withdraw intentionally bypasses the `pause` mechanism (Phase 3:
+    /// pause must block new deposits, never trap users who are exiting).
     pub fn withdraw(
         env: Env,
         withdrawer: Address,
         shares: i128,
     ) -> Result<i128, NovaireVaultError> {
         withdrawer.require_auth();
-        storage::require_not_paused(&env)?;
 
         if shares <= 0 {
             return Err(NovaireVaultError::InvalidAmount);
@@ -392,6 +393,8 @@ impl Vault {
     ///
     /// # Errors
     /// Returns `Paused`, `InvalidAmount`, `InsufficientShares`, `StorageMissing`, or `MathUnderflow`.
+    /// Note: Withdraw intentionally bypasses the `pause` mechanism (Phase 3:
+    /// pause must block new deposits, never trap users who are exiting).
     pub fn withdraw_for(
         env: Env,
         withdrawer: Address,
@@ -399,7 +402,6 @@ impl Vault {
         shares: i128,
     ) -> Result<i128, NovaireVaultError> {
         withdrawer.require_auth();
-        storage::require_not_paused(&env)?;
 
         if shares <= 0 {
             return Err(NovaireVaultError::InvalidAmount);
@@ -769,6 +771,44 @@ mod tests {
         let md = vault_client.metadata();
         assert_eq!(md.total_vault_shares, 1009);
         assert!(!md.is_paused);
+    }
+
+    #[test]
+    fn test_withdraw_succeeds_while_paused() {
+        let env = Env::default();
+        env.mock_all_auths_allowing_non_root_auth();
+
+        let admin = Address::generate(&env);
+        let alice = Address::generate(&env);
+
+        let token_admin = Address::generate(&env);
+        let token_contract = env
+            .register_stellar_asset_contract_v2(token_admin.clone())
+            .address();
+        let token_admin_client = token::StellarAssetClient::new(&env, &token_contract);
+        token_admin_client.mint(&alice, &2000);
+
+        let pool_id = env.register(MockBlendPool, ());
+        MockBlendPoolClient::new(&env, &pool_id).init(&token_contract);
+
+        let sy_contract_id = env.register(SyWrapper, ());
+        let sy_client = OriginalSyWrapperClient::new(&env, &sy_contract_id);
+        sy_client.initialize(&admin, &token_contract, &pool_id);
+
+        let vault_contract_id = env.register(Vault, ());
+        let vault_client = VaultClient::new(&env, &vault_contract_id);
+        vault_client.initialize(&admin, &sy_contract_id, &token_contract);
+
+        let alice_shares = vault_client.deposit(&alice, &2000);
+
+        // Pause blocks new deposits...
+        vault_client.pause();
+        assert!(vault_client.try_deposit(&alice, &10).is_err());
+
+        // ...but never blocks a user exiting with funds already in the vault.
+        let returned = vault_client.withdraw(&alice, &alice_shares);
+        assert!(returned > 0);
+        assert_eq!(vault_client.balance_of(&alice), 0);
     }
 
     #[test]

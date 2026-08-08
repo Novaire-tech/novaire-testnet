@@ -48,8 +48,6 @@ pub enum NovaireYtError {
     InvalidAdminTransfer = 11,
     PastMaturity = 12,
     IndexCannotDecrease = 13,
-    InvalidTokenizerTransfer = 14,
-    InvalidSyWrapperTransfer = 15,
 }
 
 #[contracttype]
@@ -58,9 +56,7 @@ pub enum DataKey {
     Admin,
     PendingAdmin,
     Tokenizer,
-    PendingTokenizer,
     SyWrapper,
-    PendingSyWrapper,
     TotalSupply,
     YieldIndex,
     MaturityLedger,
@@ -814,80 +810,10 @@ impl YtToken {
         Ok(())
     }
 
-    /// Initiates a two-step update of the trusted Tokenizer contract address
-    /// (SEC-06: instant reassignment is a centralization risk on a
-    /// single-key admin, so this now requires a second confirming call).
-    pub fn set_tokenizer(env: Env, new_tokenizer: Address) -> Result<(), NovaireYtError> {
-        let admin = storage::get_admin(&env)?;
-        admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingTokenizer, &new_tokenizer);
-
-        env.events().publish(
-            (Symbol::new(&env, "tokenizer_transfer_proposed"), admin),
-            new_tokenizer,
-        );
-        Ok(())
-    }
-
-    /// Confirms a pending Tokenizer address change, requiring admin auth again.
-    pub fn accept_tokenizer(env: Env) -> Result<(), NovaireYtError> {
-        let admin = storage::get_admin(&env)?;
-        admin.require_auth();
-        let pending_tokenizer: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PendingTokenizer)
-            .ok_or(NovaireYtError::InvalidTokenizerTransfer)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::Tokenizer, &pending_tokenizer);
-        env.storage().instance().remove(&DataKey::PendingTokenizer);
-
-        env.events().publish(
-            (Symbol::new(&env, "tokenizer_transferred"), admin),
-            pending_tokenizer,
-        );
-        Ok(())
-    }
-
-    /// Initiates a two-step update of the SY Wrapper address used for live
-    /// yield index refresh (SEC-06: see `set_tokenizer`).
-    pub fn set_sy_wrapper(env: Env, sy_wrapper: Address) -> Result<(), NovaireYtError> {
-        let admin = storage::get_admin(&env)?;
-        admin.require_auth();
-        env.storage()
-            .instance()
-            .set(&DataKey::PendingSyWrapper, &sy_wrapper);
-
-        env.events().publish(
-            (Symbol::new(&env, "sy_wrapper_transfer_proposed"), admin),
-            sy_wrapper,
-        );
-        Ok(())
-    }
-
-    /// Confirms a pending SY Wrapper address change, requiring admin auth again.
-    pub fn accept_sy_wrapper(env: Env) -> Result<(), NovaireYtError> {
-        let admin = storage::get_admin(&env)?;
-        admin.require_auth();
-        let pending_sy_wrapper: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::PendingSyWrapper)
-            .ok_or(NovaireYtError::InvalidSyWrapperTransfer)?;
-        env.storage()
-            .instance()
-            .set(&DataKey::SyWrapper, &pending_sy_wrapper);
-        env.storage().instance().remove(&DataKey::PendingSyWrapper);
-
-        env.events().publish(
-            (Symbol::new(&env, "sy_wrapper_set"), admin),
-            pending_sy_wrapper,
-        );
-        Ok(())
-    }
+    // Tokenizer and SY Wrapper addresses are immutable after `initialize`
+    // (Phase 2 decentralization: no admin key, however authenticated, may
+    // redirect mint/burn authority or the live yield-index source once the
+    // contract is live).
 
     /// Initiates a two-step admin transfer to a new address.
     pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), NovaireYtError> {

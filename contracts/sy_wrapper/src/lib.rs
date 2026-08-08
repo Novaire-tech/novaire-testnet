@@ -446,9 +446,10 @@ impl SyWrapper {
         Ok(shares_to_mint)
     }
 
+    /// Note: Withdraw intentionally bypasses the `pause` mechanism (Phase 3:
+    /// pause must block new deposits, never trap users who are exiting).
     pub fn withdraw(env: Env, from: Address, shares: i128) -> Result<i128, NovaireSyError> {
         from.require_auth();
-        storage::require_not_paused(&env)?;
 
         if shares <= 0 {
             return Err(NovaireSyError::InvalidAmount);
@@ -571,13 +572,19 @@ impl SyWrapper {
     /// source's actual balance drops below the recorded total, `refresh_rate` does nothing,
     /// the exchange rate stays permanently inflated, and `withdraw` keeps paying out against
     /// a rate that no longer reflects real backing — first withdrawers drain more than exists,
-    /// later ones hit a failed transfer. This function is the explicit, admin-gated escape
-    /// hatch for that case: it can only ever decrease `TotalUnderlying` down to the measured
-    /// balance, never below it, so it cannot be used to under-report backing beyond reality.
+    /// later ones hit a failed transfer. This function is the explicit escape hatch for that
+    /// case: it can only ever decrease `TotalUnderlying` down to the measured balance, never
+    /// below it, so it cannot be used to under-report backing beyond reality.
+    ///
+    /// Phase 5 decentralization: `actual_balance` below is derived entirely from on-chain
+    /// reads (this contract's own token balance plus the yield source's real position) —
+    /// nothing here is caller-supplied, so there is nothing for a caller to lie about. Callers
+    /// can only ever push `TotalUnderlying` toward ground truth, never away from it, and
+    /// repeated calls with no new loss are a no-op (see `test_mark_loss_repeated_calls_are_idempotent_between_losses`).
+    /// That makes an admin gate pure friction with no safety benefit: anyone can call this
+    /// permissionlessly, so a real loss gets realized (and withdrawals stop over-paying)
+    /// the moment it happens instead of waiting on a single key to notice and act.
     pub fn mark_loss(env: Env) -> Result<i128, NovaireSyError> {
-        let admin = storage::get_admin(&env)?;
-        admin.require_auth();
-
         let underlying_addr = storage::get_underlying(&env)?;
         let pool_id = storage::get_yield_source(&env)?;
         let actual_balance = total_backing(&env, &underlying_addr, &pool_id)?;

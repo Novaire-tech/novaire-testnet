@@ -378,50 +378,6 @@ fn test_accept_admin_without_pending_transfer_rejected() {
     s.client.accept_admin();
 }
 
-#[test]
-fn test_tokenizer_transfer_two_step() {
-    let s = setup();
-    let new_tokenizer = Address::generate(&s.env);
-    s.client.set_tokenizer(&new_tokenizer);
-    assert_eq!(s.client.metadata().tokenizer, s.tokenizer);
-    s.client.accept_tokenizer();
-    assert_eq!(s.client.metadata().tokenizer, new_tokenizer);
-}
-
-#[test]
-#[should_panic]
-fn test_accept_tokenizer_without_pending_transfer_rejected() {
-    let s = setup();
-    s.client.accept_tokenizer();
-}
-
-#[test]
-fn test_new_tokenizer_can_mint_after_acceptance() {
-    let s = setup();
-    let new_tokenizer = Address::generate(&s.env);
-    s.client.set_tokenizer(&new_tokenizer);
-    s.client.accept_tokenizer();
-    s.client.mint(&s.user1, &1000);
-    assert_eq!(s.client.balance(&s.user1), 1000);
-}
-
-#[test]
-#[should_panic]
-fn test_accept_sy_wrapper_without_pending_transfer_rejected() {
-    let s = setup();
-    s.client.accept_sy_wrapper();
-}
-
-#[test]
-fn test_sy_wrapper_transfer_two_step() {
-    // No direct getter for sy_wrapper on YtMetadata; this verifies the
-    // two-step propose/accept flow completes without error.
-    let s = setup();
-    let new_sy_wrapper = Address::generate(&s.env);
-    s.client.set_sy_wrapper(&new_sy_wrapper);
-    s.client.accept_sy_wrapper();
-}
-
 // ==========================================
 // MATURITY / EXPIRY
 // ==========================================
