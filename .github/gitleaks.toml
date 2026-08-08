@@ -16,6 +16,12 @@ regex = '''(?i)(mnemonic|seed[_ ]?phrase)\s*[:=]\s*["'][a-z]+( [a-z]+){10,23}["'
 tags = ["key", "mnemonic"]
 
 [allowlist]
+regexes = [
+  # Stellar public strkeys are not secrets: G = account, C = contract,
+  # M = muxed account, L = liquidity pool. Only S (secret seed) is sensitive
+  # and is caught by the stellar-secret-key rule above.
+  '''\b[GCML][A-Z2-7]{55}\b''',
+]
 paths = [
   '''.*\.lock$''',
   '''package-lock\.json$''',
