@@ -84,6 +84,16 @@ pub trait YtTokenInterface {
     fn mint(env: Env, to: Address, amount: i128);
     fn checkpoint_user(env: Env, user: Address) -> Result<(), soroban_sdk::Error>;
     fn claimable_yield(env: Env, user: Address) -> i128;
+    /// Re-entry-safe twin of `claimable_yield` for Tokenizer's own use — see
+    /// its doc comment in `yt_token::YtToken` for why Tokenizer must not call
+    /// the plain `claimable_yield` (it calls back into Tokenizer, which is
+    /// already on the stack during `claim_yield`).
+    fn claimable_yield_with_snapshot(
+        env: Env,
+        user: Address,
+        current_surplus_raw: i128,
+        last_surplus_raw: i128,
+    ) -> i128;
     fn reset_claimable(env: Env, user: Address);
     fn update_yield_index(env: Env, new_index: i128);
     fn total_supply(env: Env) -> i128;
@@ -376,7 +386,16 @@ impl Tokenizer {
         yt_client
             .try_checkpoint_user(&user)
             .map_err(|_| NovaireTokenizerError::MathUnderflow)?;
-        let claimable = yt_client.claimable_yield(&user);
+        // Use the snapshot-taking variant, not `claimable_yield`: Tokenizer's own
+        // frame is still active here, so YtToken must not call back into it (that
+        // cross-call would be rejected by Soroban as contract re-entry). We just
+        // refreshed the index above (`pre_claim_surplus_raw`, when Open/Matured)
+        // and reset `LastRecordedSurplus` to that same value, so passing it as
+        // both `current` and `last` reproduces exactly what the live-preview
+        // callback would have computed (delta 0 -> stored index unchanged).
+        let surplus_snapshot = pre_claim_surplus_raw.unwrap_or(0);
+        let claimable =
+            yt_client.claimable_yield_with_snapshot(&user, &surplus_snapshot, &surplus_snapshot);
 
         if claimable <= 0 {
             return Err(NovaireTokenizerError::InvalidAmount);

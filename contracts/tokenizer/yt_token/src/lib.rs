@@ -851,14 +851,14 @@ impl YtToken {
     /// H4 fix: Uses the live SY exchange rate (if available) to provide an accurate
     /// real-time view of pending yield, even when the stored global index is stale.
     pub fn claimable_yield(env: Env, user: Address) -> Result<i128, NovaireYtError> {
-        let accrued = storage::get_accrued_yield(&env, &user);
-        let user_index = storage::get_user_yield_index(&env, &user);
-        let balance = storage::get_balance(&env, &user);
-
         // Determine the best available index: a live, locally-computed preview of
         // the Tokenizer's reward-per-YT accumulator (via the YtToken-free
         // `get_surplus_snapshot` getter — see `TokenizerInterface`'s doc comment)
         // if we are pre-maturity, otherwise fall back to the stored global index.
+        //
+        // Only safe for callers where Tokenizer is NOT already on the call stack
+        // (e.g. a direct/external query). Tokenizer itself must use
+        // `claimable_yield_with_snapshot` instead — see that fn's doc comment.
         let effective_index = {
             let stored_index = storage::get_yield_index(&env);
             let is_expired = storage::is_expired(&env).unwrap_or(true);
@@ -880,6 +880,57 @@ impl YtToken {
                 }
             }
         };
+
+        Self::compute_claimable_from_index(&env, &user, effective_index)
+    }
+
+    /// Re-entry-safe twin of `claimable_yield`, for use by Tokenizer only.
+    ///
+    /// Tokenizer's `claim_yield` calls into YtToken (`checkpoint_user`/
+    /// `claimable_yield`) while its own frame is still active; if YtToken then
+    /// tried to call back into Tokenizer (as `claimable_yield`'s live-preview
+    /// branch does via `get_surplus_snapshot`), Soroban rejects it as contract
+    /// re-entry (`Error(Contract, #10)`) since Tokenizer would be invoked while
+    /// already on the stack.
+    ///
+    /// Tokenizer always calls `refresh_yield_index_and_get_surplus` (which
+    /// writes YtToken's stored `yield_index` and resets `LastRecordedSurplus`
+    /// to the current surplus) before reaching claim math, whenever the epoch
+    /// is pre-maturity. So by the time this is called, `current_surplus_raw`
+    /// and `last_surplus_raw` are identical (both equal the just-recorded
+    /// surplus) and `compute_local_index_preview` collapses to a no-op,
+    /// returning the just-refreshed stored index unchanged — the exact value
+    /// the callback path would have produced. Passing the snapshot explicitly
+    /// (rather than re-deriving it) keeps this a pure function of caller-
+    /// supplied state, eliminating the Tokenizer -> YtToken -> Tokenizer cycle.
+    pub fn claimable_yield_with_snapshot(
+        env: Env,
+        user: Address,
+        current_surplus_raw: i128,
+        last_surplus_raw: i128,
+    ) -> Result<i128, NovaireYtError> {
+        let effective_index = {
+            let stored_index = storage::get_yield_index(&env);
+            let is_expired = storage::is_expired(&env).unwrap_or(true);
+            if is_expired {
+                stored_index
+            } else {
+                Self::compute_local_index_preview(&env, current_surplus_raw, last_surplus_raw)
+                    .unwrap_or(stored_index)
+            }
+        };
+
+        Self::compute_claimable_from_index(&env, &user, effective_index)
+    }
+
+    fn compute_claimable_from_index(
+        env: &Env,
+        user: &Address,
+        effective_index: i128,
+    ) -> Result<i128, NovaireYtError> {
+        let accrued = storage::get_accrued_yield(env, user);
+        let user_index = storage::get_user_yield_index(env, user);
+        let balance = storage::get_balance(env, user);
 
         let mut pending = 0;
         if balance > 0 && effective_index > user_index {

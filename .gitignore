@@ -59,3 +59,6 @@ target/
 # local/generated data
 dev.db
 history-store.json
+
+# per-run debug bundles from contracts/integration_tests/src/budget_debug.rs
+artifacts/debug/
