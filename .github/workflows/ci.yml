@@ -113,6 +113,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-node
 
+      - name: prisma generate
+        if: matrix.workspace.name == 'indexer'
+        run: npx prisma generate --schema=../../prisma/schema.prisma
+        working-directory: apps/indexer
+
       - name: tsc --noEmit
         run: npx tsc --noEmit
         working-directory: ${{ matrix.workspace.path }}
