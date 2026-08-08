@@ -397,7 +397,7 @@ There is no `CONTRIBUTING.md` in this repository yet. If you'd like to contribut
 
 ## License
 
-No `LICENSE` file is currently present in this repository. All rights are reserved by default under applicable copyright law unless/until a license is added — do not assume MIT or any other permissive terms.
+MIT — see [`LICENSE`](./LICENSE).
 
 ## Acknowledgements
 

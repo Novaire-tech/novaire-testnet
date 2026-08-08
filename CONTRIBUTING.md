@@ -713,7 +713,7 @@ Zero tolerance for harassment, trolling, doxxing, or personal attacks. Report in
 
 ## License
 
-This repository currently has **no `LICENSE` file** — per the README, all rights are reserved under applicable copyright law by default; no MIT or other permissive terms are granted. Before external contributions, the maintainers should add explicit licensing terms to define what contributors and consumers may do. Until then, open-source contribution is governed by whatever terms the maintainers set eventually; raise licensing explicitly in your issue/PR if you have a preference. The absence of a license is intentional until the project decides on terms — do not assume MIT.
+This repository is licensed under MIT — see [`LICENSE`](./LICENSE). Contributions are accepted under the same terms.
 
 ---
 

@@ -1,3 +1,8 @@
 const { Keypair } = require('@stellar/stellar-sdk');
-const admin = Keypair.fromSecret('SC5LWQ4W2A7JQS7LUJ3FZSPU253MICTDQDNSYHTTNZWMWRRRXWRO65FC');
+const secret = process.env.ADMIN_SECRET;
+if (!secret) {
+  console.error('Set ADMIN_SECRET in the environment before running this script.');
+  process.exit(1);
+}
+const admin = Keypair.fromSecret(secret);
 console.log("Secret is for public key:", admin.publicKey());

@@ -1,0 +1,63 @@
+name: Deployment Validation
+
+on:
+  pull_request:
+    paths:
+      - "scripts/deployments.*.json"
+      - "scripts/deploy.ts"
+      - "scripts/bootstrap_liquidity.ts"
+      - ".github/scripts/validate-deployment.mjs"
+      - ".github/workflows/deployment-validation.yml"
+  push:
+    branches: [main, develop]
+    paths:
+      - "scripts/deployments.*.json"
+  workflow_dispatch:
+  workflow_call: {}
+
+permissions:
+  contents: read
+
+jobs:
+  validate-deployment-files:
+    name: Validate deployment manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate testnet deployment
+        if: hashFiles('scripts/deployments.testnet.json') != ''
+        run: node .github/scripts/validate-deployment.mjs scripts/deployments.testnet.json
+
+      - name: Validate mainnet deployment
+        if: hashFiles('scripts/deployments.mainnet.json') != ''
+        run: node .github/scripts/validate-deployment.mjs scripts/deployments.mainnet.json
+
+  validate-required-secrets:
+    name: Validate required secrets are configured
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required GitHub Secrets exist (not their values — presence only)
+        env:
+          HAS_RPC_URL: ${{ secrets.TESTNET_RPC != '' }}
+          HAS_NETWORK_PASSPHRASE: ${{ secrets.NETWORK_PASSPHRASE != '' }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ "$HAS_RPC_URL" == "true" ]] || missing+=("TESTNET_RPC")
+          [[ "$HAS_NETWORK_PASSPHRASE" == "true" ]] || missing+=("NETWORK_PASSPHRASE")
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::warning::Missing recommended secrets: ${missing[*]} (required before enabling verify:testnet / release workflows)"
+          fi
+
+  gate:
+    name: Deployment Validation gate
+    if: always()
+    needs: [validate-deployment-files, validate-required-secrets]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [[ "${{ needs.validate-deployment-files.result }}" == "failure" ]]; then
+            echo "::error::Deployment manifest validation failed."
+            exit 1
+          fi

@@ -1,0 +1,32 @@
+name: Code Quality
+
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  workflow_call: {}
+
+concurrency:
+  group: code-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Configurable code quality scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run scan (rules in .github/code-quality-rules.json)
+        run: node .github/scripts/scan-code-quality.mjs
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-quality-report
+          path: code-quality-report.md
+      - name: Post summary
+        if: always()
+        run: cat code-quality-report.md >> "$GITHUB_STEP_SUMMARY"

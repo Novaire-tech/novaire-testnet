@@ -1,0 +1,17 @@
+{
+  "rules": [
+    { "id": "todo",              "pattern": "\\bTODO\\b",                      "severity": "warn",  "description": "TODO marker" },
+    { "id": "fixme",             "pattern": "\\bFIXME\\b",                     "severity": "fail",  "description": "FIXME marker" },
+    { "id": "console-log",       "pattern": "console\\.log\\(",                "severity": "warn",  "description": "console.log left in code", "include": ["apps/**/*.ts", "apps/**/*.tsx", "scripts/**/*.ts"] },
+    { "id": "debugger",          "pattern": "\\bdebugger\\b",                  "severity": "fail",  "description": "debugger statement" },
+    { "id": "hardcoded-apy",     "pattern": "(hardcoded|fake|dummy)[_ ]?apy",  "severity": "fail",  "description": "hardcoded APY", "flags": "i" },
+    { "id": "hardcoded-price",   "pattern": "(hardcoded|fake|dummy)[_ ]?price","severity": "fail",  "description": "hardcoded price", "flags": "i" },
+    { "id": "fallback-price",    "pattern": "fallback[_ ]?price",              "severity": "fail",  "description": "fallback price", "flags": "i" },
+    { "id": "unavailable-testnet","pattern": "unavailable on testnet",         "severity": "warn",  "description": "testnet-unavailable stub", "flags": "i" },
+    { "id": "temporary-code",    "pattern": "\\btemporary\\b.{0,20}\\b(code|fix|hack)\\b", "severity": "warn", "description": "temporary code marker", "flags": "i" },
+    { "id": "mock-value",        "pattern": "\\bmock[_ ]?(value|data|price|apy)\\b", "severity": "fail", "description": "mock value in non-test code", "flags": "i" }
+  ],
+  "excludeDirs": ["node_modules", ".git", "target", ".next", "dist", "build", "archive", "playwright-report", "test-results", "bindings"],
+  "excludeFiles": ["*.test.ts", "*.test.tsx", "*.spec.ts", "*.lock", "package-lock.json", "code-quality-rules.json", "scan-code-quality.mjs"],
+  "excludePaths": ["e2e/", "docs/", "CHANGELOG.md", "RELEASE_NOTES.md", "CONTRIBUTING.md", "SECURITY.md", "SECURITY_AUDIT.md", ".github/scripts/", ".github/actions/"]
+}

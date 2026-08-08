@@ -10,7 +10,11 @@ async function main() {
     console.log("Starting Mint Audit...");
     
     // Setup Admin Keypair
-    const user = Keypair.fromSecret('SAVGFMYOMGLY2VSKO3H63GAVMENVELZZVKEDLRT6KKRLVCBROB42KUSZ');
+    const userSecret = process.env.ADMIN_SECRET;
+    if (!userSecret) {
+        throw new Error('Set ADMIN_SECRET in the environment before running this script.');
+    }
+    const user = Keypair.fromSecret(userSecret);
     
     const clientOptions = {
         rpcUrl: RPC_URL,

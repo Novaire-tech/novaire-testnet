@@ -1,0 +1,24 @@
+title = "Novaire gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "stellar-secret-key"
+description = "Stellar/Soroban secret seed (S...)"
+regex = '''\bS[A-Z0-9]{55}\b'''
+tags = ["key", "stellar"]
+
+[[rules]]
+id = "bip39-mnemonic"
+description = "Hardcoded BIP39-shaped mnemonic/seed phrase"
+regex = '''(?i)(mnemonic|seed[_ ]?phrase)\s*[:=]\s*["'][a-z]+( [a-z]+){10,23}["']'''
+tags = ["key", "mnemonic"]
+
+[allowlist]
+paths = [
+  '''.*\.lock$''',
+  '''package-lock\.json$''',
+  '''\.env\.example$''',
+  '''docs/.*\.md$''',
+]

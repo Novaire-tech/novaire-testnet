@@ -1,0 +1,108 @@
+name: Protocol Integrity
+
+on:
+  pull_request:
+    paths:
+      - "contracts/**"
+      - ".github/workflows/protocol-integrity.yml"
+  push:
+    branches: [main, develop]
+    paths:
+      - "contracts/**"
+  workflow_call: {}
+
+concurrency:
+  group: protocol-integrity-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Any invariant violation must abort the whole job, not just fail a single test.
+  RUST_BACKTRACE: 1
+
+jobs:
+  invariants:
+    name: Invariant suite (${{ matrix.suite.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        suite:
+          - { name: "PT/YT accounting",      filter: "pt_yt" }
+          - { name: "Vault accounting",      filter: "vault" }
+          - { name: "Tokenization",          filter: "tokeniz" }
+          - { name: "Untokenization",        filter: "untokeniz" }
+          - { name: "Redemption",            filter: "redeem" }
+          - { name: "Settlement",            filter: "settle" }
+          - { name: "b_rate accounting",     filter: "rate" }
+          - { name: "Yield / APY",           filter: "yield" }
+          - { name: "Full invariant module", filter: "invariant" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: ""
+          cache-key-prefix: protocol-${{ matrix.suite.filter }}
+
+      - name: cargo test -p integration_tests (${{ matrix.suite.filter }})
+        run: cargo test -p integration_tests ${{ matrix.suite.filter }} --all-features -- --nocapture
+        working-directory: contracts
+
+  full-workspace-tests:
+    name: Full contract workspace test suite
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-rust
+        with:
+          components: ""
+          cache-key-prefix: protocol-full
+
+      - name: cargo test --workspace (fail on first invariant break)
+        run: cargo test --workspace --all-features -- --nocapture
+        working-directory: contracts
+
+      - name: Scan test output for accounting anomalies (NaN / Infinity / duplicate accounting)
+        run: |
+          set -euo pipefail
+          cargo test --workspace --all-features -- --nocapture 2>&1 | tee /tmp/test-output.log
+          if grep -Eiq '(^|[^A-Za-z])(nan|inf|infinity)([^A-Za-z]|$)' /tmp/test-output.log; then
+            echo "::error::Detected NaN/Infinity in test output — accounting invariant violation."
+            exit 1
+          fi
+        working-directory: contracts
+
+      - name: Upload test log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: protocol-integrity-log
+          path: /tmp/test-output.log
+          if-no-files-found: ignore
+
+  portfolio-and-allocation:
+    name: Portfolio accounting / allocation == 100%
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-node
+
+      - name: Run portfolioService/protocolService accounting tests
+        run: npx vitest run src/services/protocolService.test.ts src/utils/yield.test.ts
+        working-directory: apps/web
+
+  gate:
+    name: Protocol Integrity gate
+    if: always()
+    needs: [invariants, full-workspace-tests, portfolio-and-allocation]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail on any invariant violation
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then
+            echo "::error::Protocol invariant violation detected. See docs/PROTOCOL_INVARIANTS.md."
+            exit 1
+          fi
