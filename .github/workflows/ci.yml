@@ -22,7 +22,7 @@ jobs:
     name: Rust / fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           cache-key-prefix: fmt-clippy
@@ -37,7 +37,7 @@ jobs:
     name: Rust / test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           cache-key-prefix: test
@@ -56,7 +56,7 @@ jobs:
     name: Rust / cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           components: ""
@@ -83,7 +83,7 @@ jobs:
           - { crate: yt_token, path: tokenizer/yt_token }
           - { crate: vault, path: vault }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           components: ""
@@ -110,7 +110,7 @@ jobs:
           - { name: indexer, path: apps/indexer }
           - { name: scripts, path: scripts }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-node
 
       - name: prisma generate
