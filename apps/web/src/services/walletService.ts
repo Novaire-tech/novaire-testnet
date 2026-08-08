@@ -9,6 +9,17 @@ import { NETWORK } from '../config/contracts';
 const TARGET_NETWORK = NETWORK === 'MAINNET' ? 'PUBLIC' : 'TESTNET';
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
+/** Soroban clients sometimes return Result types wrapped as { unwrap() } / { ok } / { value }. */
+function unwrapContractResult(raw: unknown): unknown {
+  if (typeof raw === 'object' && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.unwrap === 'function') return (obj.unwrap as () => unknown)();
+    if ('ok' in obj) return obj.ok;
+    if ('value' in obj) return obj.value;
+  }
+  return raw;
+}
+
 export interface WalletAssetBalance {
   assetCode: string;
   issuer: string | null;
@@ -106,8 +117,8 @@ export class WalletService {
         this.setState({ address, network, isConnected: true, error: null });
         await this.refreshBalances();
       }
-    } catch (e: any) {
-      this.setState({ error: e.message });
+    } catch (e) {
+      this.setState({ error: e instanceof Error ? e.message : 'Failed to initialize wallet' });
     } finally {
       this.setState({ loading: false });
     }
@@ -162,12 +173,12 @@ export class WalletService {
       this.refreshBalances().catch(err => {
         if (IS_DEV) console.error('Background balance refresh failed:', err);
       });
-    } catch (error: any) {
+    } catch (error) {
       if (IS_DEV) console.error("7. Caught error in WalletService.connectWallet:", error);
       this.setState({
         address: null,
         network: null,
-        error: error.message || 'Failed to connect wallet',
+        error: error instanceof Error ? error.message : 'Failed to connect wallet',
         isConnected: false
       });
     } finally {
@@ -296,12 +307,7 @@ export class WalletService {
           ]);
 
         const ptTx = await withTimeout(ptClient.balance({ id: address }), 10000);
-        let rawPt = ptTx.result;
-        if (rawPt && typeof rawPt === 'object') {
-          if (typeof (rawPt as any).unwrap === 'function') rawPt = (rawPt as any).unwrap();
-          else if ('ok' in rawPt) rawPt = (rawPt as any).ok;
-          else if ('value' in rawPt) rawPt = (rawPt as any).value;
-        }
+        const rawPt = unwrapContractResult(ptTx.result);
 
         if (rawPt !== undefined) {
           balances.push({
@@ -313,12 +319,7 @@ export class WalletService {
         }
 
         const ytTx = await withTimeout(ytClient.balance({ id: address }), 10000);
-        let rawYt = ytTx.result;
-        if (rawYt && typeof rawYt === 'object') {
-          if (typeof (rawYt as any).unwrap === 'function') rawYt = (rawYt as any).unwrap();
-          else if ('ok' in rawYt) rawYt = (rawYt as any).ok;
-          else if ('value' in rawYt) rawYt = (rawYt as any).value;
-        }
+        const rawYt = unwrapContractResult(ytTx.result);
 
         if (rawYt !== undefined) {
           balances.push({
@@ -334,10 +335,10 @@ export class WalletService {
 
       console.log("Parsed balances output:", balances);
       this.setState({ balances });
-    } catch (error: any) {
+    } catch (error) {
       console.error('Failed to fetch wallet balances:', error);
       // DO NOT clear balances on refresh error to prevent portfolio value collapse
-      this.setState({ error: error.message || 'Failed to refresh balances' });
+      this.setState({ error: error instanceof Error ? error.message : 'Failed to refresh balances' });
     }
   }
 

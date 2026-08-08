@@ -33,7 +33,7 @@ const MOCK_ADDRESS = 'GBDTV2XZIDNAIBJBADA5QMVRMY5RVPQ7IFKVOWY2BKFDXCDWLPIPRT7I';
 async function mockFreighterWallet(page: Page) {
   await page.addInitScript((address) => {
     // Fast-path flag some freighter-api versions check before falling back to postMessage.
-    (window as any).freighter = true;
+    (window as unknown as { freighter: boolean }).freighter = true;
     window.addEventListener('message', (event) => {
       const data = (event as MessageEvent).data;
       if (!data || data.source !== 'FREIGHTER_EXTERNAL_MSG_REQUEST') return;
@@ -91,7 +91,7 @@ async function mockHorizonBalance(page: Page, xlmBalance = '1000.0000000') {
 // Every Soroban RPC read (getLatestLedger, simulateTransaction, etc.) fails
 // fast with a deterministic JSON-RPC error, and every request is recorded so
 // tests can assert *which* contract calls were attempted.
-function mockSorobanRpc(page: Page, requests: { method: string; body: any }[]) {
+function mockSorobanRpc(page: Page, requests: { method: string; body: unknown }[]) {
   return page.route(RPC_URL, async (route) => {
     const body = route.request().postDataJSON();
     requests.push({ method: body.method, body });
@@ -109,7 +109,7 @@ function mockSorobanRpc(page: Page, requests: { method: string; body: any }[]) {
 
 test.describe('Deposit flow (XLM -> Blend-backed vault)', () => {
   test('shows the Blend-routed XLM vault with its live APY stats', async ({ page }) => {
-    const rpcRequests: { method: string; body: any }[] = [];
+    const rpcRequests: { method: string; body: unknown }[] = [];
     await mockSorobanRpc(page, rpcRequests);
 
     const modal = await openDepositModal(page);
@@ -129,7 +129,7 @@ test.describe('Deposit flow (XLM -> Blend-backed vault)', () => {
   });
 
   test('recomputes the PT redemption estimate as the deposit amount changes', async ({ page }) => {
-    const rpcRequests: { method: string; body: any }[] = [];
+    const rpcRequests: { method: string; body: unknown }[] = [];
     await mockSorobanRpc(page, rpcRequests);
 
     const modal = await openDepositModal(page);
@@ -143,7 +143,7 @@ test.describe('Deposit flow (XLM -> Blend-backed vault)', () => {
   });
 
   test('prompts wallet connection before any deposit is attempted', async ({ page }) => {
-    const rpcRequests: { method: string; body: any }[] = [];
+    const rpcRequests: { method: string; body: unknown }[] = [];
     await mockSorobanRpc(page, rpcRequests);
 
     const modal = await openDepositModal(page);
@@ -164,7 +164,7 @@ test.describe('Deposit flow (XLM -> Blend-backed vault)', () => {
   test('submits the deposit against the Intent Engine contract when a wallet is connected', async ({ page }) => {
     await mockFreighterWallet(page);
     await mockHorizonBalance(page);
-    const rpcRequests: { method: string; body: any }[] = [];
+    const rpcRequests: { method: string; body: unknown }[] = [];
     await mockSorobanRpc(page, rpcRequests);
 
     const modal = await openDepositModal(page);

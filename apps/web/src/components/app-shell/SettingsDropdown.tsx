@@ -19,7 +19,8 @@ export function SettingsDropdown({ isOpen, onClose }: SettingsDropdownProps) {
       const savedNotifs = localStorage.getItem('novaire_notifications');
       if (savedNotifs) {
         try {
-          setNotifications(JSON.parse(savedNotifs));
+          const parsed = JSON.parse(savedNotifs);
+          queueMicrotask(() => setNotifications(parsed));
         } catch {
           // Ignore
         }
@@ -80,7 +81,7 @@ export function SettingsDropdown({ isOpen, onClose }: SettingsDropdownProps) {
                   <div key={key} className="flex items-center justify-between">
                     <span className="text-sm text-[#9A9A9A]">{label}</span>
                     <button
-                      onClick={() => toggleNotification(key as any)}
+                      onClick={() => toggleNotification(key as keyof typeof notifications)}
                       className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
                         notifications[key as keyof typeof notifications] ? 'bg-[#3ECF8E]' : 'bg-white/10'
                       }`}

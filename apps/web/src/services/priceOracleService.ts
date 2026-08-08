@@ -24,21 +24,22 @@ export class PriceOracleService {
   /**
    * Internal method to fetch with retries
    */
-  private static async fetchWithRetry(url: string, retries = this.MAX_RETRIES): Promise<any> {
+  private static async fetchWithRetry<T>(url: string, retries = this.MAX_RETRIES): Promise<T> {
     for (let i = 0; i < retries; i++) {
       try {
         const response = await fetch(url);
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
-        const data = await response.json();
+        const data: T = await response.json();
         return data;
-      } catch (error: any) {
+      } catch (error) {
         if (i === retries - 1) throw error;
         // Exponential backoff
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
       }
     }
+    throw new Error('fetchWithRetry: exhausted retries');
   }
 
   /**
@@ -53,7 +54,7 @@ export class PriceOracleService {
 
     try {
       const baseUrl = typeof window === 'undefined' ? 'http://localhost:3000' : '';
-      const data = await this.fetchWithRetry(`${baseUrl}/api/prices`);
+      const data = await this.fetchWithRetry<CoinDcxTicker[]>(`${baseUrl}/api/prices`);
       this.cachedData = data;
       this.cacheTimestamp = now;
       

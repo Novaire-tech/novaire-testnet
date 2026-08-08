@@ -4,11 +4,12 @@ import { motion } from 'framer-motion';
 import { usePrices } from '../../hooks/usePrices';
 import { useState, useEffect } from 'react';
 import { YieldService } from '../../services/yieldService';
+import type { Vault } from '../../types';
 import { ProtocolService, ProtocolState } from '../../services/protocolService';
 
 export function MarketStatisticsPanel() {
   const { prices, loading: pricesLoading } = usePrices();
-  const [vaults, setVaults] = useState<any[]>([]);
+  const [vaults, setVaults] = useState<Vault[]>([]);
   const [protocolState, setProtocolState] = useState<ProtocolState | null>(null);
 
   useEffect(() => {

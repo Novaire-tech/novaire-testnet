@@ -1,21 +1,17 @@
-import { useState, useEffect } from 'react';
-import { NotificationService, AppNotification } from '../services/notificationService';
+import { useSyncExternalStore } from 'react';
+import { NotificationService, NotificationCategory } from '../services/notificationService';
+
+function subscribe(callback: () => void) {
+  window.addEventListener('novaire:notifications_updated', callback);
+  return () => window.removeEventListener('novaire:notifications_updated', callback);
+}
 
 export function useNotifications() {
-  const [notifications, setNotifications] = useState<AppNotification[]>([]);
-
-  useEffect(() => {
-    // Initial load
-    setNotifications(NotificationService.getNotifications());
-
-    // Listen for updates
-    const handleUpdate = () => {
-      setNotifications(NotificationService.getNotifications());
-    };
-
-    window.addEventListener('novaire:notifications_updated', handleUpdate);
-    return () => window.removeEventListener('novaire:notifications_updated', handleUpdate);
-  }, []);
+  const notifications = useSyncExternalStore(
+    subscribe,
+    NotificationService.getNotifications.bind(NotificationService),
+    () => []
+  );
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -24,6 +20,6 @@ export function useNotifications() {
     unreadCount,
     markAllAsRead: () => NotificationService.markAllAsRead(),
     clearAll: () => NotificationService.clearAll(),
-    addNotification: (category: any, title: string, desc: string) => NotificationService.addNotification(category, title, desc)
+    addNotification: (category: NotificationCategory, title: string, desc: string) => NotificationService.addNotification(category, title, desc)
   };
 }

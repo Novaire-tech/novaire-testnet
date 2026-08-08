@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import { Keypair, rpc } from '@stellar/stellar-sdk';
 import StellarHDWallet from 'stellar-hd-wallet';
 import { launchWithFreighter } from './fixtures/freighter-extension';
@@ -44,6 +44,11 @@ import { recordResult, resetResults, writeReport, type WalletResult, type Metric
  *     wallet passed via E2E_YIELD_WALLET_SECRET).
  */
 
+interface TxSendResult {
+  sendTransactionResponse?: { hash?: string };
+  getTransactionResponse?: { status?: string };
+}
+
 function toMnemonicWallet(): { wallet: Wallet; mnemonic: string } {
   const mnemonic = StellarHDWallet.generateMnemonic({ entropyBits: 128 });
   const hd = StellarHDWallet.fromMnemonic(mnemonic);
@@ -57,7 +62,7 @@ async function fundedMnemonicWallet(): Promise<{ wallet: Wallet; mnemonic: strin
   return { wallet, mnemonic };
 }
 
-async function connectAndOpenDashboard(page: Page, context: any, mnemonic: string) {
+async function connectAndOpenDashboard(page: Page, context: BrowserContext, mnemonic: string) {
   await onboardFreighter(context, { mnemonic });
   await page.goto('/app');
   await approveConnection(context, async () => {
@@ -158,7 +163,7 @@ test.describe('Portfolio E2E — real Stellar Testnet', () => {
     };
     let context: Awaited<ReturnType<typeof launchWithFreighter>> | undefined;
     try {
-      const depositRes: any = await depositVault(wallet, 50);
+      const depositRes: TxSendResult = await depositVault(wallet, 50);
       result.transactions.push({
         action: 'vault.deposit(50 XLM)',
         hash: depositRes?.sendTransactionResponse?.hash,
@@ -213,11 +218,11 @@ test.describe('Portfolio E2E — real Stellar Testnet', () => {
     };
     let context: Awaited<ReturnType<typeof launchWithFreighter>> | undefined;
     try {
-      const depositRes: any = await depositVault(wallet, 30);
+      const depositRes: TxSendResult = await depositVault(wallet, 30);
       result.transactions.push({ action: 'vault.deposit(30 XLM)', hash: depositRes?.sendTransactionResponse?.hash, status: 'submitted' });
       if (depositRes?.sendTransactionResponse?.hash) await waitForTransaction(depositRes.sendTransactionResponse.hash, server);
 
-      const mintRes: any = await mintPTYT(wallet, 30);
+      const mintRes: TxSendResult = await mintPTYT(wallet, 30);
       result.transactions.push({ action: 'tokenizer.mint_pt_yt(30 shares)', hash: mintRes?.sendTransactionResponse?.hash, status: 'submitted' });
       if (mintRes?.sendTransactionResponse?.hash) await waitForTransaction(mintRes.sendTransactionResponse.hash, server);
 
@@ -263,18 +268,18 @@ test.describe('Portfolio E2E — real Stellar Testnet', () => {
     };
     let context: Awaited<ReturnType<typeof launchWithFreighter>> | undefined;
     try {
-      const depositRes: any = await depositVault(wallet, 40);
+      const depositRes: TxSendResult = await depositVault(wallet, 40);
       result.transactions.push({ action: 'vault.deposit(40 XLM, untokenized)', hash: depositRes?.sendTransactionResponse?.hash, status: 'submitted' });
       if (depositRes?.sendTransactionResponse?.hash) await waitForTransaction(depositRes.sendTransactionResponse.hash, server);
 
       let boughtPt = false;
       try {
-        const buyRes: any = await buyPT(wallet, 10);
+        const buyRes: TxSendResult = await buyPT(wallet, 10);
         result.transactions.push({ action: 'marketplace.swap_underlying_for_pt(10 XLM)', hash: buyRes?.sendTransactionResponse?.hash, status: 'submitted' });
         if (buyRes?.sendTransactionResponse?.hash) await waitForTransaction(buyRes.sendTransactionResponse.hash, server);
         boughtPt = true;
-      } catch (e: any) {
-        result.notes = `Marketplace PT purchase skipped: AMM likely has no seeded liquidity on this epoch (${e.message || e}).`;
+      } catch (e) {
+        result.notes = `Marketplace PT purchase skipped: AMM likely has no seeded liquidity on this epoch (${e instanceof Error ? e.message : e}).`;
       }
 
       test.skip(!boughtPt, result.notes);

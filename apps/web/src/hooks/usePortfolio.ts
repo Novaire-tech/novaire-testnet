@@ -10,8 +10,10 @@ export interface UsePortfolioResult {
   refresh: () => Promise<void>;
 }
 
+type PortfolioWithInstanceId = PortfolioSummary & { _instanceId?: string };
+
 // ─── Global State for Single Source of Truth ──────────────────────
-let globalPortfolio: PortfolioSummary | null = null;
+let globalPortfolio: PortfolioWithInstanceId | null = null;
 let globalLoading: boolean = true;
 let globalError: string | null = null;
 let listeners: Array<() => void> = [];
@@ -37,15 +39,15 @@ const fetchGlobalPortfolio = async () => {
   notifyListeners();
   
   try {
-    const data = await PortfolioService.getPortfolio();
+    const data: PortfolioWithInstanceId = await PortfolioService.getPortfolio();
     console.log("[usePortfolio] Portfolio fetched:", data);
     if (data.error) {
       globalError = data.error;
     }
-    
+
     // Attach a random ID to verify object identity across components
-    if (data && !(data as any)._instanceId) {
-      (data as any)._instanceId = Math.random().toString(36).substring(7);
+    if (data && !data._instanceId) {
+      data._instanceId = Math.random().toString(36).substring(7);
     }
     
     if (data && data.metrics && data.metrics.totalClaimableYieldUsd > 0) {
@@ -59,9 +61,9 @@ const fetchGlobalPortfolio = async () => {
     }
     
     globalPortfolio = data;
-  } catch (err: any) {
+  } catch (err) {
     console.error("[usePortfolio] Fetch Error:", err);
-    globalError = err.message || 'An unexpected error occurred while fetching the portfolio';
+    globalError = err instanceof Error ? err.message : 'An unexpected error occurred while fetching the portfolio';
   } finally {
     isFetching = false;
     
@@ -101,7 +103,7 @@ export const usePortfolio = (): UsePortfolioResult => {
     };
   }, []);
 
-  console.log(`[usePortfolio hook return] loading=${globalLoading}, instanceId=${(globalPortfolio as any)?._instanceId}`);
+  console.log(`[usePortfolio hook return] loading=${globalLoading}, instanceId=${globalPortfolio?._instanceId}`);
   
   return {
     portfolio: globalPortfolio,

@@ -34,7 +34,7 @@ export class MarketService {
   /**
    * Internal method to fetch with retries
    */
-  private static async fetchWithRetry(url: string, retries = this.MAX_RETRIES): Promise<any> {
+  private static async fetchWithRetry<T>(url: string, retries = this.MAX_RETRIES): Promise<T> {
     for (let i = 0; i < retries; i++) {
       try {
         const response = await fetch(url);
@@ -48,6 +48,7 @@ export class MarketService {
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
       }
     }
+    throw new Error('fetchWithRetry: exhausted retries');
   }
 
   /**
@@ -61,7 +62,7 @@ export class MarketService {
     }
 
     try {
-      const data = await this.fetchWithRetry('/api/markets');
+      const data = await this.fetchWithRetry<CoinDcxMarketDetails[]>('/api/markets');
       this.cachedData = data;
       this.cacheTimestamp = now;
       return data;

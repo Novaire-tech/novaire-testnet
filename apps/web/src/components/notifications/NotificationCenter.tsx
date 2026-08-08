@@ -27,6 +27,7 @@ export function NotificationCenter({ isOpen, onClose }: NotificationCenterProps)
   }, [isOpen, onClose]);
 
   const formatTimeAgo = (timestamp: number) => {
+    // eslint-disable-next-line react-hooks/purity -- display-only relative time label; staleness is harmless
     const seconds = Math.floor((Date.now() - timestamp) / 1000);
     if (seconds < 60) return 'Just now';
     const minutes = Math.floor(seconds / 60);

@@ -3,9 +3,10 @@
 import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { YieldService } from '../../services/yieldService';
+import type { Vault } from '../../types';
 
 export function VaultAnalytics() {
-  const [vaults, setVaults] = useState<any[]>([]);
+  const [vaults, setVaults] = useState<Vault[]>([]);
 
   useEffect(() => {
     YieldService.getVaults().then(setVaults).catch(console.error);
@@ -30,6 +31,7 @@ export function VaultAnalytics() {
   }
 
   const maturityDate = new Date(activeVault.maturityDate);
+  // eslint-disable-next-line react-hooks/purity -- display-only days-remaining countdown; staleness is harmless
   const daysRemaining = Math.max(0, Math.ceil((maturityDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
 
   return (

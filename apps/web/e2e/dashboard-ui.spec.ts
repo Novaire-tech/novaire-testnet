@@ -14,7 +14,7 @@ const MOCK_ADDRESS = 'GBDTV2XZIDNAIBJBADA5QMVRMY5RVPQ7IFKVOWY2BKFDXCDWLPIPRT7I';
 
 async function mockFreighterWallet(page: Page) {
   await page.addInitScript((address) => {
-    (window as any).freighter = true;
+    (window as unknown as { freighter: boolean }).freighter = true;
     window.addEventListener('message', (event) => {
       const data = (event as MessageEvent).data;
       if (!data || data.source !== 'FREIGHTER_EXTERNAL_MSG_REQUEST') return;

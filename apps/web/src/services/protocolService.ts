@@ -20,11 +20,12 @@ export class ProtocolService {
   /**
    * Helper to unwrap Soroban Result types
    */
-  private static unwrapResult(rawResult: any): any {
+  private static unwrapResult(rawResult: unknown): unknown {
     if (rawResult !== undefined && typeof rawResult === 'object' && rawResult !== null) {
-      if (typeof rawResult.unwrap === 'function') return rawResult.unwrap();
-      if ('ok' in rawResult) return rawResult.ok;
-      if ('value' in rawResult) return rawResult.value;
+      const obj = rawResult as Record<string, unknown>;
+      if (typeof obj.unwrap === 'function') return (obj.unwrap as () => unknown)();
+      if ('ok' in obj) return obj.ok;
+      if ('value' in obj) return obj.value;
     }
     return rawResult;
   }

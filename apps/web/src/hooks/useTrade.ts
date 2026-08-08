@@ -28,22 +28,23 @@ export interface TradeQuote {
   warning?: string;
 }
 
-function parseTradeError(e: any): string {
+function parseTradeError(e: unknown): string {
   // Structured SDK error parsing
-  if (e && typeof e === 'object' && e.message) {
-    if (e.message === NovaireMarketError[8].message) return 'Pool liquidity is too low for this trade size.';
-    if (e.message === NovaireMarketError[5].message) return 'The pool does not currently have enough liquidity.';
-    if (e.message === NovaireMarketError[6].message) return 'Price moved beyond your slippage tolerance.';
-    if (e.message === NovaireMarketError[4].message) return 'This market has matured.';
-    if (e.message === NovaireMarketError[3].message) return 'Authorization required.';
-    if (e.message === NovaireMarketError[7].message) return 'Please enter a valid amount.';
-    if (e.message === NovaireMarketError[11].message) return 'YT has no remaining value because PT has reached face value.';
-    if (e.message === NovaireMarketError[9].message) return 'Internal protocol state unavailable.';
-    if (e.message === NovaireMarketError[10].message) return 'Protocol invariant check failed.';
+  if (e && typeof e === 'object' && 'message' in e) {
+    const message = (e as { message: unknown }).message;
+    if (message === NovaireMarketError[8].message) return 'Pool liquidity is too low for this trade size.';
+    if (message === NovaireMarketError[5].message) return 'The pool does not currently have enough liquidity.';
+    if (message === NovaireMarketError[6].message) return 'Price moved beyond your slippage tolerance.';
+    if (message === NovaireMarketError[4].message) return 'This market has matured.';
+    if (message === NovaireMarketError[3].message) return 'Authorization required.';
+    if (message === NovaireMarketError[7].message) return 'Please enter a valid amount.';
+    if (message === NovaireMarketError[11].message) return 'YT has no remaining value because PT has reached face value.';
+    if (message === NovaireMarketError[9].message) return 'Internal protocol state unavailable.';
+    if (message === NovaireMarketError[10].message) return 'Protocol invariant check failed.';
   }
 
   // Fallback for Host errors and unmapped network errors where structured info is unavailable
-  const msg = e?.message || String(e);
+  const msg = (e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : null) || String(e);
   
   if (msg.includes('Insufficient balance') || (msg.includes('HostError') && (msg.includes('balance') || msg.includes('transfer') || msg.includes('underfunded')))) return 'Insufficient balance.';
   if (msg.includes('timeout') || msg.includes('Network error') || msg.includes('fetch') || msg.includes('Failed to fetch') || msg.includes('Simulation failed')) return 'Network error.';
@@ -52,13 +53,14 @@ function parseTradeError(e: any): string {
   return 'Unexpected protocol error.';
 }
 
-function unwrapResult(result: any): bigint | null {
+function unwrapResult(result: unknown): bigint | null {
   if (result === undefined || result === null) return null;
   if (typeof result === 'bigint' || typeof result === 'number') return BigInt(result);
   if (typeof result === 'object') {
-    if (typeof result.unwrap === 'function') {
-      const unwrapped = result.unwrap();
-      return typeof unwrapped === 'bigint' ? unwrapped : BigInt(unwrapped);
+    const obj = result as Record<string, unknown>;
+    if (typeof obj.unwrap === 'function') {
+      const unwrapped = (obj.unwrap as () => unknown)();
+      return typeof unwrapped === 'bigint' ? unwrapped : BigInt(unwrapped as string | number | bigint);
     }
   }
   return null;
@@ -114,12 +116,13 @@ export function useTrade() {
 
       const reservesTx = await client.get_reserves();
       let ptRes = 0, ytRes = 0, undRes = 0;
-      const rawReserves: any = reservesTx.result;
-      
+      const rawReserves = reservesTx.result as unknown;
+
       if (rawReserves) {
-        let unwrappedRes = rawReserves;
-        if (typeof rawReserves.unwrap === 'function') {
-           try { unwrappedRes = rawReserves.unwrap(); } catch {}
+        let unwrappedRes: unknown = rawReserves;
+        const obj = rawReserves as Record<string, unknown>;
+        if (typeof obj.unwrap === 'function') {
+           try { unwrappedRes = (obj.unwrap as () => unknown)(); } catch {}
         }
         if (Array.isArray(unwrappedRes) && unwrappedRes.length === 3) {
           console.log(`Raw Reserves from contract: PT=${unwrappedRes[0].toString()}, Underlying=${unwrappedRes[1].toString()}, YT=${unwrappedRes[2].toString()}`);
@@ -243,7 +246,7 @@ export function useTrade() {
         slippage: slippagePercent,
         warning: largeTradeWarning
       });
-    } catch (e: any) {
+    } catch (e) {
       setQuote(null);
       setQuoteError(parseTradeError(e));
     } finally {
@@ -290,11 +293,10 @@ export function useTrade() {
 
       if (!tx) throw new Error('Transaction assembly failed');
 
-      // @ts-ignore - The signAndSend method exists on AssembledTransaction in these bindings
       const result = await tx.signAndSend({ signTransaction });
       
       return result;
-    } catch (e: any) {
+    } catch (e) {
       console.error('Trade execution failed', e);
       throw e;
     } finally {
@@ -303,7 +305,7 @@ export function useTrade() {
   }, [quote]);
 
   useEffect(() => {
-    fetchMarketData();
+    queueMicrotask(() => { fetchMarketData(); });
     const interval = setInterval(fetchMarketData, 15000); // 15s refresh
     return () => clearInterval(interval);
   }, [fetchMarketData]);

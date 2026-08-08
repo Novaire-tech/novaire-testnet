@@ -12,7 +12,24 @@
  * recorded at THAT timestamp — never the current balance projected backwards.
  */
 import { PriceOracleService } from './priceOracleService';
-import { PortfolioService } from './portfolioService';
+import { PortfolioService, PortfolioAsset } from './portfolioService';
+
+interface HistorySnapshotRecord {
+  timestamp: string;
+  ptPrice?: number;
+  ytPrice?: number;
+  fixedApy?: number;
+  tvl?: number;
+  tradingVolume?: number;
+  ptBalance?: number;
+  ytBalance?: number;
+  xlmBalance?: number;
+  claimableYield?: number;
+  walletAssetsUsd?: number;
+  vaultLpUsd?: number;
+  positionValue?: number;
+  portfolioValue?: number;
+}
 
 export interface AnalyticsSnapshot {
   timestamp: number;
@@ -78,7 +95,7 @@ export class AnalyticsHistoryService {
     try {
       // Step 1: Get current XLM spot price (shared denominator for all USD values)
       const prices = await PriceOracleService.getPrices().catch(() => null);
-      const xlmPriceRaw = prices?.find((p: any) => p.asset === 'XLM')?.priceUsd;
+      const xlmPriceRaw = prices?.find((p) => p.asset === 'XLM')?.priceUsd;
       const xlmPrice = (typeof xlmPriceRaw === 'number' && !isNaN(xlmPriceRaw) && xlmPriceRaw > 0)
         ? xlmPriceRaw
         : 0.1;
@@ -96,7 +113,7 @@ export class AnalyticsHistoryService {
 
       const portfolio = await PortfolioService.getPortfolio().catch(() => null);
       if (portfolio && !portfolio.error && portfolio.assets) {
-        portfolio.assets.forEach((a: any) => {
+        portfolio.assets.forEach((a: PortfolioAsset) => {
           if (a.assetType === 'pt') currentPtBalance += Number(a.balance) || 0;
           else if (a.assetType === 'yt') currentYtBalance += Number(a.balance) || 0;
           else if (a.assetType === 'wallet' && a.isNative) {
@@ -111,8 +128,8 @@ export class AnalyticsHistoryService {
         currentPortfolioValue = portfolio.totalValueUsd;
         // Position value = PT + YT holdings + claimable yield
         currentPositionValue = portfolio.assets
-          .filter((a: any) => a.assetType === 'pt' || a.assetType === 'yt')
-          .reduce((sum: number, a: any) => sum + (Number(a.valueUsd) || 0), 0)
+          .filter((a) => a.assetType === 'pt' || a.assetType === 'yt')
+          .reduce((sum: number, a) => sum + (Number(a.valueUsd) || 0), 0)
           + currentClaimableYield;
       }
 
@@ -143,14 +160,14 @@ export class AnalyticsHistoryService {
       // Step 5: Fetch the full persisted history
       const res = await fetch('/api/history');
       if (!res.ok) return;
-      const history: any[] = await res.json();
+      const history: HistorySnapshotRecord[] = await res.json();
 
       if (!Array.isArray(history) || history.length === 0) return;
 
       // Step 6: Map stored snapshots → AnalyticsSnapshot
       //         CRITICAL: use the STORED balances from each historical snapshot.
       //         Never project current balances backwards onto old prices.
-      this.snapshots = history.map((h: any) => {
+      this.snapshots = history.map((h) => {
         const ptPrice = (h.ptPrice || 0) * xlmPrice;
         const ytPrice = (h.ytPrice || 0) * xlmPrice;
 

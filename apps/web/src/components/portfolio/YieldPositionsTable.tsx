@@ -4,11 +4,12 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { YieldService } from '../../services/yieldService';
+import type { Vault } from '../../types';
 import { MintModal } from '../modals/MintModal';
 
 export function YieldPositionsTable() {
   const { portfolio, loading, error, refresh: refreshPortfolio } = usePortfolio();
-  const [vaults, setVaults] = useState<any[]>([]);
+  const [vaults, setVaults] = useState<Vault[]>([]);
   const [isMintModalOpen, setIsMintModalOpen] = useState(false);
 
   useEffect(() => {

@@ -215,7 +215,7 @@ const Tab = ({
     if (external) {
       return (
         <li className="list-none">
-          <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick as any} className={className} style={{ color }}>
+          <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick} className={className} style={{ color }}>
             {innerContent}
           </a>
         </li>
@@ -223,7 +223,7 @@ const Tab = ({
     }
     return (
       <li className="list-none">
-        <Link href={href} onClick={onClick as any} className={className} style={{ color }}>
+        <Link href={href} onClick={onClick} className={className} style={{ color }}>
           {innerContent}
         </Link>
       </li>
@@ -231,7 +231,7 @@ const Tab = ({
   }
 
   return (
-    <li onClick={onClick as any} className={className} style={{ color }}>
+    <li onClick={onClick} className={className} style={{ color }}>
       {innerContent}
     </li>
   );

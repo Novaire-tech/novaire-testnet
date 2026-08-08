@@ -12,10 +12,10 @@ export default function DevTestPage() {
   if (process.env.NODE_ENV === 'production') {
     notFound();
   }
-  const [walletState, setWalletState] = useState<any>(null);
-  const [pricesState, setPricesState] = useState<any>(null);
-  const [marketsState, setMarketsState] = useState<any>(null);
-  
+  const [walletState, setWalletState] = useState<unknown>(null);
+  const [pricesState, setPricesState] = useState<unknown>(null);
+  const [marketsState, setMarketsState] = useState<unknown>(null);
+
   // Consumes portfolioService automatically via the hook
   const { portfolio, loading: portfolioLoading, error: portfolioError, refresh: refreshPortfolio } = usePortfolio();
 
@@ -23,17 +23,17 @@ export default function DevTestPage() {
     try {
       const res = await WalletService.connectWallet();
       setWalletState(res);
-    } catch (e: any) {
-      setWalletState({ error: e.message });
+    } catch (e) {
+      setWalletState({ error: e instanceof Error ? e.message : String(e) });
     }
   };
 
   const handleGetBalances = async () => {
     try {
       const balances = await WalletService.getBalances();
-      setWalletState((prev: any) => ({ ...prev, balances }));
-    } catch (e: any) {
-      setWalletState((prev: any) => ({ ...prev, balanceError: e.message }));
+      setWalletState((prev: unknown) => ({ ...(prev as object), balances }));
+    } catch (e) {
+      setWalletState((prev: unknown) => ({ ...(prev as object), balanceError: e instanceof Error ? e.message : String(e) }));
     }
   };
 
@@ -44,9 +44,9 @@ export default function DevTestPage() {
       const prices = await PriceOracleService.getPrices();
       console.log("<- Dev page: PriceOracleService returned successfully:", prices);
       setPricesState(prices);
-    } catch (e: any) {
+    } catch (e) {
       console.error("<- Dev page: PriceOracleService threw error:", e);
-      setPricesState({ error: e.message || 'Unknown error occurred' });
+      setPricesState({ error: e instanceof Error ? e.message : 'Unknown error occurred' });
     }
   };
 
@@ -54,8 +54,8 @@ export default function DevTestPage() {
     try {
       const assets = await MarketService.getSupportedAssets();
       setMarketsState(assets);
-    } catch (e: any) {
-      setMarketsState({ error: e.message });
+    } catch (e) {
+      setMarketsState({ error: e instanceof Error ? e.message : String(e) });
     }
   };
 

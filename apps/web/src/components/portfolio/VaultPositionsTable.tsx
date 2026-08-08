@@ -3,14 +3,25 @@
 import { useState, useEffect } from 'react';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { YieldService } from '../../services/yieldService';
+import type { Vault } from '../../types';
 
 import { DataTable } from '../ui/DataTable';
 import { SectionCard } from '../ui/SectionCard';
 import { Button } from '../ui/Button';
 
+interface VaultPositionRow {
+  vaultName: string;
+  underlying: string;
+  depositAmount: number;
+  claimableYield: number;
+  fixedApy: number;
+  daysRemaining: number;
+  maturityDate: string;
+}
+
 export function VaultPositionsTable() {
   const { portfolio, loading, error } = usePortfolio();
-  const [vaults, setVaults] = useState<any[]>([]);
+  const [vaults, setVaults] = useState<Vault[]>([]);
 
   useEffect(() => {
     YieldService.getVaults().then(setVaults).catch(console.error);
@@ -56,13 +67,13 @@ export function VaultPositionsTable() {
   });
 
   const columns = [
-    { header: 'Vault Name', accessor: (row: any) => row.vaultName },
-    { header: 'Underlying', accessor: (row: any) => <span className="text-nova-muted">{row.underlying}</span> },
-    { header: 'Deposit Amount', accessor: (row: any) => row.depositAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }), align: 'right' as const },
-    { header: 'Claimable Yield', accessor: (row: any) => <span className="text-nova-accent">+{row.claimableYield.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>, align: 'right' as const },
-    { header: 'Fixed APY', accessor: (row: any) => `${row.fixedApy}%`, align: 'right' as const },
-    { header: 'Days Remaining', accessor: (row: any) => `${row.daysRemaining} days`, align: 'right' as const },
-    { header: 'Maturity Date', accessor: (row: any) => row.maturityDate },
+    { header: 'Vault Name', accessor: (row: VaultPositionRow) => row.vaultName },
+    { header: 'Underlying', accessor: (row: VaultPositionRow) => <span className="text-nova-muted">{row.underlying}</span> },
+    { header: 'Deposit Amount', accessor: (row: VaultPositionRow) => row.depositAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }), align: 'right' as const },
+    { header: 'Claimable Yield', accessor: (row: VaultPositionRow) => <span className="text-nova-accent">+{row.claimableYield.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>, align: 'right' as const },
+    { header: 'Fixed APY', accessor: (row: VaultPositionRow) => `${row.fixedApy}%`, align: 'right' as const },
+    { header: 'Days Remaining', accessor: (row: VaultPositionRow) => `${row.daysRemaining} days`, align: 'right' as const },
+    { header: 'Maturity Date', accessor: (row: VaultPositionRow) => row.maturityDate },
     { header: 'Action', accessor: () => <Button variant="secondary" size="sm">Manage</Button>, align: 'right' as const },
   ];
 

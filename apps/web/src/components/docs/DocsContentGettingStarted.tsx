@@ -82,7 +82,7 @@ graph TD
         
         <h3 id="intent-engine" className="text-2xl font-semibold text-white mt-12 mb-4 scroll-mt-24">Intent Engine</h3>
         <p className="text-gray-300 mb-4"><strong>Definition:</strong> An abstract transaction router that executes multi-step retail strategies in a single transaction.</p>
-        <p className="text-gray-300 mb-4"><strong>Why it exists:</strong> To dramatically improve user experience. Instead of a user manually depositing, wrapping, minting, and trading, they sign a single "Intent" which the engine fulfills atomically.</p>
+        <p className="text-gray-300 mb-4"><strong>Why it exists:</strong> To dramatically improve user experience. Instead of a user manually depositing, wrapping, minting, and trading, they sign a single &quot;Intent&quot; which the engine fulfills atomically.</p>
       </section>
     </>
   );

@@ -22,7 +22,7 @@ export function TradeInterface() {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
+    queueMicrotask(() => setMounted(true));
   }, []);
 
   const STROOP_SCALE = 10000000;
@@ -66,14 +66,15 @@ export function TradeInterface() {
 
   const handleSwapExecute = async () => {
     try {
-      const result: any = await executeTrade(action, asset, parseFloat(amount), slippage);
-      
+      const rawResult = await executeTrade(action, asset, parseFloat(amount), slippage);
+      const result = rawResult as { hash?: string; id?: string; status?: string } | undefined;
+
       console.log('--- Transaction Post-Submission ---');
       console.log('Object returned by signAndSend:', result);
       console.log('Transaction hash:', result?.hash || result?.id || 'Unknown');
       console.log('RPC response:', result);
       console.log('Transaction status:', result?.status || 'Unknown');
-      
+
       if (result && result.status && result.status !== 'SUCCESS') {
         console.error('Contract error:', result);
         NotificationService.addNotification('network', 'Trade Failed', `Trade transaction failed on-chain. Status: ${result.status}`);
@@ -89,9 +90,9 @@ export function TradeInterface() {
       
       NotificationService.addNotification('transaction', 'Trade Successful', `Successfully executed ${action} for ${amount} ${action === 'Buy' ? 'XLM' : asset}.`);
       setAmount('');
-    } catch (e: any) {
+    } catch (e) {
       console.error('Swap Execution Exception:', e);
-      NotificationService.addNotification('transaction', 'Trade Failed', e.message || 'Failed to execute trade.');
+      NotificationService.addNotification('transaction', 'Trade Failed', e instanceof Error ? e.message : 'Failed to execute trade.');
     }
   };
 

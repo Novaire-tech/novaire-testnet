@@ -45,18 +45,17 @@ export function AssetAllocation() {
   const totalValue = portfolio?.totalValueUsd || 0;
 
   // Prepare drawing data
-  let currentOffset = 0;
-  const chartData = allocations.map((alloc, idx) => {
+  const chartData = allocations.reduce<Array<typeof allocations[number] & { color: string; dashArray: string; dashOffset: number }>>((acc, alloc, idx) => {
     const percent = alloc.percentage;
-    const offset = currentOffset;
-    currentOffset -= percent;
-    return {
+    const offset = acc.length > 0 ? acc[acc.length - 1].dashOffset - acc[acc.length - 1].percentage : 0;
+    acc.push({
       ...alloc,
       color: PALETTE[idx % PALETTE.length],
       dashArray: `${percent} ${100 - percent}`,
       dashOffset: offset
-    };
-  });
+    });
+    return acc;
+  }, []);
 
   return (
     <motion.div

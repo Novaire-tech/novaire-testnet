@@ -58,7 +58,7 @@ export function YieldAnalytics() {
                 <RechartsTooltip
                   contentStyle={{ backgroundColor: '#0f1714', borderColor: '#ffffff10', borderRadius: '12px' }}
                   itemStyle={{ color: '#fff' }}
-                  formatter={(value: any) => `$${Number(value).toFixed(2)}`}
+                  formatter={(value) => `$${Number(value).toFixed(2)}`}
                 />
               )}
               {!isEmpty && <Legend verticalAlign="bottom" height={36} iconType="circle" />}

@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored, gitignored third-party extension bundle (downloaded at test time).
+    "e2e/vendor/**",
   ]),
 ]);
 

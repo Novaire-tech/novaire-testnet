@@ -41,6 +41,7 @@ export function PerformanceChart() {
       '30D': 30 * 24 * 60 * 60 * 1000,
     };
     
+    // eslint-disable-next-line react-hooks/purity -- timeframe-window cutoff; staleness across renders is harmless
     const limit = Date.now() - timeframeMsMap[timeframe];
     // Find the oldest snapshot that is still within the timeframe
     const inRange = snapshots.filter(s => s.timestamp >= limit);

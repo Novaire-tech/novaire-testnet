@@ -40,6 +40,7 @@ export function MainInteractiveChart() {
       '30D': 30 * 24 * 60 * 60 * 1000,
     };
     
+    // eslint-disable-next-line react-hooks/purity -- timeframe-window cutoff; staleness across renders is harmless
     const limit = Date.now() - timeframeMsMap[timeframe];
     const inRange = snapshots.filter(s => s.timestamp >= limit);
     return inRange.length > 1 ? inRange[0] : null;
@@ -124,7 +125,7 @@ export function MainInteractiveChart() {
         <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 backdrop-blur-md">
           <div className="text-amber-400 text-sm font-semibold mb-0.5">YT Market Value = 0</div>
           <div className="text-amber-400/80 text-xs">
-            PT is currently trading above par (1.0). Under the protocol's pricing model, YT has no market value until PT returns below par.
+            PT is currently trading above par (1.0). Under the protocol&apos;s pricing model, YT has no market value until PT returns below par.
           </div>
         </div>
       )}

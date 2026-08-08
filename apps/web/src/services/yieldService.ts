@@ -5,11 +5,12 @@ export class YieldService {
   /**
    * Helper to unwrap Soroban Result types
    */
-  private static unwrapResult(rawResult: any): any {
+  private static unwrapResult(rawResult: unknown): unknown {
     if (rawResult !== undefined && typeof rawResult === 'object' && rawResult !== null) {
-      if (typeof rawResult.unwrap === 'function') return rawResult.unwrap();
-      if ('ok' in rawResult) return rawResult.ok;
-      if ('value' in rawResult) return rawResult.value;
+      const obj = rawResult as Record<string, unknown>;
+      if (typeof obj.unwrap === 'function') return (obj.unwrap as () => unknown)();
+      if ('ok' in obj) return obj.ok;
+      if ('value' in obj) return obj.value;
     }
     return rawResult;
   }
@@ -37,7 +38,7 @@ export class YieldService {
       const metadata = this.unwrapResult(metaTx?.result);
       
       if (metadata && typeof metadata === 'object') {
-        const maturityLedger = Number(metadata.maturity_ledger || 0);
+        const maturityLedger = Number((metadata as Record<string, unknown>).maturity_ledger || 0);
         
         if (maturityLedger > 0) {
           try {
@@ -84,7 +85,7 @@ export class YieldService {
       const metadata = this.unwrapResult(metaTx?.result);
       
       if (metadata && typeof metadata === 'object') {
-        return Number(metadata.maturity_ledger || 0);
+        return Number((metadata as Record<string, unknown>).maturity_ledger || 0);
       }
     } catch (e) {
       console.warn("Could not fetch tokenizer maturity_ledger", e);
@@ -107,7 +108,7 @@ export class YieldService {
       const metadata = this.unwrapResult(metaTx?.result);
       
       if (metadata && typeof metadata === 'object') {
-        const rawIndex = Number(metadata.epoch_start_index || 1000000000);
+        const rawIndex = Number((metadata as Record<string, unknown>).epoch_start_index || 1000000000);
         return rawIndex / 1e9;
       }
     } catch (e) {
@@ -148,11 +149,11 @@ export class YieldService {
     try {
       const res = await fetch('/api/history');
       if (!res.ok) return [];
-      const history = await res.json();
-      
+      const history: unknown = await res.json();
+
       if (!Array.isArray(history)) return [];
-      
-      return history.map((h: any) => ({
+
+      return history.map((h: { timestamp: string; fixedApy?: number }) => ({
         timestamp: new Date(h.timestamp).toISOString(),
         fixedApy: h.fixedApy || 0,
         variableApy: 0, // Protocol is currently fixed-yield only

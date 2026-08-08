@@ -101,7 +101,7 @@ export function MyVaultPositions({ vaults }: MyVaultPositionsProps) {
             {isEmpty && (
               <tr>
                 <td colSpan={8} className="px-6 py-20 text-center">
-                  <p className="text-nova-muted text-base mb-2">You don't have any active vault positions.</p>
+                  <p className="text-nova-muted text-base mb-2">You don&apos;t have any active vault positions.</p>
                   <p className="text-nova-muted text-sm">Deposit into a vault to begin earning fixed or variable yield.</p>
                 </td>
               </tr>

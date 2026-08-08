@@ -8,6 +8,7 @@ import { signTransaction } from '@stellar/freighter-api';
 import { YieldService } from '../../services/yieldService';
 import { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } from '../../config/contracts';
 import { NotificationService } from '../../services/notificationService';
+import type { Vault } from '../../types';
 
 interface MintModalProps {
   isOpen: boolean;
@@ -18,10 +19,28 @@ interface MintModalProps {
 
 type YieldPreference = 'fixed' | 'keep' | 'custom';
 
+interface IntentExecutionArgs {
+  user: string;
+  usdc_amount: bigint;
+  min_implied_rate: bigint;
+  min_underlying_out: bigint;
+  _maturity_ledger: number;
+  yt_sale_percentage: number;
+}
+
+interface IntentEngineTxResult {
+  result?: unknown;
+  signAndSend: (opts: { signTransaction: typeof signTransaction }) => Promise<unknown>;
+}
+
+interface IntentEngineClient {
+  execute_fixed_yield_intent: (args: IntentExecutionArgs) => Promise<IntentEngineTxResult>;
+}
+
 export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: MintModalProps) {
   const { isConnected, address, connect, balances, refreshBalances } = useWallet();
   const [amount, setAmount] = useState<string>('');
-  const [vaults, setVaults] = useState<any[]>([]);
+  const [vaults, setVaults] = useState<Vault[]>([]);
   const [selectedVault, setSelectedVault] = useState<string>('');
 
   // Yield Preference state
@@ -32,7 +51,7 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
   const [errorMessage, setErrorMessage] = useState('');
 
   const [slippageBps, setSlippageBps] = useState<number>(50); // 0.5% default
-  const [simulationData, setSimulationData] = useState<{ expectedOut: bigint; minOut: bigint; client: any; txArgs: any } | null>(null);
+  const [simulationData, setSimulationData] = useState<{ expectedOut: bigint; minOut: bigint; client: IntentEngineClient; txArgs: IntentExecutionArgs } | null>(null);
 
   const [balance, setBalance] = useState<number>(0);
 
@@ -69,16 +88,16 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
   useEffect(() => {
     if (activeVault) {
       const assets = Array.isArray(activeVault.asset) ? activeVault.asset : [activeVault.asset];
-      if (!assets.includes(currentAsset)) setCurrentAsset(assets[0]);
+      if (!assets.includes(currentAsset)) queueMicrotask(() => setCurrentAsset(assets[0]));
     }
   }, [activeVault]);
 
   useEffect(() => {
     if (isConnected && address) {
       const b = balances?.find(b => b.assetCode === currentAsset);
-      setBalance(b ? parseFloat(b.amount) : 0);
+      queueMicrotask(() => setBalance(b ? parseFloat(b.amount) : 0));
     } else {
-      setBalance(0);
+      queueMicrotask(() => setBalance(0));
     }
   }, [isConnected, address, isOpen, currentAsset, balances]);
 
@@ -142,10 +161,12 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
       
       let expectedOut = BigInt(0);
       if (simTx.result) {
-        const rawResult = simTx.result;
-        const unwrapped = typeof rawResult.unwrap === 'function' ? rawResult.unwrap() : ('ok' in rawResult ? rawResult.ok : rawResult);
-        if (unwrapped && (unwrapped as any).total_underlying_received !== undefined) {
-          expectedOut = BigInt((unwrapped as any).total_underlying_received);
+        const rawResult = simTx.result as unknown as Record<string, unknown>;
+        const unwrapped = typeof rawResult.unwrap === 'function'
+          ? (rawResult.unwrap as () => unknown)()
+          : ('ok' in rawResult ? rawResult.ok : rawResult);
+        if (unwrapped && typeof unwrapped === 'object' && (unwrapped as Record<string, unknown>).total_underlying_received !== undefined) {
+          expectedOut = BigInt((unwrapped as Record<string, unknown>).total_underlying_received as string | number | bigint);
         }
       }
 
@@ -159,11 +180,12 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
 
       setSimulationData({ expectedOut, minOut, client, txArgs });
       setStep('review');
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      setErrorMessage(e.message || 'Transaction failed');
+      const message = e instanceof Error ? e.message : 'Transaction failed';
+      setErrorMessage(message);
       setStep('error');
-      NotificationService.addNotification('network', 'Contract Interaction Failed', e.message || 'Failed to simulate mint transaction.');
+      NotificationService.addNotification('network', 'Contract Interaction Failed', message || 'Failed to simulate mint transaction.');
     }
   };
 
@@ -184,11 +206,12 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
       } else {
         throw new Error('Transaction failed on-chain');
       }
-    } catch (e: any) {
+    } catch (e) {
       console.error(e);
-      setErrorMessage(e.message || 'Transaction failed');
+      const message = e instanceof Error ? e.message : 'Transaction failed';
+      setErrorMessage(message);
       setStep('error');
-      NotificationService.addNotification('network', 'Contract Interaction Failed', e.message || 'Failed to execute mint transaction.');
+      NotificationService.addNotification('network', 'Contract Interaction Failed', message || 'Failed to execute mint transaction.');
     }
   };
 

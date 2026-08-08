@@ -21,7 +21,7 @@ export function usePrices() {
   };
 
   useEffect(() => {
-    fetchPrices();
+    queueMicrotask(() => { fetchPrices(); });
   }, []);
 
   return { prices, loading, error, fetchPrices };

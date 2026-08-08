@@ -12,24 +12,21 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>('dark'); // Default to dark
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === 'undefined') return 'dark';
+    const savedTheme = localStorage.getItem('novaire-theme') as Theme | null;
+    return savedTheme ?? 'dark';
+  });
 
   useEffect(() => {
-    // Check localStorage on mount
-    const savedTheme = localStorage.getItem('novaire-theme') as Theme | null;
-    if (savedTheme) {
-      setTheme(savedTheme);
-      if (savedTheme === 'light') {
-        document.documentElement.classList.remove('dark');
-      } else {
-        document.documentElement.classList.add('dark');
-      }
+    // Sync the DOM class and persist the resolved theme (does not need to set React state).
+    if (theme === 'light') {
+      document.documentElement.classList.remove('dark');
     } else {
-      // Default dark
       document.documentElement.classList.add('dark');
-      localStorage.setItem('novaire-theme', 'dark');
     }
-  }, []);
+    localStorage.setItem('novaire-theme', theme);
+  }, [theme]);
 
   const toggleTheme = () => {
     setTheme((prevTheme) => {

@@ -19,7 +19,7 @@ export async function GET() {
 
     const data = await response.json();
     return NextResponse.json(data);
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error fetching from CoinDCX API:', error);
     return NextResponse.json(
       { error: 'Failed to fetch prices from exchange' },

@@ -23,7 +23,7 @@ export default function TableOfContents() {
       }))
       .filter((heading) => heading.id); // Only include headings with IDs
 
-    setHeadings(elements);
+    queueMicrotask(() => setHeadings(elements));
 
     // Set up intersection observer for active heading
     const callback = (entries: IntersectionObserverEntry[]) => {

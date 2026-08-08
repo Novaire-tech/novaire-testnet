@@ -37,6 +37,7 @@ export function PositionsTable() {
 
     // Dates
     const maturityDate = new Date(vault.maturityDate);
+    // eslint-disable-next-line react-hooks/purity -- display-only days-remaining countdown; staleness is harmless
     const daysRemaining = Math.max(0, Math.ceil((maturityDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
     
     // Status

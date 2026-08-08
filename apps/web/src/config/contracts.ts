@@ -4,7 +4,20 @@ import mainnetDeployments from './deployments.mainnet.json';
 export const NETWORK = (process.env.NEXT_PUBLIC_NETWORK || 'TESTNET').toUpperCase();
 const isMainnet = NETWORK === 'MAINNET';
 
-const deployments: any = isMainnet ? mainnetDeployments : testnetDeployments;
+interface Deployments {
+  factory?: string;
+  vault?: string;
+  pt_token?: string;
+  yt_token?: string;
+  sy_wrapper?: string;
+  marketplace?: string;
+  intent_engine?: string;
+  rollover?: string;
+  tokenizer?: string;
+  underlying_token?: string;
+}
+
+const deployments: Deployments = isMainnet ? mainnetDeployments : testnetDeployments;
 
 export const CONTRACTS = {
   FACTORY: deployments.factory || '',

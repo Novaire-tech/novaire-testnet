@@ -1,6 +1,18 @@
 import { WalletService, WalletAssetBalance } from './walletService';
 import { PriceOracleService } from './priceOracleService';
 import { YieldService } from './yieldService';
+import type { Vault } from '../types';
+
+/** Soroban clients sometimes return Result types wrapped as { unwrap() } / { ok } / { value }. */
+function unwrapContractResult(raw: unknown): unknown {
+  if (typeof raw === 'object' && raw !== null) {
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.unwrap === 'function') return (obj.unwrap as () => unknown)();
+    if ('ok' in obj) return obj.ok;
+    if ('value' in obj) return obj.value;
+  }
+  return raw;
+}
 
 export interface PortfolioAsset {
   assetCode: string;
@@ -127,7 +139,7 @@ export class PortfolioService {
         }
 
         // Fetch vault data to calculate unified claimable yield
-        let activeVaults: any[] = [];
+        let activeVaults: Vault[] = [];
         try {
           activeVaults = await YieldService.getVaults();
         } catch (e) {
@@ -147,16 +159,10 @@ export class PortfolioService {
         let ytSpotPriceUnderlying = 0;
         try {
           const priceTx = await marketplaceClient.get_pt_price();
-          let rawResult: any = priceTx?.result;
-          
+          const rawResult: unknown = priceTx?.result;
+
           if (rawResult !== undefined) {
-             // Soroban clients sometimes return Result types as { ok: value }
-             if (typeof rawResult === 'object' && rawResult !== null) {
-               if (typeof rawResult.unwrap === 'function') rawResult = rawResult.unwrap();
-               else if ('ok' in rawResult) rawResult = rawResult.ok;
-             }
-             
-             const parsedNumber = Number(rawResult);
+             const parsedNumber = Number(unwrapContractResult(rawResult));
              if (!isNaN(parsedNumber) && parsedNumber > 0) {
                const rawContractPrice = parsedNumber / 1_000_000_000;
                // Contract now correctly returns underlying-per-pt directly
@@ -182,14 +188,9 @@ export class PortfolioService {
         let realVaultValueUsd = 0;
         try {
           const vaultTx = await vaultClient.balance_of({ user: address });
-          let rawVault: any = vaultTx?.result;
+          const rawVault: unknown = vaultTx?.result;
           if (rawVault !== undefined) {
-             if (typeof rawVault === 'object' && rawVault !== null) {
-               if (typeof rawVault.unwrap === 'function') rawVault = rawVault.unwrap();
-               else if ('ok' in rawVault) rawVault = rawVault.ok;
-               else if ('value' in rawVault) rawVault = rawVault.value;
-             }
-             const parsedVault = Number(rawVault);
+             const parsedVault = Number(unwrapContractResult(rawVault));
              if (!isNaN(parsedVault) && parsedVault > 0) {
                 realVaultBalanceFloat = parsedVault / 10000000;
                 realVaultValueUsd = (!isNaN(realVaultBalanceFloat) && !isNaN(underlyingSpotUsd)) ? realVaultBalanceFloat * underlyingSpotUsd : 0;
@@ -206,16 +207,10 @@ export class PortfolioService {
         let ptValueUsd = 0;
         try {
           const ptTx = await ptClient.balance({ id: address });
-          let rawPt: any = ptTx?.result;
+          const rawPt: unknown = ptTx?.result;
 
-          
           if (rawPt !== undefined) {
-             if (typeof rawPt === 'object' && rawPt !== null) {
-               if (typeof rawPt.unwrap === 'function') rawPt = rawPt.unwrap();
-               else if ('ok' in rawPt) rawPt = rawPt.ok;
-               else if ('value' in rawPt) rawPt = rawPt.value;
-             }
-             const parsedPt = Number(rawPt);
+             const parsedPt = Number(unwrapContractResult(rawPt));
              
              if (!isNaN(parsedPt) && parsedPt > 0) {
                 ptBalanceFloat = parsedPt / 10000000;
@@ -243,14 +238,9 @@ export class PortfolioService {
         let ytValueUsd = 0;
         try {
           const ytTx = await ytClient.balance({ id: address });
-          let rawYt: any = ytTx?.result;
+          const rawYt: unknown = ytTx?.result;
           if (rawYt !== undefined) {
-             if (typeof rawYt === 'object' && rawYt !== null) {
-               if (typeof rawYt.unwrap === 'function') rawYt = rawYt.unwrap();
-               else if ('ok' in rawYt) rawYt = rawYt.ok;
-               else if ('value' in rawYt) rawYt = rawYt.value;
-             }
-             const parsedYt = Number(rawYt);
+             const parsedYt = Number(unwrapContractResult(rawYt));
              if (!isNaN(parsedYt) && parsedYt > 0) {
                 ytBalanceFloat = parsedYt / 10000000;
                 ytValueUsd = (!isNaN(ytBalanceFloat) && !isNaN(ytPriceUsd)) ? ytBalanceFloat * ytPriceUsd : 0;
@@ -276,13 +266,7 @@ export class PortfolioService {
         try {
           const claimableTx = await ytClient.claimable_yield({ user: address });
           if (claimableTx.result !== undefined) {
-             let rawClaimable: any = claimableTx.result;
-             if (typeof rawClaimable === 'object' && rawClaimable !== null) {
-               if (typeof rawClaimable.unwrap === 'function') rawClaimable = rawClaimable.unwrap();
-               else if ('ok' in rawClaimable) rawClaimable = rawClaimable.ok;
-               else if ('value' in rawClaimable) rawClaimable = rawClaimable.value;
-             }
-             const parsedClaimable = Number(rawClaimable);
+             const parsedClaimable = Number(unwrapContractResult(claimableTx.result));
              if (!isNaN(parsedClaimable) && parsedClaimable > 0) {
                  claimableYieldNative = parsedClaimable / 10000000;
              }
@@ -432,9 +416,10 @@ export class PortfolioService {
         error: null
       };
 
-    } catch (error: any) {
+    } catch (error) {
       console.error('PortfolioService Error:', error);
-      return this.emptyPortfolio(error.message || 'Failed to construct portfolio');
+      const message = error instanceof Error ? error.message : 'Failed to construct portfolio';
+      return this.emptyPortfolio(message);
     }
   }
 

@@ -4,11 +4,12 @@ import { Briefcase, HandCoins, Activity, ShieldCheck } from 'lucide-react';
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { useState, useEffect } from 'react';
 import { YieldService } from '../../services/yieldService';
+import type { Vault } from '../../types';
 import { MetricCard } from '../ui/MetricCard';
 
 export function PortfolioKPICards() {
   const { portfolio, loading, error } = usePortfolio();
-  const [vaults, setVaults] = useState<any[]>([]);
+  const [vaults, setVaults] = useState<Vault[]>([]);
 
   useEffect(() => {
     YieldService.getVaults().then(setVaults).catch(console.error);

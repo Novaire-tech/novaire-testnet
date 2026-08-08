@@ -16,6 +16,35 @@ export interface UIActivity {
   details?: string[];
 }
 
+interface HorizonAssetBalanceChange {
+  type: string;
+  from?: string;
+  to?: string;
+  amount: string;
+  asset_type: string;
+  asset_code?: string;
+}
+
+interface HorizonSymParameter {
+  type: string;
+  value?: string;
+}
+
+interface HorizonOperationRecord {
+  id: string;
+  type: string;
+  transaction_hash?: string;
+  created_at: string;
+  parameters?: HorizonSymParameter[];
+  asset_balance_changes?: HorizonAssetBalanceChange[];
+  asset_type?: string;
+  asset_code?: string;
+  to?: string;
+  from?: string;
+  amount?: string;
+  starting_balance?: string;
+}
+
 // Known Soroban event topic substrings → human-readable labels
 const TOPIC_LABELS: Record<string, { type: string; vault: string }> = {
   'execute_fyi':       { type: 'Minted PT & YT',            vault: 'Novaire Intent Engine' },
@@ -55,7 +84,7 @@ export class ActivityService {
       const data = await res.json();
 
       const activities: UIActivity[] = [];
-      const records: any[] = data._embedded?.records || [];
+      const records: HorizonOperationRecord[] = data._embedded?.records || [];
 
       for (const record of records) {
         let type = 'Contract Interaction';
@@ -74,7 +103,7 @@ export class ActivityService {
           vault = 'Novaire Epoch 17';
 
           // Try to identify the specific Novaire function by decoding Sym parameters
-          const params: any[] = record.parameters ?? [];
+          const params: HorizonSymParameter[] = record.parameters ?? [];
           for (const param of params) {
             if (param.type === 'Sym' && param.value) {
               try {
@@ -90,17 +119,15 @@ export class ActivityService {
             }
           }
 
-          let matched = false;
           for (const [topic, label] of Object.entries(TOPIC_LABELS)) {
             if (fnName.includes(topic.toLowerCase())) {
               type = label.type;
               vault = label.vault;
-              matched = true;
               break;
             }
           }
 
-          const changes: any[] = record.asset_balance_changes ?? [];
+          const changes: HorizonAssetBalanceChange[] = record.asset_balance_changes ?? [];
           details = [];
 
           if (fnName.includes('execute_fixed_yield_intent') || fnName.includes('execute_fyi')) {
@@ -109,7 +136,7 @@ export class ActivityService {
             
             // Try to find XLM deposited from balance changes
             let depositedXlm = '---';
-            const userDebit = changes.find((c: any) => c.type === 'transfer' && c.from === walletAddress && c.asset_type === 'native');
+            const userDebit = changes.find((c) => c.type === 'transfer' && c.from === walletAddress && c.asset_type === 'native');
             if (userDebit) depositedXlm = parseFloat(userDebit.amount).toFixed(2);
 
             details.push(`Deposited ${depositedXlm} XLM`);
@@ -119,8 +146,8 @@ export class ActivityService {
             amount = `+${depositedXlm} XLM`;
           } else if (changes.length > 0) {
             // Generic fallback for other recognized operations
-            const credited = changes.find((c: any) => (c.type === 'credit' || (c.type === 'transfer' && c.to === walletAddress)));
-            const debited  = changes.find((c: any) => (c.type === 'debit' || (c.type === 'transfer' && c.from === walletAddress)));
+            const credited = changes.find((c) => (c.type === 'credit' || (c.type === 'transfer' && c.to === walletAddress)));
+            const debited  = changes.find((c) => (c.type === 'debit' || (c.type === 'transfer' && c.from === walletAddress)));
             if (credited) {
               const code = credited.asset_type === 'native' ? 'XLM' : (credited.asset_code || 'Tokens');
               amount = `+${parseFloat(credited.amount).toFixed(4)} ${code}`;
@@ -134,13 +161,13 @@ export class ActivityService {
           type = 'Transfer';
           const assetCode = record.asset_type === 'native' ? 'XLM' : record.asset_code;
           const dir = record.to === walletAddress ? '+' : '-';
-          const parsed = parseFloat(record.amount);
+          const parsed = parseFloat(record.amount || '');
           amount = `${dir}${isNaN(parsed) ? '?' : parsed.toFixed(4)} ${assetCode}`;
           vault = record.to === walletAddress ? 'Received' : 'Sent';
 
         } else if (record.type === 'create_account') {
           type = 'Account Funded';
-          const bal = parseFloat(record.starting_balance);
+          const bal = parseFloat(record.starting_balance || '');
           amount = `+${isNaN(bal) ? '?' : bal.toFixed(4)} XLM`;
           vault = 'Stellar Network';
 

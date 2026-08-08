@@ -60,7 +60,7 @@ graph TD
 
         <h3 id="smart-contracts-api" className="text-2xl font-semibold text-white mt-8 mb-4 scroll-mt-24">Contracts Overview</h3>
         <p className="text-gray-300 mb-4">
-          Novaire's contracts are deployed on the Stellar Testnet. TypeScript bindings are automatically generated into the <code>/packages</code> directory upon deployment using the <code>stellar-cli</code>.
+          Novaire&apos;s contracts are deployed on the Stellar Testnet. TypeScript bindings are automatically generated into the <code>/packages</code> directory upon deployment using the <code>stellar-cli</code>.
         </p>
         
         <div className="overflow-x-auto my-8 border border-nova-border rounded-xl max-h-[400px] overflow-y-auto">
@@ -113,7 +113,7 @@ graph TD
             <p className="text-gray-400 mt-2">No. While PT and YT have a fixed maturity date, they are fully liquid tokens. You can sell them at any time on the Novaire Marketplace AMM, subject to market prices and slippage.</p>
           </div>
           <div>
-            <h4 className="font-semibold text-white text-lg">What happens if I don't redeem at maturity?</h4>
+            <h4 className="font-semibold text-white text-lg">What happens if I don&apos;t redeem at maturity?</h4>
             <p className="text-gray-400 mt-2">Your PT will safely hold its 1:1 underlying value indefinitely after maturity. However, it will no longer earn any yield. We recommend opting into Auto Rollovers to prevent cash drag.</p>
           </div>
           <div>

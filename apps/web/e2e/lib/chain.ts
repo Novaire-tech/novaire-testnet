@@ -3,7 +3,7 @@
 // established pattern in e2e/_seed-deposits.local.mjs — real Soroban RPC,
 // real Friendbot, real contracts. No mocks.
 import { Keypair, rpc } from '@stellar/stellar-sdk';
-import { basicNodeSigner } from '@stellar/stellar-sdk/contract';
+import { basicNodeSigner, ClientOptions } from '@stellar/stellar-sdk/contract';
 import { Client as VaultClient } from '../../../../packages/bindings/vault/src/index';
 import { Client as TokenizerClient } from '../../../../packages/bindings/tokenizer/src/index';
 import { Client as MarketplaceClient } from '../../../../packages/bindings/marketplace/src/index';
@@ -76,7 +76,7 @@ export async function waitForTransaction(hash: string, server: rpc.Server, timeo
   throw new Error(`Timed out waiting for transaction ${hash}`);
 }
 
-function clientFor<T extends { new (opts: any): any }>(Ctor: T, contractId: string, wallet: Wallet) {
+function clientFor<T extends new (opts: ClientOptions) => InstanceType<T>>(Ctor: T, contractId: string, wallet: Wallet) {
   const signer = basicNodeSigner(wallet.keypair, NETWORK_PASSPHRASE);
   return new Ctor({
     contractId,
@@ -156,7 +156,7 @@ export async function redeem(wallet: Wallet, shares: number) {
 export async function claimYield(wallet: Wallet) {
   const client = clientFor(YtClient, CONTRACTS.YT_TOKEN, wallet);
   const tx = await client.claimable_yield({ user: wallet.publicKey });
-  return tx.simulate ? tx : tx; // read-only simulate call; see NOTE above
+  return tx; // read-only simulate call; see NOTE above
 }
 
 export async function readOnChainState(publicKey: string) {
@@ -174,12 +174,13 @@ export async function readOnChainState(publicKey: string) {
     marketplaceClient.get_pt_price(),
   ]);
 
-  const unwrap = (r: any) => {
-    let v = r?.result;
+  const unwrap = (r: { result?: unknown } | undefined) => {
+    let v: unknown = r?.result;
     if (v && typeof v === 'object') {
-      if (typeof v.unwrap === 'function') v = v.unwrap();
-      else if ('ok' in v) v = v.ok;
-      else if ('value' in v) v = v.value;
+      const obj = v as Record<string, unknown>;
+      if (typeof obj.unwrap === 'function') v = (obj.unwrap as () => unknown)();
+      else if ('ok' in obj) v = obj.ok;
+      else if ('value' in obj) v = obj.value;
     }
     const n = Number(v);
     return isNaN(n) ? 0 : n;

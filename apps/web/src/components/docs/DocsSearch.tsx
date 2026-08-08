@@ -56,7 +56,7 @@ export function DocsSearch() {
       setTimeout(() => inputRef.current?.focus(), 100);
       document.body.style.overflow = 'hidden';
     } else {
-      setQuery('');
+      queueMicrotask(() => setQuery(''));
       document.body.style.overflow = 'unset';
     }
     return () => {
@@ -73,7 +73,7 @@ export function DocsSearch() {
     : [];
 
   useEffect(() => {
-    setSelectedIndex(0);
+    queueMicrotask(() => setSelectedIndex(0));
   }, [query]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
