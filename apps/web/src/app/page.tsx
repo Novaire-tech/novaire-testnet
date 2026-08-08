@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import Navbar from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
 import { HowNovaireWorks } from "@/components/HowNovaireWorks/Section";
+import { TechMarquee } from "@/components/TechMarquee";
 import Stats from "@/components/Stats";
 import Features from "@/components/Features";
 import Workflow from "@/components/Workflow";
@@ -41,6 +42,7 @@ export default function Home() {
       <Navbar />
       <Hero />
       <HowNovaireWorks />
+      <TechMarquee />
       <Stats />
       <Features />
       <Workflow />

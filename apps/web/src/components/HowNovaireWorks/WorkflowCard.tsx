@@ -70,6 +70,8 @@ export function WorkflowCard({
               muted
               loop
               playsInline
+              preload="auto"
+              controls={false}
               className="absolute inset-0 h-full w-full origin-center object-cover transition-transform duration-[450ms] ease-[ease] group-hover:scale-[1.04]"
             />
           ) : image && flowPaths ? (
