@@ -27,6 +27,15 @@
     50% { transform: scale(1.1) translate(2%, 3%); }
     100% { transform: scale(0.9) translate(-2%, -1%); }
   }
+
+  --animate-flow-pulse: flow-pulse 1.8s ease-in-out infinite;
+  @keyframes flow-pulse {
+    0% { offset-distance: 0%; opacity: 0; }
+    3% { opacity: 0.55; }
+    58% { offset-distance: 100%; opacity: 0.55; }
+    64% { offset-distance: 100%; opacity: 0; }
+    100% { offset-distance: 0%; opacity: 0; }
+  }
 }
 
 :root {

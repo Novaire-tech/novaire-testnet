@@ -12,9 +12,28 @@ const cards: WorkflowCardProps[] = [
     description:
       'Deposit a supported yield-bearing asset into Novaire to unlock a new layer of flexibility without changing how your assets work.',
   },
-  {},
-  {},
-  {},
+  {
+    image: '/images/workflow-split.png',
+    title: 'Separate Principal from Yield',
+    description:
+      'Novaire tokenizes your position into Principal and Yield tokens, allowing each side of the asset to be managed independently.',
+    imageLift: 2,
+    flowPaths: true,
+  },
+  {
+    video: '/videos/workflow-strategy.mp4',
+    title: 'Build Your Own Strategy',
+    description:
+      'Trade principal or future yield independently, capture market opportunities, or simply hold until maturity—the choice is yours.',
+  },
+  {
+    image: '/images/workflow-settle.png',
+    title: 'Settle at Maturity',
+    description:
+      "When the epoch ends, redeem your position seamlessly and realize the value you've built throughout the lifecycle.",
+    centerImage: true,
+    centerImageOffsetY: 38,
+  },
 ];
 
 export function HowNovaireWorks() {

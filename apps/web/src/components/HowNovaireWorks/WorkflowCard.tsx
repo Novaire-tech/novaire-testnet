@@ -15,9 +15,28 @@ export interface WorkflowCardProps {
   description?: string;
   /** Stagger index used to offset the entrance animation. */
   index?: number;
+  /** Shifts the artwork up within the frame (px), independent of the title/description below. */
+  imageLift?: number;
+  /** Renders an animated "energy flow" pulse traveling along the two connecting arrows on hover. */
+  flowPaths?: boolean;
+  /** Centers the artwork within the frame instead of bottom-anchoring it (card 1's default treatment). */
+  centerImage?: boolean;
+  /** Nudges a centered image down (px) via margin-top, independent of the card's own hover-scale transform. */
+  centerImageOffsetY?: number;
 }
 
-export function WorkflowCard({ image, video, step, title, description, index = 0 }: WorkflowCardProps) {
+export function WorkflowCard({
+  image,
+  video,
+  step,
+  title,
+  description,
+  index = 0,
+  imageLift,
+  flowPaths,
+  centerImage,
+  centerImageOffsetY,
+}: WorkflowCardProps) {
   const prefersReducedMotion = useReducedMotion();
 
   return (
@@ -43,20 +62,94 @@ export function WorkflowCard({ image, video, step, title, description, index = 0
           <div className="absolute inset-0 bg-[#7A8CA6] opacity-0 transition-opacity duration-[450ms] ease-[ease] group-hover:opacity-100" />
 
           {video ? (
+            // Video fills the inner frame edge-to-edge (object-cover) instead of sitting inset like the
+            // static artwork, so it starts exactly at this rounded border rather than floating within it.
             <video
               src={video}
               autoPlay
               muted
               loop
               playsInline
-              className="relative max-h-[94%] max-w-[85%] origin-center object-contain transition-transform duration-[450ms] ease-[ease] group-hover:scale-[1.06]"
+              className="absolute inset-0 h-full w-full origin-center object-cover transition-transform duration-[450ms] ease-[ease] group-hover:scale-[1.04]"
             />
-          ) : image ? (
-            // eslint-disable-next-line @next/next/no-img-element
+          ) : image && flowPaths ? (
+            // Split-diagram artwork: wrapped so an SVG overlay (built to a 659x523 viewBox matching
+            // this specific image) can be pixel-aligned with the coordinate space below.
+            <div
+              style={imageLift ? { marginBottom: imageLift } : undefined}
+              className="relative aspect-[659/523] max-h-[94%] max-w-[85%] origin-center transition-transform duration-[450ms] ease-[ease] group-hover:scale-[1.06]"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={image} alt={title ?? ''} className="h-full w-full object-contain" />
+
+              <svg
+                viewBox="0 0 659 523"
+                className="pointer-events-none absolute inset-0 h-full w-full overflow-visible opacity-0 transition-opacity duration-500 ease-out group-hover:opacity-100"
+                aria-hidden="true"
+              >
+                <defs>
+                  {/* stdDeviation is in the same 659x523 user-space units as the paths below, so it scales
+                      correctly with the card at every breakpoint (a CSS filter:blur() px value would not). */}
+                  <filter id="workflow-pulse-blur" x="-200%" y="-200%" width="500%" height="500%">
+                    <feGaussianBlur stdDeviation="9" />
+                  </filter>
+                </defs>
+                {/* Two hand-drawn bezier paths tracing the dotted arrows baked into the PNG — the artwork
+                    itself can't be animated, so these invisible guide paths carry the traveling pulse. */}
+                {[
+                  'M 245,178 C 195,225 130,255 100,325',
+                  'M 415,178 C 465,225 530,255 558,325',
+                ].map((d, i) => (
+                  <g key={i}>
+                    {/* Soft blurred aura — literal Blue Slate, heavily blurred so it reads as a glow.
+                        (mix-blend-mode: screen was tried here to keep the core dot in literal #7A8CA6 too,
+                        but it doesn't composite reliably with SVG filters in this rendering pipeline, so the
+                        core below uses a lightened Blue Slate tint — a real color difference, not a blend
+                        trick — to stay visible once the media background transitions to this same hue.) */}
+                    <circle
+                      r="11"
+                      fill="#7A8CA6"
+                      opacity="0"
+                      filter="url(#workflow-pulse-blur)"
+                      style={{ offsetPath: `path("${d}")` }}
+                      className="animate-flow-pulse"
+                    />
+                    {/* Lightened Blue Slate core so the pulse stays visibly distinct from the identical-hue hover fill */}
+                    <circle
+                      r="6"
+                      fill="#C3CEDC"
+                      opacity="0"
+                      style={{ offsetPath: `path("${d}")` }}
+                      className="animate-flow-pulse"
+                    />
+                  </g>
+                ))}
+              </svg>
+            </div>
+          ) : image && centerImage ? (
+            // Standard centered artwork: a normal flex child with self-center overriding the frame's
+            // items-end, sized via max-h/max-w so it fills the frame nicely without cropping.
             <img
               src={image}
               alt={title ?? ''}
-              className="relative max-h-[94%] max-w-[85%] origin-center object-contain transition-transform duration-[450ms] ease-[ease] group-hover:scale-[1.06]"
+              style={{
+                ...(imageLift ? { marginBottom: imageLift } : {}),
+                ...(centerImageOffsetY ? { marginTop: centerImageOffsetY } : {}),
+              }}
+              className="relative max-h-[94%] max-w-[85%] w-auto origin-center self-center object-contain transition-transform duration-[400ms] ease-[ease] group-hover:scale-[1.04]"
+            />
+          ) : image ? (
+            // Plain artwork (no SVG overlay needed). Sized the same way as before (max-h/max-w caps,
+            // natural aspect ratio) so the rendered scale is unchanged, but positioned via absolute
+            // placement + a horizontal-centering transform instead of align-items/justify-content —
+            // Pinned as close to the frame's bottom edge as possible without clipping: the source PNG
+            // is already cropped tight to the coins (no internal transparent margin), so any negative
+            // bottom offset pushes real pixels past this frame's overflow-hidden edge and flattens them.
+            <img
+              src={image}
+              alt={title ?? ''}
+              style={imageLift ? { marginBottom: imageLift } : undefined}
+              className="absolute bottom-[2px] left-1/2 max-h-[94%] max-w-[85%] w-auto -translate-x-1/2 origin-bottom object-contain transition-transform duration-[450ms] ease-[ease] group-hover:scale-[1.06]"
             />
           ) : (
             <div className="relative flex h-full w-full flex-col items-center justify-center gap-3">
