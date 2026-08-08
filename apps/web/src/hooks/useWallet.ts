@@ -4,6 +4,7 @@ import { WalletService } from '../services/walletService';
 export function useWallet() {
   const state = useSyncExternalStore(
     WalletService.onConnectionChange.bind(WalletService),
+    WalletService.getState.bind(WalletService),
     WalletService.getState.bind(WalletService)
   );
 

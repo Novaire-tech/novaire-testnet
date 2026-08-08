@@ -103,8 +103,6 @@ export const usePortfolio = (): UsePortfolioResult => {
     };
   }, []);
 
-  console.log(`[usePortfolio hook return] loading=${globalLoading}, instanceId=${globalPortfolio?._instanceId}`);
-  
   return {
     portfolio: globalPortfolio,
     loading: globalLoading,

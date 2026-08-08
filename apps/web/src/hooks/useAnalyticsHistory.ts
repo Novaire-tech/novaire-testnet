@@ -4,6 +4,7 @@ import { AnalyticsHistoryService } from '../services/analyticsHistoryService';
 export function useAnalyticsHistory() {
   const snapshots = useSyncExternalStore(
     AnalyticsHistoryService.subscribe.bind(AnalyticsHistoryService),
+    AnalyticsHistoryService.getSnapshots.bind(AnalyticsHistoryService),
     AnalyticsHistoryService.getSnapshots.bind(AnalyticsHistoryService)
   );
 
