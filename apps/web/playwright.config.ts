@@ -13,7 +13,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: /.*\.real-wallet\.spec\.ts/,
+      testIgnore: [/.*\.real-wallet\.spec\.ts/, /.*\.e2e\.spec\.ts/],
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -22,6 +22,16 @@ export default defineConfig({
       name: 'real-wallet',
       testMatch: /.*\.real-wallet\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // Opt-in only: full portfolio verification suite against real Stellar
+      // Testnet contracts + a real Freighter extension. Run via
+      // `npm run test:e2e:portfolio`. Always-on tracing since this is a
+      // deliberately slow, infrequent suite where a failure's trace matters.
+      name: 'portfolio-e2e',
+      testMatch: /.*\.e2e\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'], trace: 'on', screenshot: 'on' },
+      timeout: 240_000,
     },
   ],
   webServer: {

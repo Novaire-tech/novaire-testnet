@@ -10,6 +10,8 @@ export interface MarketData {
   ptPrice: number;
   ytPrice: number;
   twap: number;
+  /** True when get_twap_rate_checked reverted (checkpoint older than MAX_TWAP_AGE_LEDGERS). twap is 0 and must not be displayed as real market data. */
+  twapStale: boolean;
   ptReserve: number;
   ytReserve: number;
   underlyingReserve: number;
@@ -98,11 +100,17 @@ export function useTrade() {
       console.log('Scaled PT Price (displayed):', ptPrice);
       console.log('Scaled YT Price (displayed):', ytPrice);
 
-      const twapTx = await client.get_twap_rate();
-      console.log('Raw TWAP from contract:', twapTx.result ? twapTx.result.toString() : twapTx.result);
-      const rawContractTwap = Number(unwrapResult(twapTx.result) || 0n) / PRICE_SCALE;
-      const twap = rawContractTwap;
-      console.log('Scaled TWAP (displayed):', twap);
+      // get_twap_rate_checked reverts if the TWAP checkpoint is older than
+      // MAX_TWAP_AGE_LEDGERS. Never display a stale TWAP as live market data.
+      let twap = 0;
+      let twapStale = true;
+      try {
+        const twapTx = await client.get_twap_rate_checked();
+        twap = Number(unwrapResult(twapTx.result) || 0n) / PRICE_SCALE;
+        twapStale = false;
+      } catch {
+        console.warn('TWAP is stale or unavailable (get_twap_rate_checked reverted)');
+      }
 
       const reservesTx = await client.get_reserves();
       let ptRes = 0, ytRes = 0, undRes = 0;
@@ -139,6 +147,7 @@ export function useTrade() {
         ptPrice: isNaN(ptPrice) ? 0 : ptPrice,
         ytPrice: isNaN(ytPrice) ? 0 : ytPrice,
         twap: isNaN(twap) ? 0 : twap,
+        twapStale,
         ptReserve: ptRes,
         ytReserve: ytRes,
         underlyingReserve: undRes,

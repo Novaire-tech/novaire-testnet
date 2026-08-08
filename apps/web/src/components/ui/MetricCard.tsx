@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useId, useState } from 'react';
 import { motion } from 'framer-motion';
 
 export interface MetricCardProps {
@@ -28,6 +28,9 @@ export function MetricCard({
   tooltip,
   callout
 }: MetricCardProps) {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const tooltipId = useId();
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
@@ -46,10 +49,22 @@ export function MetricCard({
           </span>
           {tooltip && (
             <>
-              <span className="cursor-help text-nova-muted hover:text-nova-text transition-colors">
+              <button
+                type="button"
+                className="cursor-help text-nova-muted hover:text-nova-text transition-colors"
+                aria-label={`More info: ${label}`}
+                aria-describedby={tooltipId}
+                aria-expanded={tooltipOpen}
+                onClick={() => setTooltipOpen((open) => !open)}
+                onBlur={() => setTooltipOpen(false)}
+              >
                 <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-              </span>
-              <div className="absolute left-0 bottom-full mb-1 hidden group-hover/tooltip:block bg-[#222] border border-nova-border text-nova-text text-[10px] normal-case tracking-normal px-2 py-1.5 rounded shadow-xl whitespace-nowrap z-50">
+              </button>
+              <div
+                id={tooltipId}
+                role="tooltip"
+                className={`absolute left-0 bottom-full mb-1 ${tooltipOpen ? 'block' : 'hidden'} group-hover/tooltip:block bg-[#222] border border-nova-border text-nova-text text-[10px] normal-case tracking-normal px-2 py-1.5 rounded shadow-xl whitespace-normal w-max max-w-[220px] z-50`}
+              >
                 {tooltip}
               </div>
             </>

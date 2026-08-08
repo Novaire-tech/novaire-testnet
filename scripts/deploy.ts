@@ -4,7 +4,7 @@ import * as path from 'path';
 import { execSync } from 'child_process';
 import axios from 'axios';
 
-import { saveDeployments } from './utils';
+import { saveDeployments, assertRequiredAddresses } from './utils';
 
 const NETWORK = (process.env.NETWORK || 'testnet').toLowerCase();
 const isMainnet = NETWORK === 'mainnet';
@@ -148,7 +148,21 @@ async function deploy() {
         const maturity_ledger = ledger.sequence + (isMainnet ? 518400 : 50000);
         const grace_period_ledgers = 1000;
         const keeper = admin.publicKey();
-        const BLEND_POOL = process.env.BLEND_POOL || (isMainnet ? '' : 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF');
+        const BLEND_POOL = process.env.BLEND_POOL || (isMainnet ? undefined : 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF');
+
+        assertRequiredAddresses({
+            BLEND_POOL,
+            underlying_token: deployments.underlying_token,
+            sy_wrapper: deployments.sy_wrapper,
+            vault: deployments.vault,
+            pt_token: deployments.pt_token,
+            yt_token: deployments.yt_token,
+            tokenizer: deployments.tokenizer,
+            marketplace: deployments.marketplace,
+            intent_engine: deployments.intent_engine,
+            rollover_engine: deployments.rollover,
+            factory: deployments.factory,
+        });
 
         const paramsJson = JSON.stringify({
             maturity_ledger: maturity_ledger,

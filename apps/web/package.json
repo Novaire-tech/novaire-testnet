@@ -7,10 +7,13 @@
     "build": "prisma generate --schema=../../prisma/schema.prisma && next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
     "test:e2e": "playwright test --project=chromium",
     "vendor:freighter": "bash e2e/vendor/download-freighter.sh",
     "pretest:e2e:real": "npm run vendor:freighter",
-    "test:e2e:real": "playwright test --project=real-wallet"
+    "test:e2e:real": "playwright test --project=real-wallet",
+    "pretest:e2e:portfolio": "npm run vendor:freighter",
+    "test:e2e:portfolio": "playwright test --project=portfolio-e2e"
   },
   "dependencies": {
     "@prisma/client": "^7.8.0",
@@ -39,6 +42,7 @@
     "eslint-config-next": "16.2.9",
     "stellar-hd-wallet": "^1.0.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }

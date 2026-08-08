@@ -13,7 +13,9 @@
     "lint": "npm run lint -w web",
     "deploy": "tsx --env-file=.env scripts/deploy.ts",
     "deploy:epoch": "tsx --env-file=.env scripts/deploy.ts",
-    "bootstrap": "tsx --env-file=.env scripts/bootstrap_liquidity.ts"
+    "bootstrap": "tsx --env-file=.env scripts/bootstrap_liquidity.ts",
+    "verify:testnet": "tsx scripts/verify-testnet.ts",
+    "test:scripts": "cd scripts && vitest run --config vitest.config.ts"
   },
   "devDependencies": {
     "tsx": "^4.23.0"

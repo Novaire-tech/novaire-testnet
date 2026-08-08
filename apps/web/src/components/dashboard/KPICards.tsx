@@ -5,6 +5,9 @@ import { Briefcase, TrendingUp, HandCoins, PiggyBank, Activity, ShieldCheck } fr
 import { usePortfolio } from '../../hooks/usePortfolio';
 import { ProtocolService, ProtocolState } from '@/services/protocolService';
 import { MetricCard } from '../ui/MetricCard';
+import { calculateProjectedDailyYield } from '../../utils/yield';
+
+const DAILY_YIELD_TOOLTIP = 'Estimated daily earnings based on the current market-implied APY derived from PT pricing. This is an estimate, not realized or accrued yield.';
 
 const KPIS = [
   {
@@ -18,7 +21,7 @@ const KPIS = [
   },
   {
     id: 'yield',
-    label: "Today's Yield",
+    label: 'Est. Daily Yield',
     value: '0.00',
     change: '',
     isPositive: true,
@@ -104,14 +107,35 @@ export function KPICards() {
         return formatXlmAndUsd(portfolio.metrics.totalInvestedXlm, portfolio.metrics.totalInvestedUsd);
       case 'positions':
         return portfolio.metrics.activePositions.toString();
-      case 'yield':
-        return <span className="text-[20px] text-nova-muted">Unavailable on Testnet</span>;
+      case 'yield': {
+        if (!protocolState) {
+          return <div className="h-8 w-32 animate-pulse rounded bg-white/10" />;
+        }
+        const invested = portfolio.metrics.totalInvestedXlm;
+        if (invested <= 0) {
+          return <span className="text-[20px] text-nova-muted">No active positions</span>;
+        }
+        // executableApy is priced off live curve state (always fresh); impliedYieldApy
+        // is TWAP-derived and is 0 whenever protocolState.twapStale is true — never
+        // fabricate a yield estimate from a stale TWAP.
+        const apyPct = protocolState.executableApy || protocolState.impliedYieldApy || 0;
+        if (apyPct <= 0) {
+          return <span className="text-[20px] text-nova-muted">Market data unavailable</span>;
+        }
+        const dailyYieldXlm = calculateProjectedDailyYield(invested, apyPct);
+        const dailyYieldUsd = calculateProjectedDailyYield(portfolio.metrics.totalInvestedUsd, apyPct);
+        return formatXlmAndUsd(dailyYieldXlm, dailyYieldUsd);
+      }
       case 'claimable':
         return formatXlmAndUsd(portfolio.metrics.totalClaimableYieldXlm, portfolio.metrics.totalClaimableYieldUsd);
       case 'tvl':
-        return protocolState 
-          ? formatXlmAndUsd(protocolState.tvlXlm, protocolState.tvlUsd) 
-          : <div className="h-8 w-32 animate-pulse rounded bg-white/10" />;
+        if (!protocolState) {
+          return <div className="h-8 w-32 animate-pulse rounded bg-white/10" />;
+        }
+        if (protocolState.priceUnavailable) {
+          return <span className="text-[20px] text-nova-muted">Price feed unavailable</span>;
+        }
+        return formatXlmAndUsd(protocolState.tvlXlm, protocolState.tvlUsd);
       default:
         return fallback;
     }
@@ -128,7 +152,10 @@ export function KPICards() {
         return '0.0%';
       case 'claimable':
         return 'Ready';
-      case 'yield':
+      case 'yield': {
+        const apyPct = protocolState?.executableApy || protocolState?.impliedYieldApy || 0;
+        return apyPct > 0 ? `${apyPct.toFixed(2)}% APY` : '';
+      }
       case 'tvl':
       case 'positions':
         return '';
@@ -165,6 +192,7 @@ export function KPICards() {
           icon={kpi.icon}
           sparkline={kpi.sparkline}
           index={i}
+          tooltip={kpi.id === 'yield' ? DAILY_YIELD_TOOLTIP : undefined}
           callout={kpi.id === 'claimable' && showYieldCallout ? <ClaimableYieldCallout /> : undefined}
         />
       ))}

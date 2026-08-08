@@ -47,7 +47,7 @@ export function ProtocolDashboard() {
 
           <div className="flex justify-between items-center p-3 rounded-xl bg-nova-surface border border-nova-border">
             <span className="text-sm text-nova-muted">TWAP</span>
-            <span className="text-xl font-serif text-white">{marketData.twap.toFixed(4)} XLM</span>
+            <span className="text-xl font-serif text-white">{marketData.twapStale ? 'Stale' : `${marketData.twap.toFixed(4)} XLM`}</span>
           </div>
 
           <div className="border-t border-nova-border my-2"></div>

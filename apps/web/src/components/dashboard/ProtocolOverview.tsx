@@ -3,22 +3,38 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { YieldService } from '../../services/yieldService';
+import { ProtocolService } from '../../services/protocolService';
 import { Vault } from '../../types';
 
 export function ProtocolOverview() {
   const [vaults, setVaults] = useState<Vault[]>([]);
+  const [tvlUsd, setTvlUsd] = useState<number | null>(null);
+  const [priceUnavailable, setPriceUnavailable] = useState(false);
 
   useEffect(() => {
     YieldService.getVaults().then(setVaults).catch(console.error);
+    ProtocolService.getProtocolState().then(state => {
+      setTvlUsd(state.tvlUsd);
+      setPriceUnavailable(state.priceUnavailable);
+    }).catch(console.error);
   }, []);
 
   const activeVaults = vaults.length;
-  const avgApy = activeVaults > 0 
+  const avgApy = activeVaults > 0
     ? (vaults.reduce((sum, v) => sum + v.fixedApy, 0) / activeVaults).toFixed(1) + '%'
     : 'Not available';
 
+  const formatUsd = (value: number) => new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value);
+
   const METRICS = [
-    { label: 'Protocol TVL', value: 'Unavailable on Testnet' },
+    { label: 'Protocol TVL', value: priceUnavailable ? 'Price feed unavailable' : (tvlUsd !== null && tvlUsd > 0 ? formatUsd(tvlUsd) : 'Not available') },
+    // No on-chain volume/utilization/user-count indexer exists yet for this protocol,
+    // so these remain legitimate "Not available" stubs until that data source ships.
     { label: '30 Day Volume', value: 'Not available' },
     { label: 'Active Vaults', value: activeVaults > 0 ? activeVaults.toString() : 'Not available' },
     { label: 'Avg Fixed APY', value: avgApy },

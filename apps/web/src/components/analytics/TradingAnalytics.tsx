@@ -20,10 +20,10 @@ export function TradingAnalytics() {
   const metrics = [
     { label: 'PT Price', value: marketData ? `${formatter.format(marketData.ptPrice)} XLM` : 'No data available', icon: TrendingUp },
     { label: 'YT Price', value: marketData ? `${formatter.format(marketData.ytPrice)} XLM` : 'No data available', icon: TrendingUp },
-    { label: 'PT TWAP', value: marketData ? formatter.format(marketData.twap) : 'No data available', icon: Activity },
-    { label: 'Protocol TVL', value: protocolState ? currencyFormatter.format(protocolState.tvlUsd) : 'No data available', icon: DollarSign },
+    { label: 'PT TWAP', value: !marketData ? 'No data available' : (marketData.twapStale ? 'Stale' : formatter.format(marketData.twap)), icon: Activity },
+    { label: 'Protocol TVL', value: !protocolState ? 'No data available' : (protocolState.priceUnavailable ? 'Price feed unavailable' : currencyFormatter.format(protocolState.tvlUsd)), icon: DollarSign },
     { label: 'Pool Liquidity', value: marketData ? `${marketData.underlyingReserve.toLocaleString(undefined, { maximumFractionDigits: 2 })} XLM` : 'No data available', icon: BarChart3 },
-    { label: 'Current APY', value: protocolState ? `${protocolState.impliedYieldApy.toFixed(2)}%` : 'No data available', icon: Percent, color: 'text-green-400' },
+    { label: 'Current APY', value: !protocolState ? 'No data available' : (protocolState.twapStale ? 'Stale market data' : `${protocolState.impliedYieldApy.toFixed(2)}%`), icon: Percent, color: 'text-green-400' },
   ];
 
   return (

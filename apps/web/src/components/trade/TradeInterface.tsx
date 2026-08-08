@@ -348,7 +348,9 @@ export function TradeInterface() {
                     {(() => {
                       let status = { label: '🟢 Market Healthy', color: 'text-[#3ECF8E]', bg: 'bg-[#3ECF8E]/10', border: 'border-[#3ECF8E]/20', desc: 'The marketplace is operating normally with sufficient liquidity and active trading.' };
                       if (marketData) {
-                        if (marketData.twap >= 1.0) {
+                        if (marketData.twapStale) {
+                          status = { label: '⚪ Stale Market Data', color: 'text-nova-muted', bg: 'bg-white/5', border: 'border-white/10', desc: 'The on-chain TWAP checkpoint is stale. Yield estimates based on TWAP are unavailable until it refreshes.' };
+                        } else if (marketData.twap >= 1.0) {
                           status = { label: '🔴 YT Trading Unavailable', color: 'text-red-400', bg: 'bg-red-400/10', border: 'border-red-400/20', desc: 'PT TWAP has reached or exceeded 1.0. Yield Tokens (YT) currently have zero market value.' };
                         } else if (marketData.ptPrice > 1.0) {
                           status = { label: '🟠 High PT Premium', color: 'text-orange-400', bg: 'bg-orange-400/10', border: 'border-orange-400/20', desc: 'Principal Tokens (PT) are trading at a premium above face value (1.0). YT market value may be temporarily zero.' };
@@ -391,7 +393,7 @@ export function TradeInterface() {
                     <div className="bg-nova-surface border border-nova-border rounded-lg p-3 flex flex-row items-center justify-between text-sm">
                       <div className="flex items-center gap-2">
                         <span className="text-nova-muted">TWAP:</span>
-                        <span className="font-bold text-white">{marketData ? marketData.twap.toFixed(5) : '0.00000'}</span>
+                        <span className="font-bold text-white">{!marketData ? '0.00000' : (marketData.twapStale ? 'Stale' : marketData.twap.toFixed(5))}</span>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-nova-muted">Spot:</span>

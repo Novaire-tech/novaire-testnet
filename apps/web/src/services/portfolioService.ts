@@ -171,9 +171,15 @@ export class PortfolioService {
         const ptPriceUsd = (!isNaN(ptSpotPriceUnderlying) && !isNaN(underlyingSpotUsd)) ? (ptSpotPriceUnderlying * underlyingSpotUsd) : 0;
         const ytPriceUsd = (!isNaN(ytSpotPriceUnderlying) && !isNaN(underlyingSpotUsd)) ? (ytSpotPriceUnderlying * underlyingSpotUsd) : 0;
 
-        // NOTE: After execute_fixed_yield_intent, the user holds PT tokens as the
-        // vault position receipt. The Vault contract LP shares are held by the protocol,
-        // not the user directly. We still attempt to read them for completeness.
+        // NOTE: Vault LP shares (UserShares) and PT/YT balances are independent on-chain
+        // balances (contracts/vault/src/lib.rs UserShares vs pt_token/yt_token's own
+        // Balance storage). Tokenizing only burns/transfers the specific share amount
+        // passed to mint_pt_yt, so a user can hold untokenized LP AND PT/YT from a partial
+        // tokenization, AND PT bought separately on the marketplace (which never touches
+        // vault balances at all). These are genuinely separate positions and must both be
+        // counted, not treated as alternate representations of the same deposit.
+        let realVaultBalanceFloat = 0;
+        let realVaultValueUsd = 0;
         try {
           const vaultTx = await vaultClient.balance_of({ user: address });
           let rawVault: any = vaultTx?.result;
@@ -185,20 +191,9 @@ export class PortfolioService {
              }
              const parsedVault = Number(rawVault);
              if (!isNaN(parsedVault) && parsedVault > 0) {
-                const balanceFloat = parsedVault / 10000000;
-                let valueUsd = (!isNaN(balanceFloat) && !isNaN(underlyingSpotUsd)) ? balanceFloat * underlyingSpotUsd : 0;
-                if (isNaN(valueUsd) || !isFinite(valueUsd)) valueUsd = 0;
-                totalValueUsd += valueUsd;
-                assets.push({
-                  assetCode: `Novaire Vault (${underlyingAsset})`,
-                  issuer: epochId,
-                  balance: balanceFloat,
-                  priceUsd: underlyingSpotUsd,
-                  valueUsd,
-                  allocationPercent: 0,
-                  isNative: false,
-                  assetType: 'vault'
-                });
+                realVaultBalanceFloat = parsedVault / 10000000;
+                realVaultValueUsd = (!isNaN(realVaultBalanceFloat) && !isNaN(underlyingSpotUsd)) ? realVaultBalanceFloat * underlyingSpotUsd : 0;
+                if (isNaN(realVaultValueUsd) || !isFinite(realVaultValueUsd)) realVaultValueUsd = 0;
              }
           }
         } catch (e) { console.warn("Vault LP balance fetch error (expected for intent-flow users)", e); }
@@ -296,12 +291,17 @@ export class PortfolioService {
           console.warn("YT claimable yield fetch error", e);
         }
 
-        // Synthetic vault entry so VaultPositionsTable shows the deposit.
-        // The current value of a vault position is the combined value of PT + YT.
+        // Intent-flow position (PT/YT balances), pushed as its own 'vault' entry. This is
+        // additive with any untokenized raw LP entry pushed below — see note above.
         if (ptBalanceFloat > 0 || ytBalanceFloat > 0) {
            const currentVaultValue = ptValueUsd + ytValueUsd;
            const claimableYieldUsd = (!isNaN(claimableYieldNative) && !isNaN(underlyingSpotUsd)) ? (claimableYieldNative * underlyingSpotUsd) : 0;
-           
+
+           // NOTE: currentVaultValue is NOT added to totalValueUsd here — it's the
+           // same money already counted above via ptValueUsd/ytValueUsd. This entry
+           // is a display rollup (VaultPositionsTable) of the PT+YT position, not a
+           // third independent value bucket. Adding it again previously double-counted
+           // every intent-flow position 2x in "Portfolio Value" and allocation %.
            assets.push({
              assetCode: `Novaire Vault (${underlyingAsset})`,
              issuer: epochId,
@@ -312,6 +312,21 @@ export class PortfolioService {
              isNative: false,
              assetType: 'vault',
              claimableYield: (!isNaN(claimableYieldUsd) && isFinite(claimableYieldUsd)) ? claimableYieldUsd : 0
+           });
+        }
+        // Untokenized raw LP is a separate position (see note above) and is additive with
+        // any PT/YT position pushed above, not mutually exclusive with it.
+        if (realVaultBalanceFloat > 0) {
+           totalValueUsd += realVaultValueUsd;
+           assets.push({
+             assetCode: `Novaire Vault LP (${underlyingAsset})`,
+             issuer: epochId,
+             balance: realVaultBalanceFloat,
+             priceUsd: underlyingSpotUsd,
+             valueUsd: realVaultValueUsd,
+             allocationPercent: 0,
+             isNative: false,
+             assetType: 'vault'
            });
         }
 
@@ -327,7 +342,17 @@ export class PortfolioService {
       for (const asset of assets) {
         if (asset.assetType === 'wallet') {
            asset.allocationPercent = 0;
-           continue; 
+           continue;
+        }
+
+        // The intent-flow 'vault' rollup entry (identified by having a claimableYield
+        // field — see totalVaultLpUsd's filter below) duplicates value already counted
+        // via its underlying PT/YT entries; it's a display-only summary for
+        // VaultPositionsTable and must not get its own allocation share or count
+        // toward "largest holding" on top of the PT/YT rows it summarizes.
+        if (asset.assetType === 'vault' && asset.claimableYield !== undefined) {
+           asset.allocationPercent = 0;
+           continue;
         }
 
         if (totalValueUsd > 0 && !isNaN(totalValueUsd) && isFinite(totalValueUsd)) {
@@ -375,19 +400,16 @@ export class PortfolioService {
         totalValueUsd += totalClaimableYieldUsd;
       }
 
-      // Calculate invested amount based on principal balance, not current market value
+      // Calculate invested amount based on principal balance, not current market value.
+      // There can be up to two assetType: 'vault' entries per user: untokenized LP and a
+      // PT/YT-derived position (see note above these are genuinely separate positions),
+      // so both are summed here rather than picking one.
       const totalInvestedUsd = assets.filter(a => a.assetType === 'vault').reduce((sum, a) => (!isNaN(a.balance) && !isNaN(a.priceUsd)) ? sum + (a.balance * a.priceUsd) : sum, 0);
 
       const totalWalletUsd = assets.filter(a => a.assetType === 'wallet').reduce((sum, a) => (!isNaN(a.valueUsd) && isFinite(a.valueUsd)) ? sum + a.valueUsd : sum, 0);
-      
-      // Actual Vault LP (exclude the synthetic one which has no claimableYield field but represents the same underlying deposit?) 
-      // Wait, the synthetic one HAS claimableYield field! "asset.claimableYield"
-      // Wait, the synthetic one has assetType === 'vault' and includes the PT/YT value.
-      // If we look at the code above, actual Vault LP is added with assetType 'vault', and then synthetic vault is ALSO added with assetType 'vault'.
-      // If we want to store Actual Vault LP separately to reconstruct the portfolio precisely without double counting:
-      // Actually, since historical reconstruction uses PT and YT, we ONLY want Actual Vault LP (meaning `asset.claimableYield === undefined` or the real vault balance).
-      // Let's filter by the issuer NOT being epochId? No, both have issuer = epochId.
-      // The synthetic vault has `claimableYield` field. The real one does not (in assets array).
+
+      // Vault LP value specifically for a direct (non-intent-flow) deposit: identified by
+      // the absence of `claimableYield`, which is only ever set on the intent-flow entry.
       const totalVaultLpUsd = assets.filter(a => a.assetType === 'vault' && a.claimableYield === undefined).reduce((sum, a) => (!isNaN(a.valueUsd) && isFinite(a.valueUsd)) ? sum + a.valueUsd : sum, 0);
 
       return {
@@ -401,9 +423,9 @@ export class PortfolioService {
           largestHoldingValue: isNaN(largestValue) ? 0 : largestValue,
           activePositions: assets.filter(a => a.assetType === 'vault').length,
           totalInvestedUsd,
-          totalInvestedXlm: totalInvestedUsd / xlmPriceUsd,
+          totalInvestedXlm: (xlmPriceUsd > 0) ? (totalInvestedUsd / xlmPriceUsd) : 0,
           totalClaimableYieldUsd,
-          totalClaimableYieldXlm: totalClaimableYieldUsd / xlmPriceUsd,
+          totalClaimableYieldXlm: (xlmPriceUsd > 0) ? (totalClaimableYieldUsd / xlmPriceUsd) : 0,
           totalWalletUsd,
           totalVaultLpUsd
         },
