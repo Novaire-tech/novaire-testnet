@@ -49,7 +49,7 @@ export class WalletService {
   };
 
   static getState(): WalletConnectionState {
-    return { ...this.state };
+    return this.state;
   }
 
   static onConnectionChange(callback: () => void) {
