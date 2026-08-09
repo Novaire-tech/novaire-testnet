@@ -22,9 +22,9 @@ const cards: WorkflowCardProps[] = [
   },
   {
     video: '/videos/workflow-strategy.mp4',
-    title: 'Build Your Own Strategy',
+    title: 'Trade Your Yield.',
     description:
-      'Trade principal or future yield independently, capture market opportunities, or simply hold until maturity—the choice is yours.',
+      "Buy and sell principal or future yield independently through Novaire's on-chain marketplace.",
   },
   {
     image: '/images/workflow-settle.png',

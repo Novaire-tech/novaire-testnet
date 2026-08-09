@@ -6,6 +6,7 @@ import { Hero } from "@/components/Hero";
 import { HowNovaireWorks } from "@/components/HowNovaireWorks/Section";
 import { TechMarquee } from "@/components/TechMarquee";
 import FinalCTA from "@/components/FinalCTA";
+import { FAQ } from "@/components/FAQ/Section";
 import Footer from "@/components/Footer";
 
 export default function Home() {
@@ -40,6 +41,7 @@ export default function Home() {
       <HowNovaireWorks />
       <TechMarquee />
       <FinalCTA />
+      <FAQ />
       <Footer />
     </>
   );
