@@ -5,11 +5,8 @@ import Navbar from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
 import { HowNovaireWorks } from "@/components/HowNovaireWorks/Section";
 import { TechMarquee } from "@/components/TechMarquee";
-import Stats from "@/components/Stats";
-import Features from "@/components/Features";
 import Workflow from "@/components/Workflow";
-import Ecosystem from "@/components/Ecosystem";
-import BuiltOnStellar from "@/components/BuiltOnStellar";
+import FinalCTA from "@/components/FinalCTA";
 import Footer from "@/components/Footer";
 
 export default function Home() {
@@ -41,13 +38,10 @@ export default function Home() {
     <>
       <Navbar />
       <Hero />
+      <Workflow />
       <HowNovaireWorks />
       <TechMarquee />
-      <Stats />
-      <Features />
-      <Workflow />
-      <Ecosystem />
-      <BuiltOnStellar />
+      <FinalCTA />
       <Footer />
     </>
   );
