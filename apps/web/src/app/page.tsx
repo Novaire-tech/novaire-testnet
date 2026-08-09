@@ -5,7 +5,6 @@ import Navbar from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
 import { HowNovaireWorks } from "@/components/HowNovaireWorks/Section";
 import { TechMarquee } from "@/components/TechMarquee";
-import Workflow from "@/components/Workflow";
 import FinalCTA from "@/components/FinalCTA";
 import Footer from "@/components/Footer";
 
@@ -38,7 +37,6 @@ export default function Home() {
     <>
       <Navbar />
       <Hero />
-      <Workflow />
       <HowNovaireWorks />
       <TechMarquee />
       <FinalCTA />

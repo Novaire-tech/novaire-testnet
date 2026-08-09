@@ -379,21 +379,6 @@ transparent 72%
   flex: 1;
   text-align: center;
 }
-.section-label {
-  color: var(--green);
-  font-size: 11px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
-  margin-bottom: 16px;
-  display: block;
-}
-.section-heading {
-  font-size: 40px;
-  font-weight: 600;
-  color: var(--color-nova-text);
-  margin-bottom: 64px;
-  line-height: 1.2;
-}
 .card-title {
   font-size: 18px;
   font-weight: 600;
@@ -414,61 +399,6 @@ transparent 72%
 }
 .card-link:hover {
   color: var(--blue);
-}
-
-/* Section 5 - How it works */
-.how-section {
-  padding: 50px 0;
-  background: transparent;
-}
-.how-header {
-  display: flex;
-  margin-bottom: 80px;
-}
-.steps-container {
-  display: flex;
-  justify-content: space-between;
-  position: relative;
-}
-.steps-line {
-  position: absolute;
-  top: 16px;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  border-top: 1px dashed var(--border);
-  z-index: 1;
-}
-.step {
-  flex: 1;
-  position: relative;
-  z-index: 2;
-  padding: 0 16px;
-}
-.step-icon {
-  width: 32px;
-  height: 32px;
-  padding: 6px;
-  border-radius: 8px;
-  color: var(--silver);
-  background: var(--charcoal);
-}
-.step-num {
-  font-size: 11px;
-  color: var(--color-nova-muted);
-  margin-top: 20px;
-}
-.step-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--color-nova-text);
-  margin-top: 6px;
-}
-.step-desc {
-  font-size: 12px;
-  color: var(--color-nova-muted);
-  line-height: 1.6;
-  margin-top: 8px;
 }
 
 /* Footer */
@@ -551,9 +481,6 @@ transparent 72%
   .hero-left { width: 100%; }
   .hero-right { display: none; }
   .hero-heading { font-size: 40px; }
-  .steps-container { flex-direction: column; gap: 40px; }
-  .steps-line { display: none; }
-  .how-header { flex-direction: column; align-items: flex-start; gap: 24px; }
   .footer-top { grid-template-columns: 1fr; }
   .nav-links { display: none; }
   .stats-row { flex-wrap: wrap; gap: 32px; }
