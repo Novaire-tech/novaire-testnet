@@ -24,26 +24,12 @@ const FIRST_ROW = [
   },
 ];
 
-const SECOND_ROW = [
-  {
-    index: '04',
-    question: 'Can yield be traded like an asset?',
-    answer:
-      "That's the idea behind YT.\n\nYou can take exposure to future yield without owning the entire principal.",
-  },
-  {
-    index: '05',
-    question: 'What happens when the market expects higher yields?',
-    answer:
-      'PT and YT prices react to changing expectations.\n\nThe market continuously discovers what future yield is worth.',
-  },
-  {
-    index: '06',
-    question: 'Why separate principal from yield?',
-    answer:
-      'Because different investors want different things.\n\nPT targets principal exposure; YT targets future yield exposure.',
-  },
-];
+const FOURTH_ITEM = {
+  index: '04',
+  question: 'Can yield be traded like an asset?',
+  answer:
+    "That's the idea behind YT.\n\nYou can take exposure to future yield without owning the entire principal.",
+};
 
 export function FAQ() {
   const prefersReducedMotion = useReducedMotion();
@@ -71,11 +57,11 @@ export function FAQ() {
           </p>
         </motion.div>
 
-        {/* Row 1: image left, FAQs right */}
+        {/* Image left, FAQs right */}
         <div className="mt-16 flex flex-col gap-8 md:mt-20 lg:flex-row lg:items-stretch lg:gap-14">
           <motion.div
             {...riseUp(0.1)}
-            className="relative aspect-[4/3] w-full max-w-[420px] overflow-hidden rounded-[28px] border border-[rgba(17,42,70,0.1)] lg:aspect-auto lg:h-auto lg:w-[380px] lg:max-w-none lg:flex-shrink-0 lg:self-stretch"
+            className="relative aspect-[4/3] w-full max-w-[470px] overflow-hidden rounded-[28px] border border-[rgba(17,42,70,0.1)] lg:aspect-auto lg:h-auto lg:w-[430px] lg:max-w-none lg:flex-shrink-0 lg:self-stretch"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -89,30 +75,7 @@ export function FAQ() {
             {FIRST_ROW.map((item) => (
               <FAQItem key={item.index} {...item} />
             ))}
-          </motion.div>
-        </div>
-
-        {/* Row 2: FAQs left, image right (mirrored) */}
-        <div className="mt-10 flex flex-col gap-8 md:mt-14 lg:flex-row lg:items-stretch lg:gap-14">
-          <motion.div
-            {...riseUp(0.1)}
-            className="order-2 flex flex-1 flex-col justify-between gap-4 lg:order-1 lg:w-full lg:max-w-none"
-          >
-            {SECOND_ROW.map((item) => (
-              <FAQItem key={item.index} {...item} />
-            ))}
-          </motion.div>
-
-          <motion.div
-            {...riseUp(0.2)}
-            className="order-1 relative aspect-[4/3] w-full max-w-[420px] overflow-hidden rounded-[28px] border border-[rgba(17,42,70,0.1)] lg:order-2 lg:aspect-auto lg:h-auto lg:w-[380px] lg:max-w-none lg:flex-shrink-0 lg:self-stretch"
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/images/faq-2.png"
-              alt="Novaire coin monument"
-              className="absolute inset-0 h-full w-full object-cover"
-            />
+            <FAQItem {...FOURTH_ITEM} />
           </motion.div>
         </div>
       </div>

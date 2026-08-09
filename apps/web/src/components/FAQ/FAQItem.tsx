@@ -25,13 +25,13 @@ export function FAQItem({ index, question, answer }: FAQItemProps) {
         type="button"
         onClick={() => setIsOpen((prev) => !prev)}
         aria-expanded={isOpen}
-        className="flex w-full items-center justify-between gap-4 px-6 py-3.5 text-left"
+        className="group flex w-full items-center justify-between gap-4 px-6 py-3.5 text-left"
       >
         <span className="flex items-center gap-4">
-          <span className="font-poppins text-[13px] font-medium tracking-[0.06em] text-[rgba(17,42,70,0.45)]">
+          <span className="font-poppins text-[13px] font-medium tracking-[0.06em] text-[rgba(17,42,70,0.45)] transition-colors duration-[250ms] ease-out group-hover:text-[#2454a6]">
             {index}
           </span>
-          <span className="font-poppins text-[17px] font-medium leading-[1.4] text-[#112a46] sm:text-[18px]">
+          <span className="font-poppins text-[17px] font-medium leading-[1.4] text-[#112a46] transition-colors duration-[250ms] ease-out group-hover:text-[#2454a6] sm:text-[18px]">
             {question}
           </span>
         </span>
@@ -39,7 +39,7 @@ export function FAQItem({ index, question, answer }: FAQItemProps) {
         <motion.svg
           animate={{ rotate: isOpen ? 180 : 0 }}
           transition={{ duration: prefersReducedMotion ? 0 : 0.3, ease: 'easeOut' }}
-          className="h-5 w-5 flex-shrink-0 text-[#112a46]"
+          className="h-5 w-5 flex-shrink-0 text-[#112a46] transition-colors duration-[250ms] ease-out group-hover:text-[#2454a6]"
           viewBox="0 0 24 24"
           fill="none"
           stroke="currentColor"
