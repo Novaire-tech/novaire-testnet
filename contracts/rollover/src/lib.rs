@@ -47,18 +47,36 @@ pub trait IntentEngineInterface {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EpochRecord {
+pub struct RolloverMetadata {
+    pub admin: Address,
+    pub vault: Address,
+    pub marketplace: Address,
+    pub keeper: Address,
+    pub underlying_token: Address,
+    pub factory: Address,
+    pub grace_period_ledgers: u32,
+}
+
+/// Narrow cross-contract view of a Factory epoch — mirrors `factory::RolloverEpochView`
+/// (5 fields) rather than Factory's real, internal `EpochRecord` (15 fields). Soroban
+/// decodes structs positionally by field count, so Rollover must not declare the full
+/// `EpochRecord` shape here; Factory exposes dedicated `*_view` getters that return
+/// exactly this narrow struct.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RolloverEpochView {
     pub epoch_id: u32,
     pub maturity_ledger: u32,
-    pub created_ledger: u32,
     pub pt_token: Address,
+    pub tokenizer: Address,
+    pub intent_engine: Address,
 }
 
 #[soroban_sdk::contractclient(name = "FactoryClient")]
 pub trait FactoryInterface {
-    fn latest_epoch(env: Env) -> EpochRecord;
-    fn get_epoch_by_maturity(env: Env, maturity_ledger: u32) -> EpochRecord;
-    fn get_next_epoch(env: Env, current_epoch_id: u32) -> EpochRecord;
+    fn latest_epoch_view(env: Env) -> RolloverEpochView;
+    fn epoch_view_by_maturity(env: Env, maturity_ledger: u32) -> RolloverEpochView;
+    fn next_epoch_view(env: Env, current_epoch_id: u32) -> RolloverEpochView;
 }
 
 #[contracterror]
@@ -81,28 +99,21 @@ pub enum NovaireRolloverError {
     InvalidKeeper = 14,
     InvalidEpoch = 15,
     PositionAlreadyActive = 16,
+    PtTokenMismatch = 17,
 }
 
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
     Admin,
-    Tokenizer,
     Vault,
     Marketplace,
-    IntentEngine,
     Keeper,
     RolloverPositions(Address),
     UnderlyingToken,
     Paused,
     GracePeriodLedgers,
     Factory,
-    // Set once at `initialize` and never written again by any other entrypoint (in
-    // particular, `execute_rollover` no longer touches this - see RO-02). Only used as the
-    // PT token a brand-new `register_rollover` pulls from; once captured onto a position it
-    // plays no further role, so it being "the epoch-1 PT token forever" is a pre-existing,
-    // out-of-scope limitation for registering into later epochs, not a cross-position hazard.
-    InitialPtToken,
     // RO-02: PT custody/accounting is tracked per PT-token contract address rather than
     // behind a single global "current" PT token, since positions from different epochs
     // (and therefore different PT token contracts) can be active at the same time.
@@ -266,15 +277,20 @@ pub struct AutonomousRollover;
 
 #[contractimpl]
 impl AutonomousRollover {
+    /// `tokenizer`, `intent_engine` and `pt_token` are accepted only for interface
+    /// compatibility with existing deployers; Rollover no longer stores them. Every
+    /// epoch's Tokenizer, IntentEngine and PT token are resolved from `factory` at
+    /// execution time (see `execute_rollover` / `register_rollover`), since a
+    /// long-lived rollover position must not be pinned to one epoch's components.
     pub fn initialize(
         env: Env,
         admin: Address,
-        tokenizer: Address,
+        _tokenizer: Address,
         vault: Address,
         marketplace: Address,
-        intent_engine: Address,
+        _intent_engine: Address,
         keeper: Address,
-        pt_token: Address,
+        _pt_token: Address,
         underlying_token: Address,
         factory: Address,
         grace_period_ledgers: u32,
@@ -285,24 +301,11 @@ impl AutonomousRollover {
         }
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::Tokenizer, &tokenizer);
         env.storage().instance().set(&DataKey::Vault, &vault);
         env.storage()
             .instance()
             .set(&DataKey::Marketplace, &marketplace);
-        env.storage()
-            .instance()
-            .set(&DataKey::IntentEngine, &intent_engine);
         env.storage().instance().set(&DataKey::Keeper, &keeper);
-        // RO-02: stored once here and never mutated by any other entrypoint (in particular,
-        // `execute_rollover` no longer writes to it). `register_rollover` reads it to seed a
-        // brand-new position's own `pt_token` field; after that, resolution is entirely
-        // per-position, so nothing can cross-contaminate another user's position by rolling.
-        env.storage()
-            .instance()
-            .set(&DataKey::InitialPtToken, &pt_token);
         env.storage()
             .instance()
             .set(&DataKey::UnderlyingToken, &underlying_token);
@@ -317,6 +320,22 @@ impl AutonomousRollover {
             .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
 
         Ok(())
+    }
+
+    /// Lets Factory (and anyone else) verify this shared Rollover's config
+    /// without re-running `initialize` — a second epoch reusing this
+    /// instance proves the wiring matches by reading it back, instead of
+    /// swallowing `AlreadyInitialized` and hoping the config still agrees.
+    pub fn metadata(env: Env) -> Result<RolloverMetadata, NovaireRolloverError> {
+        Ok(RolloverMetadata {
+            admin: storage::get_address(&env, DataKey::Admin)?,
+            vault: storage::get_address(&env, DataKey::Vault)?,
+            marketplace: storage::get_address(&env, DataKey::Marketplace)?,
+            keeper: storage::get_address(&env, DataKey::Keeper)?,
+            underlying_token: storage::get_address(&env, DataKey::UnderlyingToken)?,
+            factory: storage::get_address(&env, DataKey::Factory)?,
+            grace_period_ledgers: storage::get_grace_period(&env),
+        })
     }
 
     pub fn pause(env: Env) -> Result<(), NovaireRolloverError> {
@@ -357,13 +376,17 @@ impl AutonomousRollover {
             }
         }
 
-        // RO-02 / H-2: capture the PT token onto THIS position at registration time, from
-        // the static, init-only `InitialPtToken` (never mutated by `execute_rollover` or
-        // anything else - see `initialize`), rather than trusting a mutable global slot that
-        // any other user's `execute_rollover` could overwrite mid-air between this call being
-        // submitted and applied. Once stored on the position it is fixed for its lifetime; no
-        // other position's rollover can ever change it.
-        let pt_token_addr = storage::get_address(&env, DataKey::InitialPtToken)?;
+        // Factory-resolved, not caller-supplied: the PT token for this position is derived
+        // from `current_epoch_maturity` via Factory, never trusted from an address the caller
+        // could pass directly. Once stored on the position it is fixed for its lifetime; no
+        // other position's rollover can ever change it (RO-02 / H-2).
+        let factory_addr = storage::get_address(&env, DataKey::Factory)?;
+        let factory_client = FactoryClient::new(&env, &factory_addr);
+        let current_epoch = factory_client.epoch_view_by_maturity(&current_epoch_maturity);
+        if current_epoch.maturity_ledger != current_epoch_maturity {
+            return Err(NovaireRolloverError::InvalidEpoch);
+        }
+        let pt_token_addr = current_epoch.pt_token;
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
 
         let user_bal = pt_client.balance(&user);
@@ -429,26 +452,30 @@ impl AutonomousRollover {
             // Grace period expired, permissionless execution allowed to ensure liveness
         }
 
-        let tokenizer_addr = storage::get_address(&env, DataKey::Tokenizer)?;
-        let tokenizer_client = TokenizerClient::new(&env, &tokenizer_addr);
         let contract_addr = env.current_contract_address();
 
-        // 1. Redeem PT
-        let underlying_redeemed = tokenizer_client.redeem_pt(&contract_addr, &position.pt_balance);
-
-        // 2. Discover next epoch explicitly via Linked Epochs Routing
+        // 1. Resolve current epoch's components from Factory - never long-lived storage.
         let factory_addr = storage::get_address(&env, DataKey::Factory)?;
         let factory_client = FactoryClient::new(&env, &factory_addr);
 
-        let current_epoch = factory_client.get_epoch_by_maturity(&position.current_epoch_maturity);
-        let next_epoch = factory_client.get_next_epoch(&current_epoch.epoch_id);
+        let current_epoch = factory_client.epoch_view_by_maturity(&position.current_epoch_maturity);
+        if position.pt_token != current_epoch.pt_token {
+            return Err(NovaireRolloverError::PtTokenMismatch);
+        }
+        let tokenizer_client = TokenizerClient::new(&env, &current_epoch.tokenizer);
+
+        // 2. Redeem current PT via the current epoch's Tokenizer
+        let underlying_redeemed = tokenizer_client.redeem_pt(&contract_addr, &position.pt_balance);
+
+        // 3. Discover next epoch explicitly via Linked Epochs Routing
+        let next_epoch = factory_client.next_epoch_view(&current_epoch.epoch_id);
 
         if next_epoch.maturity_ledger <= current_ledger {
             return Err(NovaireRolloverError::NextEpochNotSet);
         }
 
-        // 3. Intent Engine Fixed Yield Intent
-        let intent_engine_addr = storage::get_address(&env, DataKey::IntentEngine)?;
+        // 4. Intent Engine Fixed Yield Intent - resolved fresh for the next epoch.
+        let intent_engine_addr = next_epoch.intent_engine.clone();
         let intent_engine_client = IntentEngineClient::new(&env, &intent_engine_addr);
 
         let min_implied_rate = position

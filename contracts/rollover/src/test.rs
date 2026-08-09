@@ -58,45 +58,33 @@ impl MockIntentEngine {
     }
 }
 
+/// Real epochs are distinct maturities with their own Tokenizer/IntentEngine/PT
+/// token contracts, so this mock keys a full `RolloverEpochView` per `maturity_ledger`
+/// (via `set_epoch`) rather than one mutable global slot - otherwise a "current
+/// epoch" lookup could accidentally see a "next epoch" mutation, masking exactly
+/// the per-epoch resolution bugs this refactor exists to prevent.
 #[contract]
 pub struct MockFactory;
 #[contractimpl]
 impl MockFactory {
-    pub fn latest_epoch(env: Env) -> EpochRecord {
-        let maturity_ledger: u32 = env
+    pub fn latest_epoch_view(env: Env) -> RolloverEpochView {
+        Self::next_epoch_view(env, 0)
+    }
+
+    pub fn epoch_view_by_maturity(env: Env, maturity_ledger: u32) -> RolloverEpochView {
+        env.storage()
+            .instance()
+            .get(&(soroban_sdk::Symbol::new(&env, "ep"), maturity_ledger))
+            .unwrap()
+    }
+
+    pub fn next_epoch_view(env: Env, _current_epoch_id: u32) -> RolloverEpochView {
+        let next_maturity: u32 = env
             .storage()
             .instance()
             .get(&soroban_sdk::Symbol::new(&env, "next_maturity"))
             .unwrap_or(2000);
-        EpochRecord {
-            epoch_id: 2,
-            maturity_ledger,
-            created_ledger: 0,
-            pt_token: Self::pt_token(&env),
-        }
-    }
-
-    pub fn get_epoch_by_maturity(env: Env, maturity_ledger: u32) -> EpochRecord {
-        EpochRecord {
-            epoch_id: 1,
-            maturity_ledger,
-            created_ledger: 0,
-            pt_token: Self::pt_token(&env),
-        }
-    }
-
-    pub fn get_next_epoch(env: Env, _current_epoch_id: u32) -> EpochRecord {
-        let maturity_ledger: u32 = env
-            .storage()
-            .instance()
-            .get(&soroban_sdk::Symbol::new(&env, "next_maturity"))
-            .unwrap_or(2000);
-        EpochRecord {
-            epoch_id: 2,
-            maturity_ledger,
-            created_ledger: 0,
-            pt_token: Self::pt_token(&env),
-        }
+        Self::epoch_view_by_maturity(env, next_maturity)
     }
 
     pub fn set_next_maturity(env: Env, maturity_ledger: u32) {
@@ -106,17 +94,24 @@ impl MockFactory {
         );
     }
 
-    pub fn set_pt_token(env: Env, pt_token: Address) {
-        env.storage()
-            .instance()
-            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
-    }
-
-    fn pt_token(env: &Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&soroban_sdk::Symbol::new(env, "pt_token"))
-            .unwrap()
+    pub fn set_epoch(
+        env: Env,
+        maturity_ledger: u32,
+        pt_token: Address,
+        tokenizer: Address,
+        intent_engine: Address,
+    ) {
+        let record = RolloverEpochView {
+            epoch_id: maturity_ledger,
+            maturity_ledger,
+            pt_token,
+            tokenizer,
+            intent_engine,
+        };
+        env.storage().instance().set(
+            &(soroban_sdk::Symbol::new(&env, "ep"), maturity_ledger),
+            &record,
+        );
     }
 }
 
@@ -184,7 +179,12 @@ fn setup_env() -> (
 
     let factory_contract_id = env.register(MockFactory, ());
     let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
-    mock_factory_client.set_pt_token(&pt_contract_id);
+    mock_factory_client.set_epoch(
+        &1000,
+        &pt_contract_id,
+        &tokenizer_contract_id,
+        &intent_engine_contract_id,
+    );
 
     let rollover_contract_id = env.register(AutonomousRollover, ());
     let rollover_client = AutonomousRolloverClient::new(&env, &rollover_contract_id);
@@ -263,6 +263,12 @@ fn test_register_and_execute_rollover() {
 
     let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
     mock_factory_client.set_next_maturity(&2000);
+    mock_factory_client.set_epoch(
+        &2000,
+        &pt_client.address,
+        &pt_client.metadata().tokenizer,
+        &intent_engine_contract_id,
+    );
 
     // 2. Execute rollover
     rollover.execute_rollover(&user);
@@ -352,6 +358,12 @@ fn test_next_epoch_not_set() {
 
     let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
     mock_factory_client.set_next_maturity(&2000);
+    mock_factory_client.set_epoch(
+        &2000,
+        &pt_client.address,
+        &pt_client.metadata().tokenizer,
+        &intent_engine_contract_id,
+    );
 
     env.ledger().set(soroban_sdk::testutils::LedgerInfo {
         sequence_number: 1001,
@@ -456,6 +468,12 @@ fn test_pt_custody_matches_tracked_total_across_lifecycle() {
     });
     let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
     mock_factory_client.set_next_maturity(&2000);
+    mock_factory_client.set_epoch(
+        &2000,
+        &pt_client.address,
+        &pt_client.metadata().tokenizer,
+        &intent_engine_contract_id,
+    );
     rollover.execute_rollover(&user);
     assert_eq!(
         pt_client.balance(&rollover.address),
@@ -558,7 +576,12 @@ fn test_h2_one_users_execute_does_not_trap_another_users_pt() {
             &pt2_contract_id,
         );
     });
-    mock_factory_client.set_pt_token(&pt2_contract_id);
+    mock_factory_client.set_epoch(
+        &2000,
+        &pt2_contract_id,
+        &tokenizer_addr,
+        &intent_engine_contract_id,
+    );
 
     // B rolls forward first. This used to overwrite the single global
     // `DataKey::PtToken` slot to the new epoch's PT contract.
@@ -637,7 +660,12 @@ fn test_h2_multi_user_multi_epoch_no_cross_contamination() {
             &pt2_contract_id,
         );
     });
-    mock_factory_client.set_pt_token(&pt2_contract_id);
+    mock_factory_client.set_epoch(
+        &2000,
+        &pt2_contract_id,
+        &tokenizer_addr,
+        &intent_engine_contract_id,
+    );
 
     rollover.execute_rollover(&user_a);
     let epoch_n1_pt_token = rollover.get_position(&user_a).pt_token;
@@ -718,7 +746,12 @@ fn test_ro02_execute_rollover_does_not_affect_other_positions_pt_token() {
     PtTokenClient::new(&env, &pt2_id).initialize(&Address::generate(&env), &rollover.address);
     let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
     mock_factory_client.set_next_maturity(&2000);
-    mock_factory_client.set_pt_token(&pt2_id);
+    mock_factory_client.set_epoch(
+        &2000,
+        &pt2_id,
+        &pt_client.metadata().tokenizer,
+        &intent_engine_contract_id,
+    );
     let intent_engine_client = MockIntentEngineClient::new(&env, &intent_engine_contract_id);
     intent_engine_client.set_pt_token_intent(&pt2_id);
 
@@ -781,7 +814,12 @@ fn test_ro02_staggered_rollovers_no_pt_token_cross_contamination() {
     let pt2_id = env.register(PtToken, ());
     PtTokenClient::new(&env, &pt2_id).initialize(&Address::generate(&env), &rollover.address);
     mock_factory_client.set_next_maturity(&2000);
-    mock_factory_client.set_pt_token(&pt2_id);
+    mock_factory_client.set_epoch(
+        &2000,
+        &pt2_id,
+        &pt_client.metadata().tokenizer,
+        &intent_engine_contract_id,
+    );
     intent_engine_client.set_pt_token_intent(&pt2_id);
     rollover.execute_rollover(&user_a);
     assert_eq!(rollover.get_position(&user_a).pt_token, pt2_id);
@@ -790,7 +828,12 @@ fn test_ro02_staggered_rollovers_no_pt_token_cross_contamination() {
     let pt3_id = env.register(PtToken, ());
     PtTokenClient::new(&env, &pt3_id).initialize(&Address::generate(&env), &rollover.address);
     mock_factory_client.set_next_maturity(&3000);
-    mock_factory_client.set_pt_token(&pt3_id);
+    mock_factory_client.set_epoch(
+        &3000,
+        &pt3_id,
+        &pt_client.metadata().tokenizer,
+        &intent_engine_contract_id,
+    );
     intent_engine_client.set_pt_token_intent(&pt3_id);
     rollover.execute_rollover(&user_b);
     let b_position = rollover.get_position(&user_b);
@@ -866,6 +909,12 @@ fn test_execute_rollover_keeper_vs_permissionless_boundary() {
 
     // --- Inside the grace period: keeper authorization is required. ---
     mock_factory_client.set_next_maturity(&50_000);
+    mock_factory_client.set_epoch(
+        &50_000,
+        &pt_client.address,
+        &tokenizer_contract_id,
+        &intent_engine_contract_id,
+    );
     env.ledger().set(soroban_sdk::testutils::LedgerInfo {
         sequence_number: 1001, // just past maturity (1000), deep inside grace.
         ..env.ledger().get()
@@ -878,6 +927,12 @@ fn test_execute_rollover_keeper_vs_permissionless_boundary() {
 
     // --- Exactly at grace expiration: still keeper-gated (inclusive boundary). ---
     mock_factory_client.set_next_maturity(&100_000);
+    mock_factory_client.set_epoch(
+        &100_000,
+        &pt_client.address,
+        &tokenizer_contract_id,
+        &intent_engine_contract_id,
+    );
     let grace_expiration = 50_000u32.checked_add(grace_period).unwrap();
     env.ledger().set(soroban_sdk::testutils::LedgerInfo {
         sequence_number: grace_expiration,
@@ -891,6 +946,12 @@ fn test_execute_rollover_keeper_vs_permissionless_boundary() {
 
     // --- One ledger past grace expiration: permissionless, no auth requested. ---
     mock_factory_client.set_next_maturity(&200_000);
+    mock_factory_client.set_epoch(
+        &200_000,
+        &pt_client.address,
+        &tokenizer_contract_id,
+        &intent_engine_contract_id,
+    );
     let next_grace_expiration = 100_000u32.checked_add(grace_period).unwrap();
     env.ledger().set(soroban_sdk::testutils::LedgerInfo {
         sequence_number: next_grace_expiration + 1,
@@ -902,5 +963,234 @@ fn test_execute_rollover_keeper_vs_permissionless_boundary() {
         !auths.iter().any(|(addr, _)| addr == &keeper),
         "keeper authorization must not be requested (debug: {:?})",
         auths
+    );
+}
+
+// ==========================================
+// Core rollover refactor: factory-resolved epoch components
+// ==========================================
+
+/// `execute_rollover` must resolve the CURRENT epoch's Tokenizer (for redemption) and the
+/// NEXT epoch's IntentEngine (for minting the new PT) fresh from Factory on every call,
+/// using genuinely distinct contract instances per epoch - not a cached/pinned address from
+/// `initialize` or from a previous roll. The H-2 tests above only ever swap an internal
+/// pointer on the SAME mock contract; this test swaps the actual contract address.
+#[test]
+fn test_execute_rollover_resolves_distinct_epoch_tokenizer_and_intent_engine() {
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &2000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
+    let initial_pt = pt_client.balance(&user);
+    rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
+
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+    let tokenizer_addr = pt_client.metadata().tokenizer;
+
+    // Epoch 2 gets its own, brand-new IntentEngine contract instance (never touched by
+    // epoch 1's rolls), which is what mints its PT.
+    let pt2_id = env.register(PtToken, ());
+    PtTokenClient::new(&env, &pt2_id)
+        .initialize(&Address::generate(&env), &Address::generate(&env));
+    let intent_engine2_id = env.register(MockIntentEngine, ());
+    MockIntentEngineClient::new(&env, &intent_engine2_id).set_pt_token_intent(&pt2_id);
+
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
+    mock_factory_client.set_next_maturity(&2000);
+    mock_factory_client.set_epoch(&2000, &pt2_id, &tokenizer_addr, &intent_engine2_id);
+
+    rollover.execute_rollover(&user);
+    let position = rollover.get_position(&user);
+    assert_eq!(
+        position.pt_token, pt2_id,
+        "position must hold the PT minted by the NEXT epoch's own IntentEngine"
+    );
+    assert_eq!(
+        PtTokenClient::new(&env, &pt2_id).balance(&rollover.address),
+        position.pt_balance
+    );
+    // The original epoch-1 IntentEngine must never have been called for this roll.
+    assert_eq!(
+        intent_client
+            .get_user_intent(&rollover.address)
+            .total_pt_held,
+        0
+    );
+
+    // Epoch 3 gets its own, brand-new Tokenizer contract instance, proving redemption
+    // resolves the CURRENT epoch's Tokenizer fresh each time rather than reusing epoch 1's
+    // (the one captured at `initialize`).
+    let tokenizer3_id = env.register(MockTokenizer, ());
+    MockTokenizerClient::new(&env, &tokenizer3_id).set_pt_token_tokenizer(&pt2_id);
+    let pt3_id = env.register(PtToken, ());
+    PtTokenClient::new(&env, &pt3_id)
+        .initialize(&Address::generate(&env), &Address::generate(&env));
+    let intent_engine3_id = env.register(MockIntentEngine, ());
+    MockIntentEngineClient::new(&env, &intent_engine3_id).set_pt_token_intent(&pt3_id);
+
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 2001,
+        ..env.ledger().get()
+    });
+    mock_factory_client.set_next_maturity(&3000);
+    // Epoch 2's record now points its Tokenizer at the new instance - proving the CURRENT
+    // epoch's Tokenizer is re-resolved on this roll, not reused from the previous one.
+    mock_factory_client.set_epoch(&2000, &pt2_id, &tokenizer3_id, &intent_engine2_id);
+    mock_factory_client.set_epoch(&3000, &pt3_id, &tokenizer3_id, &intent_engine3_id);
+
+    rollover.execute_rollover(&user);
+    let position2 = rollover.get_position(&user);
+    assert_eq!(position2.pt_token, pt3_id);
+    // Proves tokenizer3 (and not epoch 1's tokenizer) actually redeemed/burned the epoch-2 PT.
+    assert_eq!(
+        PtTokenClient::new(&env, &pt2_id).balance(&rollover.address),
+        0
+    );
+}
+
+/// `execute_rollover` must revert, not silently continue, when a position's stored PT token
+/// no longer matches what Factory resolves for that position's current epoch maturity - e.g.
+/// data corruption, or a future bug elsewhere that mutates a position's `pt_token` out of
+/// step with its `current_epoch_maturity`.
+#[test]
+#[should_panic(expected = "Error(Contract, #17)")]
+fn test_execute_rollover_rejects_pt_token_mismatch() {
+    let (env, _, _, rollover, pt_client, token_admin, intent_engine_contract_id, _) = setup_env();
+    let user = Address::generate(&env);
+    token_admin.mint(&user, &2000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user, &1000, &0, &1000, &0);
+    let initial_pt = pt_client.balance(&user);
+    rollover.register_rollover(&user, &initial_pt, &1000, &0, &0);
+
+    // Corrupt the stored position's PT token so it no longer matches what Factory resolves
+    // for maturity 1000 (still `pt_client`'s address).
+    let bogus_pt_token = Address::generate(&env);
+    env.as_contract(&rollover.address, || {
+        let mut position = storage::get_position(&env, &user).unwrap();
+        position.pt_token = bogus_pt_token;
+        storage::set_position(&env, &user, &position);
+    });
+
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
+    rollover.execute_rollover(&user);
+}
+
+/// Alice: N -> N+1 (rolls forward). Bob: stays at N (never rolls). Carol: registers directly
+/// into N+1 (never having been in N). All three must independently resolve their own current
+/// epoch's Tokenizer/PT and, for Alice, the correct next epoch's IntentEngine/PT - with zero
+/// cross-contamination between any of them.
+#[test]
+fn test_alice_bob_carol_staggered_epochs() {
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    let tokenizer_addr = pt_client.metadata().tokenizer;
+
+    let alice = Address::generate(&env);
+    let bob = Address::generate(&env);
+    let carol = Address::generate(&env);
+    token_admin.mint(&alice, &2000);
+    token_admin.mint(&bob, &2000);
+
+    // Alice and Bob both mint PT in epoch N (maturity 1000, from `setup_env`).
+    intent_client.execute_fixed_yield_intent(&alice, &1000, &0, &1000, &0);
+    intent_client.execute_fixed_yield_intent(&bob, &1000, &0, &1000, &0);
+    let alice_pt = pt_client.balance(&alice);
+    let bob_pt = pt_client.balance(&bob);
+    rollover.register_rollover(&alice, &alice_pt, &1000, &0, &0);
+    rollover.register_rollover(&bob, &bob_pt, &1000, &0, &0);
+
+    // Epoch N+1 (maturity 2000) gets its own fresh PT contract.
+    let pt_n1_id = env.register(PtToken, ());
+    PtTokenClient::new(&env, &pt_n1_id)
+        .initialize(&Address::generate(&env), &Address::generate(&env));
+    env.as_contract(&intent_engine_contract_id, || {
+        env.storage()
+            .instance()
+            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_n1_id);
+    });
+    mock_factory_client.set_epoch(
+        &2000,
+        &pt_n1_id,
+        &tokenizer_addr,
+        &intent_engine_contract_id,
+    );
+
+    // Carol registers directly into epoch N+1, never having touched epoch N.
+    token_admin.mint(&carol, &2000);
+    let carol_intent = intent_client.execute_fixed_yield_intent(&carol, &1000, &0, &1000, &0);
+    let _ = carol_intent;
+    let carol_pt = PtTokenClient::new(&env, &pt_n1_id).balance(&carol);
+    // Carol's PT was minted directly into `pt_n1_id` since the intent engine's `pt_token`
+    // slot now points there; give her something to register with.
+    assert!(carol_pt > 0);
+    rollover.register_rollover(&carol, &carol_pt, &2000, &0, &0);
+    assert_eq!(rollover.get_position(&carol).pt_token, pt_n1_id);
+    assert_eq!(rollover.get_position(&carol).current_epoch_maturity, 2000);
+
+    // Alice rolls forward N -> N+1.
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
+    mock_factory_client.set_next_maturity(&2000);
+    rollover.execute_rollover(&alice);
+    let alice_pos = rollover.get_position(&alice);
+    assert_eq!(alice_pos.pt_token, pt_n1_id);
+    assert_eq!(alice_pos.current_epoch_maturity, 2000);
+
+    // Bob never rolls - still epoch N, still the original PT contract and balance.
+    let bob_pos = rollover.get_position(&bob);
+    assert_eq!(bob_pos.pt_token, pt_client.address);
+    assert_eq!(bob_pos.current_epoch_maturity, 1000);
+    assert_eq!(bob_pos.pt_balance, bob_pt);
+
+    // Per-token custody: epoch N holds only Bob's PT; epoch N+1 holds Alice's + Carol's.
+    assert_eq!(rollover.total_pt_held_for_token(&pt_client.address), bob_pt);
+    assert_eq!(
+        rollover.total_pt_held_for_token(&pt_n1_id),
+        alice_pos.pt_balance + carol_pt
+    );
+
+    // Each of the three can independently exit into exactly their own tracked PT/balance.
+    rollover.exit_rollover(&bob);
+    assert_eq!(pt_client.balance(&bob), bob_pt);
+    rollover.exit_rollover(&alice);
+    assert_eq!(
+        PtTokenClient::new(&env, &pt_n1_id).balance(&alice),
+        alice_pos.pt_balance
+    );
+    rollover.exit_rollover(&carol);
+    assert_eq!(
+        PtTokenClient::new(&env, &pt_n1_id).balance(&carol),
+        carol_pt
     );
 }

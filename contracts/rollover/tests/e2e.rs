@@ -9,7 +9,7 @@ use intent_engine::{IntentEngine, IntentEngineClient};
 use marketplace::{NovaireMarketplace, NovaireMarketplaceClient};
 use maturity_engine::{MaturityEngine, MaturityEngineClient};
 use pt_token::{PtToken, PtTokenClient};
-use rollover::{AutonomousRollover, AutonomousRolloverClient, DataKey};
+use rollover::{AutonomousRollover, AutonomousRolloverClient};
 use soroban_sdk::{contract, contractimpl, contracttype};
 use sy_wrapper::{Positions, Request, Reserve, ReserveConfig, ReserveData, BLEND_RATE_SCALAR};
 use sy_wrapper::{SyWrapper, SyWrapperClient};
@@ -139,52 +139,36 @@ impl MockBlendPool {
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct EpochRecord {
+pub struct RolloverEpochView {
     pub epoch_id: u32,
     pub maturity_ledger: u32,
-    pub created_ledger: u32,
     pub pt_token: Address,
+    pub tokenizer: Address,
+    pub intent_engine: Address,
 }
 
 #[contract]
 pub struct MockFactory;
 #[contractimpl]
 impl MockFactory {
-    pub fn latest_epoch(env: Env) -> EpochRecord {
-        let maturity_ledger: u32 = env
+    pub fn latest_epoch_view(env: Env) -> RolloverEpochView {
+        Self::next_epoch_view(env, 0)
+    }
+
+    pub fn epoch_view_by_maturity(env: Env, maturity_ledger: u32) -> RolloverEpochView {
+        env.storage()
+            .instance()
+            .get(&(soroban_sdk::Symbol::new(&env, "ep"), maturity_ledger))
+            .unwrap()
+    }
+
+    pub fn next_epoch_view(env: Env, _current_epoch_id: u32) -> RolloverEpochView {
+        let next_maturity: u32 = env
             .storage()
             .instance()
             .get(&soroban_sdk::Symbol::new(&env, "next_maturity"))
             .unwrap_or(2000);
-        EpochRecord {
-            epoch_id: 2,
-            maturity_ledger,
-            created_ledger: 0,
-            pt_token: Self::pt_token(&env),
-        }
-    }
-
-    pub fn get_epoch_by_maturity(env: Env, maturity_ledger: u32) -> EpochRecord {
-        EpochRecord {
-            epoch_id: 1,
-            maturity_ledger,
-            created_ledger: 0,
-            pt_token: Self::pt_token(&env),
-        }
-    }
-
-    pub fn get_next_epoch(env: Env, _current_epoch_id: u32) -> EpochRecord {
-        let maturity_ledger: u32 = env
-            .storage()
-            .instance()
-            .get(&soroban_sdk::Symbol::new(&env, "next_maturity"))
-            .unwrap_or(2000);
-        EpochRecord {
-            epoch_id: 2,
-            maturity_ledger,
-            created_ledger: 0,
-            pt_token: Self::pt_token(&env),
-        }
+        Self::epoch_view_by_maturity(env, next_maturity)
     }
 
     pub fn set_next_maturity(env: Env, maturity_ledger: u32) {
@@ -194,17 +178,24 @@ impl MockFactory {
         );
     }
 
-    pub fn set_pt_token(env: Env, pt_token: Address) {
-        env.storage()
-            .instance()
-            .set(&soroban_sdk::Symbol::new(&env, "pt_token"), &pt_token);
-    }
-
-    fn pt_token(env: &Env) -> Address {
-        env.storage()
-            .instance()
-            .get(&soroban_sdk::Symbol::new(env, "pt_token"))
-            .unwrap()
+    pub fn set_epoch(
+        env: Env,
+        maturity_ledger: u32,
+        pt_token: Address,
+        tokenizer: Address,
+        intent_engine: Address,
+    ) {
+        let record = RolloverEpochView {
+            epoch_id: maturity_ledger,
+            maturity_ledger,
+            pt_token,
+            tokenizer,
+            intent_engine,
+        };
+        env.storage().instance().set(
+            &(soroban_sdk::Symbol::new(&env, "ep"), maturity_ledger),
+            &record,
+        );
     }
 }
 
@@ -308,7 +299,13 @@ fn test_novaire_end_to_end_integration() {
     );
 
     let factory_contract_id = env.register(MockFactory, ());
-    MockFactoryClient::new(&env, &factory_contract_id).set_pt_token(&pt_contract_id);
+    let factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+    factory_client.set_epoch(
+        &maturity_ledger,
+        &pt_contract_id,
+        &tokenizer_contract_id,
+        &intent_engine_contract_id,
+    );
 
     let rollover_contract_id = env.register(AutonomousRollover, ());
     let rollover_client = AutonomousRolloverClient::new(&env, &rollover_contract_id);
@@ -543,16 +540,16 @@ fn test_novaire_end_to_end_integration() {
     // point of this fixture, which wants a normal, tradeable pool.
     NovaireMarketplaceClient::new(&env, &market2_id).add_liquidity(&lp, &500_000, &495_000);
 
-    // Update Rollover Storage pointing to Epoch 2 Intent Engine
-    env.as_contract(&rollover_contract_id, || {
-        env.storage()
-            .instance()
-            .set(&DataKey::IntentEngine, &intent_engine2_id);
-    });
-
+    // Factory now resolves Epoch 2's IntentEngine (and Tokenizer/PT) at rollover
+    // execution time, rather than rollover storing a pinned pointer to it.
     let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
     mock_factory_client.set_next_maturity(&epoch_2_maturity);
-    mock_factory_client.set_pt_token(&pt2_id);
+    mock_factory_client.set_epoch(
+        &epoch_2_maturity,
+        &pt2_id,
+        &tokenizer2_id,
+        &intent_engine2_id,
+    );
 
     // Simulate Keeper executing the rollover!
     rollover_client.execute_rollover(&carol);
