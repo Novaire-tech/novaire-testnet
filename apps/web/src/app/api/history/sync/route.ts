@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { rpc } from '@stellar/stellar-sdk';
-import { CONTRACTS, RPC_URL } from '@/config/contracts';
+import { CONTRACTS, RPC_URL, NETWORK } from '@/config/contracts';
 import { ProtocolService } from '@/services/protocolService';
 import { HistoryStore } from '@/lib/historyStore';
 import { fetchSyExchangeRate } from '@/services/underlyingYieldService';
@@ -77,6 +77,8 @@ export async function GET() {
           // does not have access to an authenticated wallet session.
           // Wallet state is captured separately in analyticsHistoryService.ts on the client.
           HistoryStore.addHistoryEntry({
+            network: NETWORK,
+            syWrapper: CONTRACTS.SY_WRAPPER,
             ptPrice,
             ytPrice,
             tvl,

@@ -16,6 +16,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { HistoryStore } from '@/lib/historyStore';
 import { ProtocolService } from '@/services/protocolService';
 import { fetchSyExchangeRate } from '@/services/underlyingYieldService';
+import { NETWORK, CONTRACTS } from '@/config/contracts';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,6 +58,8 @@ export async function POST(req: NextRequest) {
     }
 
     const entry = HistoryStore.addHistoryEntry({
+      network: NETWORK,
+      syWrapper: CONTRACTS.SY_WRAPPER,
       ptPrice,
       ytPrice,
       tvl,

@@ -15,6 +15,10 @@ export interface ProtocolHistoryEntry {
   id: string;
   timestamp: string; // ISO string
 
+  /** Deployment identity — prevents testnet/mainnet and cross-epoch (redeployed SY wrapper) data from mixing. */
+  network: string;
+  syWrapper: string;
+
   // Protocol prices
   ptPrice: number;
   ytPrice: number;
@@ -50,6 +54,10 @@ interface StoreData {
 }
 
 // Store alongside the SQLite db file — at project root
+// ponytail: single-file local disk store — not safe across multiple/serverless instances
+// (each gets its own ephemeral filesystem). Upgrade path: point this at the existing
+// Prisma ProtocolHistory model (already includes network/syWrapper-shaped scoping via
+// this same interface) once deployed somewhere with a real shared Postgres.
 const STORE_PATH = path.join(process.cwd(), 'history-store.json');
 
 // Tolerance for deduplication: consider two values equal if within 0.001% of each other
@@ -112,27 +120,47 @@ function writeStore(data: StoreData): void {
 }
 
 export const HistoryStore = {
-  getHistory(limit = 5000): ProtocolHistoryEntry[] {
+  /** Scoped by (network, syWrapper) so redeployed epochs / testnet / mainnet never mix. */
+  getHistory(network: string, syWrapper: string, limit = 5000): ProtocolHistoryEntry[] {
     const data = readStore();
+    const scoped = data.history.filter((e) => e.network === network && e.syWrapper === syWrapper);
     // Return oldest-first, capped at limit
-    return data.history.slice(-limit);
+    return scoped.slice(-limit);
   },
 
   /**
-   * Append a new entry only if it differs meaningfully from the last snapshot.
-   * Returns the new entry if written, null if deduplicated.
+   * Append a new entry only if it differs meaningfully from the last snapshot
+   * *in the same (network, syWrapper) scope*. Returns the new entry if written,
+   * null if deduplicated or rejected as invalid.
    */
   addHistoryEntry(
     entry: Omit<ProtocolHistoryEntry, 'id' | 'timestamp'>
   ): ProtocolHistoryEntry | null {
-    const data = readStore();
+    if (!entry.network || !entry.syWrapper) {
+      console.warn('[HistoryStore] Rejecting entry missing network/syWrapper identity.');
+      return null;
+    }
 
-    // Deduplication check — skip identical consecutive snapshots
-    if (data.history.length > 0) {
-      const last = data.history[data.history.length - 1];
+    const data = readStore();
+    const scopedHistory = data.history.filter(
+      (e) => e.network === entry.network && e.syWrapper === entry.syWrapper
+    );
+
+    // Deduplication check — skip identical consecutive snapshots within the same scope
+    if (scopedHistory.length > 0) {
+      const last = scopedHistory[scopedHistory.length - 1];
       if (isDuplicate(last, entry)) {
         console.log('[HistoryStore] Duplicate snapshot — skipping write.');
         return null;
+      }
+      // Sanity guard: reject an obviously corrupted exchange-rate reading (>2x jump
+      // in either direction) rather than let it poison the APY annualization.
+      if (last.syExchangeRate > 0 && entry.syExchangeRate > 0) {
+        const ratio = entry.syExchangeRate / last.syExchangeRate;
+        if (ratio > 2 || ratio < 0.5) {
+          console.warn('[HistoryStore] Rejecting implausible syExchangeRate jump:', last.syExchangeRate, '->', entry.syExchangeRate);
+          return null;
+        }
       }
     }
 
