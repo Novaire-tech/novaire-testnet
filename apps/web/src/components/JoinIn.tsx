@@ -72,7 +72,7 @@ export function JoinIn() {
           <div className="hidden w-px flex-shrink-0 self-stretch bg-[rgba(17,42,70,0.15)] lg:block" />
 
           {/* RIGHT: Waitlist */}
-          <div className="border-t border-[rgba(17,42,70,0.15)] pt-12 lg:flex lg:w-1/2 lg:flex-col lg:justify-center lg:border-t-0 lg:pl-14 lg:pt-0">
+          <div id="waitlist" className="scroll-mt-24 border-t border-[rgba(17,42,70,0.15)] pt-12 lg:flex lg:w-1/2 lg:flex-col lg:justify-center lg:border-t-0 lg:pl-14 lg:pt-0">
             <span className="font-poppins text-[12px] font-medium uppercase tracking-[0.14em] text-[rgba(17,42,70,0.55)]">
               Waitlist
             </span>

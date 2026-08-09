@@ -35,10 +35,13 @@ export default function NavHeader() {
               <Tab href="/docs">
                 Docs
               </Tab>
+              <Tab href="/app">
+                Product
+              </Tab>
             </ul>
 
             <Link
-              href="/app"
+              href="/#waitlist"
               style={{ color: '#112a46' }}
               className="inline-flex items-center justify-center px-6 py-3 rounded-full border border-[rgba(17,42,70,0.15)] bg-transparent text-[16px] font-medium tracking-[0.01em] transition-all duration-[250ms] ease-out hover:bg-[rgba(17,42,70,0.06)] hover:border-[rgba(17,42,70,0.3)] whitespace-nowrap"
             >
@@ -72,7 +75,8 @@ export default function NavHeader() {
             <div className="flex flex-col gap-6 items-start flex-1 overflow-y-auto">
               {[
                 { label: 'Ecosystem', href: 'https://stellar.org/', external: true },
-                { label: 'Docs', href: '/docs' }
+                { label: 'Docs', href: '/docs' },
+                { label: 'Product', href: '/app' }
               ].map((item, idx) => (
                 <motion.div
                   initial={{ opacity: 0, x: -20 }}
@@ -124,7 +128,7 @@ export default function NavHeader() {
               className="w-full mt-auto"
             >
               <Link
-                href="/app"
+                href="/#waitlist"
                 style={{ color: '#112a46' }}
                 className="flex items-center justify-center w-full px-6 py-3 rounded-full border border-[rgba(17,42,70,0.15)] bg-transparent text-[16px] font-medium tracking-[0.01em] transition-all duration-[250ms] ease-out hover:bg-[rgba(17,42,70,0.06)] hover:border-[rgba(17,42,70,0.3)] whitespace-nowrap"
                 onClick={() => setIsMobileMenuOpen(false)}

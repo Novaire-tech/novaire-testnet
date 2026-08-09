@@ -59,7 +59,14 @@ export default function FinalCTA() {
 
               <div className="mt-4">
                 <Link
-                  href="/app"
+                  href="/#waitlist"
+                  onClick={(e) => {
+                    const waitlist = document.getElementById('waitlist');
+                    if (waitlist) {
+                      e.preventDefault();
+                      waitlist.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                  }}
                   className="group inline-flex h-[48px] items-center gap-2 rounded-full border border-white/[0.18] bg-white/[0.10] px-7 font-poppins text-[15px] font-medium text-white backdrop-blur-[18px] transition-all duration-300 ease-out hover:-translate-y-[2px] hover:border-white/30 hover:bg-white/[0.16]"
                 >
                   Get Early Access
