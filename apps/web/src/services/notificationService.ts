@@ -13,6 +13,9 @@ const STORAGE_KEY = 'novaire_notifications_data';
 const MAX_NOTIFICATIONS = 50;
 
 class NotificationServiceClass {
+  private cachedRaw: string | null = null;
+  private cachedNotifications: AppNotification[] = [];
+
   private getPreferences() {
     try {
       const prefs = localStorage.getItem('novaire_notifications');
@@ -30,16 +33,19 @@ class NotificationServiceClass {
   }
 
   getNotifications(): AppNotification[] {
-    if (typeof window === 'undefined') return [];
+    if (typeof window === 'undefined') return this.cachedNotifications;
+    const data = localStorage.getItem(STORAGE_KEY);
+    if (data === this.cachedRaw) {
+      return this.cachedNotifications;
+    }
     try {
-      const data = localStorage.getItem(STORAGE_KEY);
-      if (data) {
-        return JSON.parse(data);
-      }
+      this.cachedNotifications = data ? JSON.parse(data) : [];
     } catch (e) {
       console.error('Failed to parse notifications', e);
+      this.cachedNotifications = [];
     }
-    return [];
+    this.cachedRaw = data;
+    return this.cachedNotifications;
   }
 
   private saveNotifications(notifications: AppNotification[]) {
