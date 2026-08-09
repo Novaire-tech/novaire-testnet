@@ -60,7 +60,7 @@ export function FAQ() {
   });
 
   return (
-    <section className="w-full bg-[#e7e2ce] py-[100px] md:py-[120px]">
+    <section className="w-full bg-[#e7e2ce] pb-[100px] pt-[40px] md:pb-[120px] md:pt-[56px]">
       <div className="mx-auto w-full max-w-[1500px] px-6 md:px-10">
         <motion.div {...riseUp(0)}>
           <h2 className="font-editorial italic font-normal text-[40px] leading-[1.05] tracking-[-0.02em] text-[#112a46] sm:text-[52px] md:text-[64px]">

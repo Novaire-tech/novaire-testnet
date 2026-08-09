@@ -7,7 +7,7 @@ import { HowNovaireWorks } from "@/components/HowNovaireWorks/Section";
 import { TechMarquee } from "@/components/TechMarquee";
 import FinalCTA from "@/components/FinalCTA";
 import { FAQ } from "@/components/FAQ/Section";
-import Footer from "@/components/Footer";
+import { JoinIn } from "@/components/JoinIn";
 
 export default function Home() {
   useEffect(() => {
@@ -42,7 +42,7 @@ export default function Home() {
       <TechMarquee />
       <FinalCTA />
       <FAQ />
-      <Footer />
+      <JoinIn />
     </>
   );
 }

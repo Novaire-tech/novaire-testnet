@@ -18,7 +18,7 @@ export default function FinalCTA() {
   });
 
   return (
-    <section className="relative w-full px-4 pt-0 pb-[100px] md:px-5 md:pt-0 lg:px-6 lg:pt-0">
+    <section className="relative w-full px-4 pt-0 pb-[32px] md:px-5 md:pt-0 md:pb-[40px] lg:px-6 lg:pt-0">
       <motion.div {...riseUp(0)} className="relative mx-auto w-[94%] max-w-[1700px]">
         <div className="relative h-[300px] w-full overflow-hidden rounded-[32px] md:h-[330px] lg:h-[360px]">
           <video
