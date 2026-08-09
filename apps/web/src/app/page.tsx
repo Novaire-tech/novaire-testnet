@@ -8,6 +8,7 @@ import { TechMarquee } from "@/components/TechMarquee";
 import FinalCTA from "@/components/FinalCTA";
 import { FAQ } from "@/components/FAQ/Section";
 import { JoinIn } from "@/components/JoinIn";
+import { Footer } from "@/components/Footer";
 
 export default function Home() {
   useEffect(() => {
@@ -43,6 +44,7 @@ export default function Home() {
       <FinalCTA />
       <FAQ />
       <JoinIn />
+      <Footer />
     </>
   );
 }
