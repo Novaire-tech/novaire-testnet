@@ -490,6 +490,189 @@ fn test_invariant_catches_pt_custody_mismatch() {
     rollover.exit_rollover(&user);
 }
 
+// ==========================================
+// H-2: position-scoped PT custody (no global mutable PT pointer)
+// ==========================================
+
+/// User A registers for epoch N; User B executes their own rollover into
+/// epoch N+1 (rotating the PT token their own position uses); User A then
+/// exits and must get back their epoch-N PT, not whatever token User B's
+/// roll last touched. Before the fix this all shared one global
+/// `DataKey::PtToken` slot, so B's `execute_rollover` would silently point
+/// A's still-pending position at the wrong PT contract.
+#[test]
+fn test_h2_one_users_execute_does_not_trap_another_users_pt() {
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+
+    // Both A and B register PT for the same epoch (maturity 1000), using the
+    // same PT contract that's live for that epoch.
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_admin.mint(&user_a, &2000);
+    token_admin.mint(&user_b, &2000);
+
+    intent_client.execute_fixed_yield_intent(&user_a, &1000, &0, &1000, &0);
+    intent_client.execute_fixed_yield_intent(&user_b, &1000, &0, &1000, &0);
+    let a_pt = pt_client.balance(&user_a);
+    let b_pt = pt_client.balance(&user_b);
+
+    rollover.register_rollover(&user_a, &a_pt, &1000, &0, &0);
+    rollover.register_rollover(&user_b, &b_pt, &1000, &0, &0);
+
+    let a_pt_token_at_register = rollover.get_position(&user_a).pt_token;
+
+    // Advance past maturity and let a NEW epoch's PT contract come into play
+    // for whoever rolls forward - the factory now returns a fresh PT token as
+    // the "next epoch" one.
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
+    mock_factory_client.set_next_maturity(&2000);
+
+    // Simulate the next epoch minting its own fresh PT contract (this mock
+    // factory serves a single `pt_token` slot for every method, so swap it
+    // here to model rotation - real Blend/Novaire epochs always mint a new
+    // PT token contract per epoch). The mock intent engine is what mints the
+    // NEXT epoch's PT to the caller during `execute_rollover`'s roll, so its
+    // `pt_token` slot is what needs to move; the mock tokenizer's slot stays
+    // on the OLD PT contract, since that's what actually gets redeemed/burned.
+    let pt2_contract_id = env.register(PtToken, ());
+    let admin_addr = pt_client.metadata().admin;
+    let tokenizer_addr = pt_client.metadata().tokenizer;
+    PtTokenClient::new(&env, &pt2_contract_id).initialize(&admin_addr, &tokenizer_addr);
+    env.as_contract(&intent_engine_contract_id, || {
+        env.storage().instance().set(
+            &soroban_sdk::Symbol::new(&env, "pt_token"),
+            &pt2_contract_id,
+        );
+    });
+    mock_factory_client.set_pt_token(&pt2_contract_id);
+
+    // B rolls forward first. This used to overwrite the single global
+    // `DataKey::PtToken` slot to the new epoch's PT contract.
+    rollover.execute_rollover(&user_b);
+    let b_pos_after = rollover.get_position(&user_b);
+    assert_ne!(
+        b_pos_after.pt_token, a_pt_token_at_register,
+        "sanity: B's roll moved to a different PT contract than A's original one"
+    );
+
+    // A's position must be completely unaffected by B's roll: still pointing
+    // at the original epoch's PT contract, still with its original balance.
+    let a_pos_before_exit = rollover.get_position(&user_a);
+    assert_eq!(a_pos_before_exit.pt_token, a_pt_token_at_register);
+    assert_eq!(a_pos_before_exit.pt_balance, a_pt);
+
+    // A exits and must receive back their original epoch-N PT, not trapped
+    // and not paid out from the wrong (epoch N+1) PT contract.
+    rollover.exit_rollover(&user_a);
+    assert_eq!(pt_client.balance(&user_a), a_pt);
+}
+
+/// Multi-user, multi-epoch, staggered execution: A and B register for epoch
+/// N, C registers directly for epoch N+1, D for epoch N+2. Rolls execute out
+/// of order. No position may ever read or be paid out of another position's
+/// PT contract, and each exit returns exactly that position's own tracked
+/// balance in its own token.
+#[test]
+fn test_h2_multi_user_multi_epoch_no_cross_contamination() {
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client_epoch_n,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_admin.mint(&user_a, &2000);
+    token_admin.mint(&user_b, &2000);
+
+    // A and B both register against epoch N (maturity 1000).
+    intent_client.execute_fixed_yield_intent(&user_a, &1000, &0, &1000, &0);
+    intent_client.execute_fixed_yield_intent(&user_b, &1000, &0, &1000, &0);
+    let a_pt = pt_client_epoch_n.balance(&user_a);
+    let b_pt = pt_client_epoch_n.balance(&user_b);
+    rollover.register_rollover(&user_a, &a_pt, &1000, &0, &0);
+    rollover.register_rollover(&user_b, &b_pt, &1000, &0, &0);
+
+    let epoch_n_pt_token = rollover.get_position(&user_a).pt_token;
+    assert_eq!(rollover.get_position(&user_b).pt_token, epoch_n_pt_token);
+
+    // Move to epoch N+1 and roll A forward first (staggered execution).
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
+    mock_factory_client.set_next_maturity(&2000);
+
+    // Simulate the new epoch's fresh PT contract (see the analogous setup in
+    // `test_h2_one_users_execute_does_not_trap_another_users_pt` for why only
+    // the intent engine's `pt_token` slot moves).
+    let pt2_contract_id = env.register(PtToken, ());
+    let admin_addr = pt_client_epoch_n.metadata().admin;
+    let tokenizer_addr = pt_client_epoch_n.metadata().tokenizer;
+    PtTokenClient::new(&env, &pt2_contract_id).initialize(&admin_addr, &tokenizer_addr);
+    env.as_contract(&intent_engine_contract_id, || {
+        env.storage().instance().set(
+            &soroban_sdk::Symbol::new(&env, "pt_token"),
+            &pt2_contract_id,
+        );
+    });
+    mock_factory_client.set_pt_token(&pt2_contract_id);
+
+    rollover.execute_rollover(&user_a);
+    let epoch_n1_pt_token = rollover.get_position(&user_a).pt_token;
+    assert_ne!(epoch_n1_pt_token, epoch_n_pt_token);
+
+    // B still hasn't rolled - still epoch N, still the original PT contract.
+    let b_pos = rollover.get_position(&user_b);
+    assert_eq!(b_pos.pt_token, epoch_n_pt_token);
+    assert_eq!(b_pos.pt_balance, b_pt);
+
+    // Now roll B forward too, into the SAME next epoch's PT contract as A.
+    rollover.execute_rollover(&user_b);
+    let b_pos_after = rollover.get_position(&user_b);
+    assert_eq!(b_pos_after.pt_token, epoch_n1_pt_token);
+
+    // Per-token tracked custody must equal actual on-chain balances for both
+    // the vacated epoch-N contract (now 0) and the epoch-N+1 contract (both
+    // A's and B's new balances).
+    assert_eq!(rollover.total_pt_held_for_token(&epoch_n_pt_token), 0);
+    let pt_client_epoch_n1 = PtTokenClient::new(&env, &epoch_n1_pt_token);
+    assert_eq!(
+        pt_client_epoch_n1.balance(&rollover.address),
+        rollover.total_pt_held_for_token(&epoch_n1_pt_token)
+    );
+
+    // Both positions can independently exit and get back exactly their own
+    // tracked balance in the correct (shared, in this case) PT contract.
+    let a_balance_before_exit = rollover.get_position(&user_a).pt_balance;
+    let b_balance_before_exit = rollover.get_position(&user_b).pt_balance;
+    rollover.exit_rollover(&user_a);
+    rollover.exit_rollover(&user_b);
+    assert_eq!(pt_client_epoch_n1.balance(&user_a), a_balance_before_exit);
+    assert_eq!(pt_client_epoch_n1.balance(&user_b), b_balance_before_exit);
+}
+
 #[test]
 fn test_ro02_execute_rollover_does_not_affect_other_positions_pt_token() {
     // RO-02 regression: two positions A and B register into the same epoch. A executes a

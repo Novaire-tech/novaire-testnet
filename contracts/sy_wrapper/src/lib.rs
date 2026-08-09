@@ -457,12 +457,14 @@ impl SyWrapper {
 
         let underlying_addr = storage::get_underlying(&env)?;
 
-        // LOSS-01: realize any Blend-pool loss atomically before computing the payout rate.
-        // Without this, `withdraw` could read a stale (pre-loss) TotalUnderlying and pay out
-        // more than is actually recoverable - `refresh_rate` can't help here since it
+        // LOSS-01 / M-1: realize any Blend-pool loss atomically before computing the payout
+        // rate. Without this, `withdraw` could read a stale (pre-loss) TotalUnderlying and pay
+        // out more than is actually recoverable - `refresh_rate` can't help here since it
         // deliberately rejects rate decreases. This reuses the same permissionless,
         // ground-truth-only logic as `mark_loss` so calling `withdraw` itself realizes the
-        // loss rather than depending on someone calling `mark_loss` first.
+        // loss rather than depending on someone calling `mark_loss` first. `realize_loss` is a
+        // no-op when there is no loss to realize, so this has no effect on the normal/gain
+        // paths.
         Self::realize_loss(&env, &underlying_addr)?;
 
         let rate = Self::get_exchange_rate(env.clone());

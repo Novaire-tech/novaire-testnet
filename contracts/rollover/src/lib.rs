@@ -123,10 +123,11 @@ pub struct RolloverPosition {
     pub protocol_yield_earned: i128,
     pub realized_pnl: i128,
     pub min_underlying_out: i128,
-    /// RO-02: the PT token contract this specific position's `pt_balance` is
-    /// denominated in and custodied as. Resolved and stored per-position at
-    /// register/roll time so one user's rollover can never change which PT
-    /// token another user's position resolves to.
+    /// RO-02 / H-2: the PT token contract this specific position's `pt_balance`
+    /// is denominated in and custodied as. Resolved and stored per-position at
+    /// register/roll time (never read from a single global slot) so one
+    /// user's rollover can never change which PT token another user's
+    /// position resolves to.
     pub pt_token: Address,
 }
 
@@ -356,10 +357,12 @@ impl AutonomousRollover {
             }
         }
 
-        // RO-02: capture the PT token onto THIS position at registration time, from the
-        // static, init-only `InitialPtToken` (never mutated by `execute_rollover` or anything
-        // else - see `initialize`). Once stored on the position it is fixed for its lifetime;
-        // no other position's rollover can ever change it.
+        // RO-02 / H-2: capture the PT token onto THIS position at registration time, from
+        // the static, init-only `InitialPtToken` (never mutated by `execute_rollover` or
+        // anything else - see `initialize`), rather than trusting a mutable global slot that
+        // any other user's `execute_rollover` could overwrite mid-air between this call being
+        // submitted and applied. Once stored on the position it is fixed for its lifetime; no
+        // other position's rollover can ever change it.
         let pt_token_addr = storage::get_address(&env, DataKey::InitialPtToken)?;
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
 
@@ -393,7 +396,7 @@ impl AutonomousRollover {
             (pt_amount, current_epoch_maturity),
         );
 
-        Self::assert_invariant(&env)?;
+        Self::assert_invariant(&env, &pt_token_addr)?;
         Ok(())
     }
 
@@ -543,14 +546,16 @@ impl AutonomousRollover {
         position.pt_balance = new_pt;
         position.current_epoch_maturity = next_epoch.maturity_ledger;
         position.last_rolled_ledger = current_ledger;
-        // RO-02: each epoch mints a fresh PT token contract; this position (and only this
-        // position) now moves onto it. Stored on the position itself, never on a global key,
-        // so another user's still-active position in a different epoch keeps resolving to
-        // its own (unrelated) PT token untouched by this call.
+        // RO-02 / H-2: each epoch mints a fresh PT token contract; this position (and only
+        // this position) now moves onto it. Stored on the position itself, never on a global
+        // key, so another user's still-active position in a different epoch keeps resolving
+        // to its own (unrelated) PT token, untouched by this call.
         position.pt_token = next_epoch.pt_token.clone();
 
         storage::set_position(&env, &user, &position);
 
+        // Move this position's tracked PT custody from the old epoch's PT contract to the
+        // new one (RO-02 / H-2).
         storage::adjust_pt_held(&env, &old_pt_token, -old_pt)?;
         storage::adjust_pt_held(&env, &next_epoch.pt_token, new_pt)?;
 
@@ -566,7 +571,7 @@ impl AutonomousRollover {
             ),
         );
 
-        Self::assert_invariant(&env)?;
+        Self::assert_invariant(&env, &next_epoch.pt_token)?;
         Ok(())
     }
 
@@ -579,8 +584,11 @@ impl AutonomousRollover {
             return Err(NovaireRolloverError::PositionNotActive);
         }
 
-        // RO-02: resolve strictly from THIS position's own stored PT token, never a global
-        // key - so another user's rollover elsewhere can't redirect where this exit pulls from.
+        // RO-02 / H-2: resolve strictly from THIS position's own stored PT token, never a
+        // global key — critical here specifically, since this is exactly the path that used
+        // to hand a user back the wrong token (or fail outright) whenever another user's
+        // `execute_rollover` had rotated a global pointer to a different epoch's PT contract
+        // in between this user's `register_rollover` and `exit_rollover`.
         let pt_token_addr = position.pt_token.clone();
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
 
@@ -595,7 +603,7 @@ impl AutonomousRollover {
             (position.pt_balance,),
         );
 
-        Self::assert_invariant(&env)?;
+        Self::assert_invariant(&env, &pt_token_addr)?;
         Ok(())
     }
 
@@ -605,6 +613,13 @@ impl AutonomousRollover {
 
     pub fn total_pt_held(env: Env) -> i128 {
         storage::get_total_pt_held(&env)
+    }
+
+    /// RO-02 / H-2: per-token custody counter, since positions across different
+    /// epochs are custodied in different PT contracts simultaneously — see
+    /// `RolloverPosition::pt_token` / `DataKey::PtHeldByToken`.
+    pub fn total_pt_held_for_token(env: Env, pt_token: Address) -> i128 {
+        storage::get_pt_held(&env, &pt_token)
     }
 
     pub fn update_keeper(env: Env, new_keeper: Address) -> Result<(), NovaireRolloverError> {
@@ -620,7 +635,15 @@ impl AutonomousRollover {
         Ok(())
     }
 
-    fn assert_invariant(env: &Env) -> Result<(), NovaireRolloverError> {
+    /// `_touched_pt_token` is the PT contract the calling operation just moved custody
+    /// in/out of; kept as a parameter for call-site clarity even though this check verifies
+    /// every tracked token (RO-02 / H-2: positions spanning multiple PT contracts, one per
+    /// epoch, can be active simultaneously, so there is no single global PT balance that can
+    /// be checked against a single global total anymore).
+    fn assert_invariant(
+        env: &Env,
+        _touched_pt_token: &Address,
+    ) -> Result<(), NovaireRolloverError> {
         let contract_addr = env.current_contract_address();
 
         // Treasury consistency: rollover never warehouses underlying between ops.
@@ -632,7 +655,7 @@ impl AutonomousRollover {
         }
 
         // PT custody conservation: for every PT token contract this rollover has ever
-        // touched (RO-02: positions from different epochs can hold distinct PT tokens
+        // touched (RO-02 / H-2: positions from different epochs can hold distinct PT tokens
         // concurrently), actual on-chain balance of that specific token must equal the
         // per-token tracked figure, independently of per-position bookkeeping.
         for pt_addr in storage::get_tracked_pt_tokens(env).iter() {

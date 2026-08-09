@@ -1002,6 +1002,142 @@ fn test_regression_large_balances_no_overflow() {
     assert_eq!(payout, large_amount + large_amount / 10);
 }
 
+// ==========================================
+// M-1: withdraw() must realize pending loss before pricing
+// ==========================================
+
+/// Normal withdrawal (no loss, no gain): unaffected by the new `mark_loss` call
+/// inside `withdraw` (it's a no-op when there's nothing to realize).
+#[test]
+fn test_m1_withdraw_normal_unaffected() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    let out = s.client.withdraw(&s.user1, &9_000);
+    assert_eq!(out, 9_000);
+}
+
+/// Withdrawal after organic yield: still prices at the grown rate, `mark_loss`
+/// being a no-op on a gain.
+#[test]
+fn test_m1_withdraw_after_yield_unaffected() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    simulate_pool_yield(&s, 1_000); // +10%
+    s.client.harvest_yield();
+
+    let shares = s.client.total_shares();
+    let out = s.client.withdraw(&s.user1, &shares);
+    assert_eq!(out, 11_000);
+}
+
+/// Core M-1 regression: a loss happens in the pool and nobody calls `mark_loss`
+/// before withdrawing. `withdraw` must itself realize the loss before pricing,
+/// so the withdrawer is paid against real backing, not a stale inflated rate.
+#[test]
+fn test_m1_withdraw_after_unmarked_loss_prices_correctly() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000); // 9000 user shares + 1000 dead
+
+    // 20% loss, never explicitly marked.
+    s.pool_client.simulate_yield(&s.contract_id, &-2_000);
+
+    let shares = s.client.total_shares() - 1000; // user1's shares
+    let out = s.client.withdraw(&s.user1, &shares);
+    // Rate must reflect the loss: (10_000 - 2_000) / 10_000 = 0.8
+    assert_eq!(out, 7_200); // 9000 shares * 0.8
+}
+
+/// Withdrawal after an explicit `mark_loss` call must match the unmarked case
+/// exactly - `withdraw`'s internal `mark_loss` call must be idempotent with an
+/// external one.
+#[test]
+fn test_m1_withdraw_after_explicit_mark_loss_matches_unmarked() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    s.pool_client.simulate_yield(&s.contract_id, &-2_000);
+    s.client.mark_loss();
+
+    let shares = s.client.total_shares() - 1000;
+    let out = s.client.withdraw(&s.user1, &shares);
+    assert_eq!(out, 7_200);
+}
+
+/// Repeated withdrawals after a loss: no early withdrawer should be able to
+/// extract more than the pro-rata share of actual (post-loss) backing, and
+/// the sum paid out across withdrawers must never exceed real backing.
+#[test]
+fn test_m1_multiple_withdrawers_cannot_exceed_actual_backing_after_loss() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.token_admin_client.mint(&s.user2, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+    s.client.deposit(&s.user2, &10_000);
+
+    // 25% loss on the combined pool position (20_000 -> 15_000).
+    s.pool_client.simulate_yield(&s.contract_id, &-5_000);
+
+    let out1 = s.client.withdraw(&s.user1, &9_000);
+    let out2 = s.client.withdraw(&s.user2, &9_000);
+
+    assert!(
+        out1 + out2 <= 15_000,
+        "withdrawers extracted more than actual backing: {} + {} > 15000",
+        out1,
+        out2
+    );
+}
+
+/// Partial withdrawal after a loss: only part of the position is withdrawn: the
+/// realized (post-loss) rate must still be used for the partial amount.
+#[test]
+fn test_m1_partial_withdrawal_after_loss() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+
+    s.pool_client.simulate_yield(&s.contract_id, &-2_000);
+
+    let out = s.client.withdraw(&s.user1, &4_500); // half of user1's 9000 shares
+    assert_eq!(out, 3_600); // 4500 * 0.8
+}
+
+/// Zero-share withdrawal must still be rejected exactly as before - the new
+/// `mark_loss` call happens after the `shares <= 0` check, so this doesn't
+/// change behavior, but is worth pinning down explicitly.
+#[test]
+fn test_m1_withdraw_zero_shares_still_rejected() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+    s.pool_client.simulate_yield(&s.contract_id, &-2_000);
+
+    let res = s.client.try_withdraw(&s.user1, &0);
+    assert!(res.is_err());
+}
+
+/// Withdraw must remain callable while paused (Phase 3 pause-never-blocks-exits
+/// design) even when a pending loss needs realizing first.
+#[test]
+fn test_m1_withdraw_after_loss_works_while_paused() {
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &10_000);
+    s.client.deposit(&s.user1, &10_000);
+    s.pool_client.simulate_yield(&s.contract_id, &-2_000);
+
+    s.client.pause();
+
+    let shares = s.client.total_shares() - 1000;
+    let out = s.client.withdraw(&s.user1, &shares);
+    assert_eq!(out, 7_200);
+}
+
 /// Scenario 6: a reserve with zero supplied position (no deposits yet) must be handled
 /// gracefully - `pool_supplied_value` should short-circuit to 0 without even attempting a
 /// `get_reserve` call, so `harvest_yield`/`get_exchange_rate` work fine on a fresh
