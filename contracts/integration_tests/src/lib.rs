@@ -13,6 +13,7 @@ pub mod m3_regression;
 pub mod m5_regression;
 pub mod mock_blend_pool;
 pub mod mock_factory;
+pub mod production_e2e;
 pub mod reentry_differential;
 pub mod reentry_regression;
 pub mod reproduce;

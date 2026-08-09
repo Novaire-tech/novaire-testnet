@@ -177,9 +177,9 @@
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
     "base_reserve": 0,
-    "min_persistent_entry_ttl": 17780,
-    "min_temp_entry_ttl": 17780,
-    "max_entry_ttl": 172801,
+    "min_persistent_entry_ttl": 86900,
+    "min_temp_entry_ttl": 86900,
+    "max_entry_ttl": 864001,
     "ledger_entries": [
       [
         {
@@ -211,7 +211,7 @@
             },
             "ext": "v0"
           },
-          172800
+          864000
         ]
       ],
       [
@@ -244,7 +244,7 @@
             },
             "ext": "v0"
           },
-          172800
+          864000
         ]
       ],
       [
@@ -410,7 +410,7 @@
             },
             "ext": "v0"
           },
-          190080
+          881280
         ]
       ],
       [
@@ -455,7 +455,7 @@
             },
             "ext": "v0"
           },
-          190080
+          881280
         ]
       ],
       [
@@ -516,6 +516,18 @@
                         "val": {
                           "u32": 1
                         }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
+                              "symbol": "RolloverEngine"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAXI7N"
+                        }
                       }
                     ]
                   }
@@ -524,7 +536,7 @@
             },
             "ext": "v0"
           },
-          190080
+          864000
         ]
       ],
       [
@@ -573,7 +585,7 @@
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -672,7 +684,7 @@
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -757,7 +769,7 @@
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -869,7 +881,7 @@
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -1011,7 +1023,7 @@
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -1043,7 +1055,7 @@
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -1075,7 +1087,7 @@
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -1100,14 +1112,88 @@
                     "executable": {
                       "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     },
-                    "storage": null
+                    "storage": [
+                      {
+                        "key": {
+                          "symbol": "init_count"
+                        },
+                        "val": {
+                          "u32": 1
+                        }
+                      },
+                      {
+                        "key": {
+                          "symbol": "meta"
+                        },
+                        "val": {
+                          "map": [
+                            {
+                              "key": {
+                                "symbol": "admin"
+                              },
+                              "val": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "factory"
+                              },
+                              "val": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "grace_period_ledgers"
+                              },
+                              "val": {
+                                "u32": 17280
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "keeper"
+                              },
+                              "val": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2ZMN"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "marketplace"
+                              },
+                              "val": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAATYON"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "underlying_token"
+                              },
+                              "val": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M"
+                              }
+                            },
+                            {
+                              "key": {
+                                "symbol": "vault"
+                              },
+                              "val": {
+                                "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
                   }
                 }
               }
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -1148,7 +1234,7 @@
             },
             "ext": "v0"
           },
-          17779
+          86899
         ]
       ],
       [
@@ -1169,7 +1255,7 @@
             },
             "ext": "v0"
           },
-          190080
+          864000
         ]
       ]
     ]

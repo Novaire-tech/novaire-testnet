@@ -238,23 +238,56 @@ pub mod mock_intent {
 }
 pub mod mock_rollover {
     use super::*;
+    use soroban_sdk::Symbol;
     #[contract]
     pub struct MockRolloverEngine;
     #[contractimpl]
     impl MockRolloverEngine {
         pub fn initialize(
-            _env: Env,
-            _admin: Address,
+            env: Env,
+            admin: Address,
             _tokenizer: Address,
-            _vault: Address,
-            _marketplace: Address,
+            vault: Address,
+            marketplace: Address,
             _intent_engine: Address,
-            _keeper: Address,
+            keeper: Address,
             _pt_token: Address,
-            _underlying_token: Address,
-            _factory: Address,
-            _grace_period_ledgers: u32,
+            underlying_token: Address,
+            factory: Address,
+            grace_period_ledgers: u32,
         ) {
+            let count: u32 = env
+                .storage()
+                .instance()
+                .get(&Symbol::new(&env, "init_count"))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "init_count"), &(count + 1));
+            let meta = RolloverMetadata {
+                admin,
+                vault,
+                marketplace,
+                keeper,
+                underlying_token,
+                factory,
+                grace_period_ledgers,
+            };
+            env.storage()
+                .instance()
+                .set(&Symbol::new(&env, "meta"), &meta);
+        }
+        pub fn metadata(env: Env) -> RolloverMetadata {
+            env.storage()
+                .instance()
+                .get(&Symbol::new(&env, "meta"))
+                .unwrap()
+        }
+        pub fn init_count(env: Env) -> u32 {
+            env.storage()
+                .instance()
+                .get(&Symbol::new(&env, "init_count"))
+                .unwrap_or(0)
         }
     }
 }
@@ -314,11 +347,15 @@ fn setup() -> Setup {
     // Deployment-timelock tests advance the ledger by DEPLOY_TIMELOCK_LEDGERS;
     // raise entry TTLs up front so contracts registered later in the test
     // don't get archived by the jump before deploy_epoch is executed.
-    env.ledger().set_max_entry_ttl(DEPLOY_TIMELOCK_LEDGERS * 10);
+    // Shared-Rollover tests keep reusing the same vault/marketplace/rollover
+    // instance across several sequential timelock cycles (epoch N, N+1,
+    // N+2), so their entries must outlive several multiples of the
+    // timelock, not just one.
+    env.ledger().set_max_entry_ttl(DEPLOY_TIMELOCK_LEDGERS * 50);
     env.ledger()
-        .set_min_persistent_entry_ttl(DEPLOY_TIMELOCK_LEDGERS + 500);
+        .set_min_persistent_entry_ttl(DEPLOY_TIMELOCK_LEDGERS * 5 + 500);
     env.ledger()
-        .set_min_temp_entry_ttl(DEPLOY_TIMELOCK_LEDGERS + 500);
+        .set_min_temp_entry_ttl(DEPLOY_TIMELOCK_LEDGERS * 5 + 500);
 
     let admin = Address::generate(&env);
     let factory_id = env.register(Factory, ());
@@ -356,6 +393,62 @@ fn deploy_mock_epoch(s: &Setup, maturity: u32) -> Result<u32, NovaireFactoryErro
         intent_engine: intent,
         rollover_engine: rollover,
         keeper,
+        grace_period_ledgers: 17280,
+        maturity_engine,
+    };
+
+    Ok(deploy_via_timelock(s, &params))
+}
+
+/// The addresses that a shared, long-lived Rollover pins at first-epoch
+/// init: every later epoch must reuse them exactly (see
+/// `Factory::execute_deploy_epoch`'s post-first-epoch metadata check).
+struct SharedRolloverAddrs {
+    rollover: Address,
+    vault: Address,
+    marketplace: Address,
+    underlying: Address,
+    keeper: Address,
+}
+
+fn shared_rollover_addrs(env: &Env) -> SharedRolloverAddrs {
+    SharedRolloverAddrs {
+        rollover: env.register(mock_rollover::MockRolloverEngine, ()),
+        vault: env.register(mock_vault::MockVault, ()),
+        marketplace: env.register(mock_market::MockMarketplace, ()),
+        underlying: Address::generate(env),
+        keeper: Address::generate(env),
+    }
+}
+
+/// Deploys an epoch reusing the same Rollover/vault/marketplace/underlying/keeper
+/// across calls, as a real multi-epoch deployment sharing one Rollover would.
+fn deploy_epoch_with_shared_rollover(
+    s: &Setup,
+    maturity: u32,
+    shared: &SharedRolloverAddrs,
+) -> Result<u32, NovaireFactoryError> {
+    let env = &s.env;
+    let sy = env.register(mock_sy::MockSyWrapper, ());
+    let pt = env.register(mock_pt::MockPtToken, ());
+    let yt = env.register(mock_yt::MockYtToken, ());
+    let tokenizer = env.register(mock_tokenizer::MockTokenizer, ());
+    let intent = env.register(mock_intent::MockIntentEngine, ());
+    let maturity_engine = env.register(mock_maturity::MockMaturityEngine, ());
+
+    let params = DeployEpochParams {
+        maturity_ledger: maturity,
+        underlying_token: shared.underlying.clone(),
+        sy_wrapper: sy,
+        vault: shared.vault.clone(),
+        blend_pool: Address::generate(env),
+        pt_token: pt,
+        yt_token: yt,
+        tokenizer,
+        marketplace: shared.marketplace.clone(),
+        intent_engine: intent,
+        rollover_engine: shared.rollover.clone(),
+        keeper: shared.keeper.clone(),
         grace_period_ledgers: 17280,
         maturity_engine,
     };
@@ -404,10 +497,11 @@ fn test_successful_deployment_and_wiring() {
 #[test]
 fn test_multiple_epochs_coexist() {
     let s = setup();
+    let shared = shared_rollover_addrs(&s.env);
 
-    let e1 = deploy_mock_epoch(&s, 100000).unwrap();
-    let e2 = deploy_mock_epoch(&s, 200000).unwrap();
-    let e3 = deploy_mock_epoch(&s, 300000).unwrap();
+    let e1 = deploy_epoch_with_shared_rollover(&s, 100000, &shared).unwrap();
+    let e2 = deploy_epoch_with_shared_rollover(&s, 200000, &shared).unwrap();
+    let e3 = deploy_epoch_with_shared_rollover(&s, 300000, &shared).unwrap();
 
     assert_eq!(e1, 1);
     assert_eq!(e2, 2);
@@ -421,6 +515,95 @@ fn test_multiple_epochs_coexist() {
 
     // Latest is 3
     assert_eq!(s.factory.latest_epoch().epoch_id, 3);
+}
+
+// ==========================================
+// SHARED ROLLOVER TESTS (Phase 3)
+// ==========================================
+
+#[test]
+fn test_shared_rollover_same_address_across_epochs() {
+    let s = setup();
+    let shared = shared_rollover_addrs(&s.env);
+
+    deploy_epoch_with_shared_rollover(&s, 100000, &shared).unwrap();
+    deploy_epoch_with_shared_rollover(&s, 200000, &shared).unwrap();
+    deploy_epoch_with_shared_rollover(&s, 300000, &shared).unwrap();
+
+    let r1 = s.factory.get_epoch(&1).rollover_engine;
+    let r2 = s.factory.get_epoch(&2).rollover_engine;
+    let r3 = s.factory.get_epoch(&3).rollover_engine;
+
+    assert_eq!(r1, shared.rollover);
+    assert_eq!(r1, r2);
+    assert_eq!(r2, r3);
+}
+
+#[test]
+fn test_shared_rollover_initialized_exactly_once() {
+    let s = setup();
+    let shared = shared_rollover_addrs(&s.env);
+    let rollover_client = mock_rollover::MockRolloverEngineClient::new(&s.env, &shared.rollover);
+
+    deploy_epoch_with_shared_rollover(&s, 100000, &shared).unwrap();
+    assert_eq!(rollover_client.init_count(), 1);
+
+    deploy_epoch_with_shared_rollover(&s, 200000, &shared).unwrap();
+    deploy_epoch_with_shared_rollover(&s, 300000, &shared).unwrap();
+
+    // Second and third epochs must NOT re-run Rollover's `initialize`.
+    assert_eq!(rollover_client.init_count(), 1);
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #14)")]
+fn test_second_epoch_with_different_rollover_address_rejected() {
+    let s = setup();
+    let shared = shared_rollover_addrs(&s.env);
+    deploy_epoch_with_shared_rollover(&s, 100000, &shared).unwrap();
+
+    // Second epoch proposes a fresh, different Rollover instance instead of
+    // reusing the shared one — must be rejected explicitly, not silently
+    // accepted as a second independent Rollover.
+    let mut other = shared_rollover_addrs(&s.env);
+    other.rollover = s.env.register(mock_rollover::MockRolloverEngine, ());
+    deploy_epoch_with_shared_rollover(&s, 200000, &other).unwrap();
+}
+
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #11)")]
+fn test_second_epoch_with_mismatched_vault_rejected() {
+    let s = setup();
+    let shared = shared_rollover_addrs(&s.env);
+    deploy_epoch_with_shared_rollover(&s, 100000, &shared).unwrap();
+
+    // Same shared Rollover address, but a different vault than what it was
+    // initialized with — the metadata check must catch this, since a naive
+    // "swallow AlreadyInitialized" approach would let it through silently.
+    let mut mismatched = shared_rollover_addrs(&s.env);
+    mismatched.rollover = shared.rollover.clone();
+    deploy_epoch_with_shared_rollover(&s, 200000, &mismatched).unwrap();
+}
+
+#[test]
+fn test_link_epochs_across_shared_rollover() {
+    let s = setup();
+    let shared = shared_rollover_addrs(&s.env);
+
+    let e1 = deploy_epoch_with_shared_rollover(&s, 100000, &shared).unwrap();
+    let e2 = deploy_epoch_with_shared_rollover(&s, 200000, &shared).unwrap();
+    let e3 = deploy_epoch_with_shared_rollover(&s, 300000, &shared).unwrap();
+
+    s.factory.link_epochs(&e1, &e2);
+    s.factory.link_epochs(&e2, &e3);
+
+    let next_after_1 = s.factory.get_next_epoch(&e1);
+    let next_after_2 = s.factory.get_next_epoch(&e2);
+
+    assert_eq!(next_after_1.epoch_id, e2);
+    assert_eq!(next_after_2.epoch_id, e3);
+    assert_eq!(next_after_1.rollover_engine, shared.rollover);
+    assert_eq!(next_after_2.rollover_engine, shared.rollover);
 }
 
 #[test]

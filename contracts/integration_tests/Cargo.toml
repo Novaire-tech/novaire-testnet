@@ -18,6 +18,7 @@ marketplace = { path = "../marketplace" }
 intent_engine = { path = "../intent_engine" }
 rollover = { path = "../rollover" }
 maturity_engine = { path = "../maturity_engine" }
+factory = { path = "../factory" }
 
 [lib]
 crate-type = ["rlib"]

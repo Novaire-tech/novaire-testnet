@@ -100,7 +100,12 @@ impl<'a> Protocol<'a> {
         // `rollover.initialize` below.
         let factory_addr = env.register(MockFactory, ());
         let factory = MockFactoryClient::new(&env, &factory_addr);
-        factory.init(&pt_token_addr, &MATURITY_LEDGER);
+        factory.init(
+            &pt_token_addr,
+            &tokenizer_addr,
+            &intent_engine_addr,
+            &MATURITY_LEDGER,
+        );
 
         sy_wrapper.initialize(&admin, &underlying_token_addr, &blend_pool_addr);
         vault.initialize(&admin, &sy_wrapper_addr, &underlying_token_addr);

@@ -19,6 +19,7 @@ pub enum NovaireFactoryError {
     WiringMismatch = 11,
     NoPendingDeploy = 12,
     TimelockNotElapsed = 13,
+    RolloverAddressMismatch = 14,
 }
 
 #[contracttype]
@@ -41,6 +42,32 @@ pub struct EpochRecord {
     pub is_active: bool,
 }
 
+/// Narrow cross-contract view for consumers (Rollover) that only need these 5 fields,
+/// not the full 15-field `EpochRecord`. Soroban decodes structs positionally by field
+/// count, so a consumer declaring fewer fields than the real struct cannot decode it —
+/// this view exists so Rollover never has to.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RolloverEpochView {
+    pub epoch_id: u32,
+    pub maturity_ledger: u32,
+    pub pt_token: Address,
+    pub tokenizer: Address,
+    pub intent_engine: Address,
+}
+
+impl From<EpochRecord> for RolloverEpochView {
+    fn from(r: EpochRecord) -> Self {
+        RolloverEpochView {
+            epoch_id: r.epoch_id,
+            maturity_ledger: r.maturity_ledger,
+            pt_token: r.pt_token,
+            tokenizer: r.tokenizer,
+            intent_engine: r.intent_engine,
+        }
+    }
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
@@ -51,6 +78,7 @@ pub enum DataKey {
     Maturity(u32),
     NextEpoch(u32),
     PendingDeploy,
+    RolloverEngine,
 }
 
 #[contracttype]
@@ -229,6 +257,18 @@ pub trait IntentEngineInterface {
     );
 }
 
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RolloverMetadata {
+    pub admin: Address,
+    pub vault: Address,
+    pub marketplace: Address,
+    pub keeper: Address,
+    pub underlying_token: Address,
+    pub factory: Address,
+    pub grace_period_ledgers: u32,
+}
+
 #[soroban_sdk::contractclient(name = "RolloverEngineClient")]
 pub trait RolloverEngineInterface {
     fn initialize(
@@ -244,6 +284,7 @@ pub trait RolloverEngineInterface {
         factory: Address,
         grace_period_ledgers: u32,
     );
+    fn metadata(env: Env) -> RolloverMetadata;
 }
 
 // ==========================================
@@ -399,6 +440,16 @@ mod storage {
     pub fn clear_pending_deploy(env: &Env) {
         env.storage().instance().remove(&DataKey::PendingDeploy);
     }
+
+    pub fn get_rollover_engine(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::RolloverEngine)
+    }
+
+    pub fn set_rollover_engine(env: &Env, rollover_engine: &Address) {
+        env.storage()
+            .instance()
+            .set(&DataKey::RolloverEngine, rollover_engine);
+    }
 }
 
 // ==========================================
@@ -450,6 +501,15 @@ impl Factory {
 
         if storage::epoch_exists_for_maturity(&env, params.maturity_ledger) {
             return Err(NovaireFactoryError::EpochAlreadyExists);
+        }
+
+        // Rollover is a long-lived, shared contract across every epoch (not
+        // redeployed per epoch): once the first epoch has pinned its
+        // address, every later proposal must reuse that exact address.
+        if let Some(shared) = storage::get_rollover_engine(&env) {
+            if params.rollover_engine != shared {
+                return Err(NovaireFactoryError::RolloverAddressMismatch);
+            }
         }
 
         let addresses = [
@@ -574,19 +634,46 @@ impl Factory {
             &params.yt_token,
         );
 
+        // Shared Rollover: initialized exactly once, on the epoch that
+        // establishes it. Every later epoch reuses the same instance and
+        // instead proves the wiring still agrees by reading its metadata
+        // back — never by re-initializing or by swallowing
+        // `AlreadyInitialized`, which would hide a real config drift.
         let rollover_client = RolloverEngineClient::new(&env, &params.rollover_engine);
-        rollover_client.initialize(
-            &admin,
-            &params.tokenizer,
-            &params.vault,
-            &params.marketplace,
-            &params.intent_engine,
-            &params.keeper,
-            &params.pt_token,
-            &params.underlying_token,
-            &env.current_contract_address(),
-            &params.grace_period_ledgers,
-        );
+        match storage::get_rollover_engine(&env) {
+            None => {
+                rollover_client.initialize(
+                    &admin,
+                    &params.tokenizer,
+                    &params.vault,
+                    &params.marketplace,
+                    &params.intent_engine,
+                    &params.keeper,
+                    &params.pt_token,
+                    &params.underlying_token,
+                    &env.current_contract_address(),
+                    &params.grace_period_ledgers,
+                );
+                storage::set_rollover_engine(&env, &params.rollover_engine);
+            }
+            Some(shared) => {
+                if shared != params.rollover_engine {
+                    return Err(NovaireFactoryError::RolloverAddressMismatch);
+                }
+                // Vault/marketplace are deliberately excluded here: Rollover pins
+                // them once at its one-time `initialize` (epoch N) and never
+                // updates them, while Vault/Marketplace are epoch-specific and
+                // legitimately differ every epoch (N+1, N+2, ...).
+                let rollover_meta = rollover_client.metadata();
+                if rollover_meta.admin != admin
+                    || rollover_meta.factory != env.current_contract_address()
+                    || rollover_meta.underlying_token != params.underlying_token
+                    || rollover_meta.keeper != params.keeper
+                {
+                    return Err(NovaireFactoryError::WiringMismatch);
+                }
+            }
+        }
 
         if sy_client.underlying_asset() != params.underlying_token {
             return Err(NovaireFactoryError::WiringMismatch);
@@ -717,6 +804,31 @@ impl Factory {
     ) -> Result<EpochRecord, NovaireFactoryError> {
         let epoch_id = storage::get_epoch_for_maturity(&env, maturity_ledger)?;
         storage::get_epoch(&env, epoch_id)
+    }
+
+    // ==========================================
+    // NARROW ROLLOVER VIEW GETTERS
+    // ==========================================
+    // Additive API: these return `RolloverEpochView` (5 fields) instead of the full
+    // `EpochRecord` (15 fields), so Rollover can decode the response without depending
+    // on Vault/Marketplace/SyWrapper/YtToken/MaturityEngine fields it never needs.
+
+    pub fn latest_epoch_view(env: Env) -> Result<RolloverEpochView, NovaireFactoryError> {
+        Ok(Self::latest_epoch(env)?.into())
+    }
+
+    pub fn epoch_view_by_maturity(
+        env: Env,
+        maturity_ledger: u32,
+    ) -> Result<RolloverEpochView, NovaireFactoryError> {
+        Ok(Self::get_epoch_by_maturity(env, maturity_ledger)?.into())
+    }
+
+    pub fn next_epoch_view(
+        env: Env,
+        current_epoch_id: u32,
+    ) -> Result<RolloverEpochView, NovaireFactoryError> {
+        Ok(Self::get_next_epoch(env, current_epoch_id)?.into())
     }
 }
 
