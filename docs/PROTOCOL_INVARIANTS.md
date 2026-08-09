@@ -28,8 +28,9 @@ Source-of-truth reference for invariants enforced (or assumed) across the Novair
 
 No standalone treasury contract; accounting is distributed:
 
-- SY Wrapper: `refresh_rate` only ratchets `TotalUnderlying` up, rejects any decrease (`RateCannotDecrease`), and clamps increases to max 10% per call (anti donation-DoS). — `sy_wrapper/src/lib.rs:340-379`
-- `mark_loss` (admin-only) can only decrease `TotalUnderlying` down to measured actual balance, never below. — `sy_wrapper/src/lib.rs:393-415`
+- SY Wrapper: `refresh_rate` only ratchets `TotalUnderlying` up, rejects any decrease (`RateCannotDecrease`), and clamps increases to max 10% per call (anti donation-DoS). — `sy_wrapper/src/lib.rs:516-564`
+- `mark_loss` is **deliberately permissionless** (not admin-gated): it can only decrease `TotalUnderlying` down to a measured actual balance derived entirely from on-chain reads, never below - there's nothing caller-supplied for a caller to lie about, so anyone can trigger loss realization the moment it happens, preventing bad debt from being hidden or delayed behind a single key. Its core logic is factored into an internal `realize_loss` fn shared with `withdraw` (LOSS-01) and, via `mark_loss` itself, with `tokenizer::settle_epoch` (LOSS-02) - see below. — `sy_wrapper/src/lib.rs:566-608`
+- **LOSS-01**: `withdraw` calls `realize_loss` before computing the payout rate, atomically in the same transaction, so a real yield-source loss is reflected in the payout even if nobody called `mark_loss` beforehand. — `sy_wrapper/src/lib.rs:451-465`
 - Marketplace swap fee: `997/1000` (0.3%) on PT-leg input; YT-leg fee applied as output haircut. — `marketplace/src/lib.rs:249-250,378-384,804-808,881-885`
 - Marketplace collateralization (`assert_invariant`): on-chain PT/underlying balance must be `>=` tracked reserves; rejects one-sided/orphaned reserves. — `marketplace/src/lib.rs:1284-1313`
 - Rollover must never warehouse underlying between ops (`balance(contract) > 0` → `InvariantViolation`). — `rollover/src/lib.rs:565-571`
@@ -38,7 +39,7 @@ No standalone treasury contract; accounting is distributed:
 ## 4. Settlement
 
 - Settlement only from `Matured` state, exactly once (`AlreadySettled`/`EpochNotMatured`). — `tokenizer/src/lib.rs:452-459`
-- Sequence: (1) `refresh_rate` to avoid stale settlement, (2) final yield-index refresh for current YT holders, (3) freeze `settlement_rate`, (4) advance `MaturityEngine::settle_epoch` in the same tx. — `tokenizer/src/lib.rs:462-484`
+- Sequence: (1) **LOSS-02**: `mark_loss` on the SY wrapper to realize any real loss (permissionless, decrease-only - see section 3), so settlement can never freeze a rate inflated above what's actually recoverable, (2) `refresh_rate` to also pick up any legitimate accrual not yet reflected, (3) final yield-index refresh for current YT holders, (4) freeze `settlement_rate`, (5) advance `MaturityEngine::settle_epoch` in the same tx. If backing is insufficient, the existing fail-closed `assert_invariant` check still reverts the whole settlement - LOSS-02 does not add any haircut/pro-rata distribution (that remains open, tracked as H-1). — `tokenizer/src/lib.rs:474-516`
 - Settlement rate is immutable once set; used in preference to live SY rate thereafter, insulating PT holders from post-settlement rate crashes. — `tokenizer/src/lib.rs:614-617,530-536`
 - `claim_yield` branches on live rate pre-settlement vs. locked rate post-settlement. — `tokenizer/src/lib.rs:360-373`
 - Redemption only in `Settled` state, amount positive and `<=` balance. — `tokenizer/src/lib.rs:506-520`
@@ -59,17 +60,15 @@ No standalone treasury contract; accounting is distributed:
 
 ## 6. Rollover — PT Custody
 
+- **RO-02**: PT token resolution is **position-scoped**, not global. Each `RolloverPosition` carries its own `pt_token: Address`, resolved from the Factory at `register_rollover` time and updated to the next epoch's PT token only on that same position's `execute_rollover`. There is no shared "current PT token" key any active position implicitly depends on, so one user's rollover into a new epoch can never change which PT token another user's still-active position (in a different epoch) resolves to on `exit_rollover` or a later `execute_rollover`. — `rollover/src/lib.rs:104-115,362-397,531-538,568-579`
 - `assert_invariant` after every state-changing op (`register_rollover`, `execute_rollover`, `exit_rollover`):
   1. Underlying balance held by rollover contract must be exactly `0`.
-  2. **PT custody**: `pt_client.balance(contract) == storage::get_total_pt_held(env)` — actual on-chain PT must exactly match tracked accounting.
-  — `rollover/src/lib.rs:562-586`
-- Recent fix (`398b178`) guards against two bugs:
-  - `execute_rollover` previously wrote Intent Engine's cross-user cumulative `total_pt_held` directly into a single position instead of computing this call's delta; now snapshots `pt_held_before` and diffs (`new_pt = max(0, total_pt_held - pt_held_before)`). — `rollover/src/lib.rs:423-439,470-471`
-  - Rollover's tracked `PtToken` pointer went stale across epoch rolls (fresh PT contract per epoch); `EpochRecord` now carries `pt_token`, persisted on execute. — `rollover/src/lib.rs:477-481`; `factory/src/lib.rs:29`
-- `total_pt_held` bookkeeping: incremented on register (`321-327`), delta-adjusted on execute (`483-489`), decremented on exit (`524-530`).
-- Position lifecycle: `register_rollover` rejects double-registration while active (`289-293`); `execute_rollover` requires active, `current_ledger >= current_epoch_maturity`, and `next_epoch.maturity_ledger > current_ledger` (`344-350,381-383`).
-- Keeper-gated grace period: only registered keeper may execute within grace period; permissionless after, for liveness. — `rollover/src/lib.rs:353-365`
-- Mirrored at test level: `INV-9b` (`actual_pt == tracked_pt`), `INV-9a` (rollover holds zero YT). — `integration_tests/src/invariants.rs:162-177`
+  2. **PT custody, per token**: for every PT token contract the rollover has ever touched (tracked in `TrackedPtTokens`), that specific token's actual on-chain balance must equal its own per-token tracked figure (`PtHeldByToken(token)`) — generalizes the old single-token check to correctly cover multiple PT tokens from different epochs being held concurrently.
+  — `rollover/src/lib.rs:618-642`
+- `total_pt_held()` (public query) sums the per-token tracked figures across every token ever touched, preserving the old scalar API for existing callers (e.g. `integration_tests`). — `rollover/src/lib.rs:186-192`
+- Position lifecycle: `register_rollover` rejects double-registration while active; `execute_rollover` requires active, `current_ledger >= current_epoch_maturity`, and `next_epoch.maturity_ledger > current_ledger`.
+- Keeper-gated grace period: only registered keeper may execute within grace period; permissionless after, for liveness. — `rollover/src/lib.rs:338-365`
+- Mirrored at test level: `INV-9b` (`actual_pt == tracked_pt`), `INV-9a` (rollover holds zero YT). — `integration_tests/src/invariants.rs:162-177`; RO-02 itself regression-tested by `test_ro02_execute_rollover_does_not_affect_other_positions_pt_token` and `test_ro02_staggered_rollovers_no_pt_token_cross_contamination` in `rollover/src/test.rs`.
 
 ## 7. AMM (Marketplace)
 

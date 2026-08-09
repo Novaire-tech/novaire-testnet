@@ -491,6 +491,146 @@ fn test_invariant_catches_pt_custody_mismatch() {
 }
 
 #[test]
+fn test_ro02_execute_rollover_does_not_affect_other_positions_pt_token() {
+    // RO-02 regression: two positions A and B register into the same epoch. A executes a
+    // rollover into epoch N+1 (acquiring a NEW PT token contract); B then exits, still in
+    // epoch N. Pre-fix, both `execute_rollover` and `exit_rollover` resolved PT token via a
+    // single global `DataKey::PtToken` key, so A's roll would silently repoint B's exit at
+    // A's new PT token - corrupting B's redemption. Post-fix, each position resolves and
+    // stores its OWN PT token, so A's roll must leave B's exit completely unaffected.
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_admin.mint(&user_a, &2000);
+    token_admin.mint(&user_b, &2000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user_a, &1000, &0, &1000, &0);
+    intent_client.execute_fixed_yield_intent(&user_b, &1000, &0, &1000, &0);
+
+    let a_pt = pt_client.balance(&user_a);
+    let b_pt = pt_client.balance(&user_b);
+
+    rollover.register_rollover(&user_a, &a_pt, &1000, &0, &0);
+    rollover.register_rollover(&user_b, &b_pt, &1000, &0, &0);
+
+    let b_pt_token_at_register = rollover.get_position(&user_b).pt_token;
+
+    // Advance past maturity and deploy a fresh PT token contract for epoch N+1.
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
+    let pt2_id = env.register(PtToken, ());
+    PtTokenClient::new(&env, &pt2_id).initialize(&Address::generate(&env), &rollover.address);
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+    mock_factory_client.set_next_maturity(&2000);
+    mock_factory_client.set_pt_token(&pt2_id);
+    let intent_engine_client = MockIntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_engine_client.set_pt_token_intent(&pt2_id);
+
+    // A rolls forward onto the new epoch's PT token.
+    rollover.execute_rollover(&user_a);
+    let a_position = rollover.get_position(&user_a);
+    assert_eq!(a_position.pt_token, pt2_id);
+
+    // B, untouched by A's roll, must still resolve to the ORIGINAL PT token from
+    // registration - not A's new one - and must be able to exit successfully against it.
+    let b_position_before_exit = rollover.get_position(&user_b);
+    assert_eq!(b_position_before_exit.pt_token, b_pt_token_at_register);
+    assert_ne!(
+        b_position_before_exit.pt_token, pt2_id,
+        "B's PT token must not have been contaminated by A's rollover to the new epoch"
+    );
+
+    rollover.exit_rollover(&user_b);
+    assert_eq!(pt_client.balance(&user_b), b_pt);
+}
+
+#[test]
+fn test_ro02_staggered_rollovers_no_pt_token_cross_contamination() {
+    // Staggered variant: A rolls to epoch N+1, then (separately) B rolls to epoch N+2. Each
+    // position must end up pointing at its OWN epoch's PT token, never at the other's.
+    let (
+        env,
+        _,
+        _,
+        rollover,
+        pt_client,
+        token_admin,
+        intent_engine_contract_id,
+        factory_contract_id,
+    ) = setup_env();
+
+    let user_a = Address::generate(&env);
+    let user_b = Address::generate(&env);
+    token_admin.mint(&user_a, &2000);
+    token_admin.mint(&user_b, &2000);
+
+    let intent_client = IntentEngineClient::new(&env, &intent_engine_contract_id);
+    intent_client.execute_fixed_yield_intent(&user_a, &1000, &0, &1000, &0);
+    intent_client.execute_fixed_yield_intent(&user_b, &1000, &0, &1000, &0);
+
+    let a_pt = pt_client.balance(&user_a);
+    let b_pt = pt_client.balance(&user_b);
+
+    rollover.register_rollover(&user_a, &a_pt, &1000, &0, &0);
+    rollover.register_rollover(&user_b, &b_pt, &1000, &0, &0);
+
+    let mock_factory_client = MockFactoryClient::new(&env, &factory_contract_id);
+    let intent_engine_client = MockIntentEngineClient::new(&env, &intent_engine_contract_id);
+
+    // --- A rolls to epoch N+1 ---
+    env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+        sequence_number: 1001,
+        ..env.ledger().get()
+    });
+    let pt2_id = env.register(PtToken, ());
+    PtTokenClient::new(&env, &pt2_id).initialize(&Address::generate(&env), &rollover.address);
+    mock_factory_client.set_next_maturity(&2000);
+    mock_factory_client.set_pt_token(&pt2_id);
+    intent_engine_client.set_pt_token_intent(&pt2_id);
+    rollover.execute_rollover(&user_a);
+    assert_eq!(rollover.get_position(&user_a).pt_token, pt2_id);
+
+    // --- B independently rolls to epoch N+2 (a DIFFERENT next epoch than A's) ---
+    let pt3_id = env.register(PtToken, ());
+    PtTokenClient::new(&env, &pt3_id).initialize(&Address::generate(&env), &rollover.address);
+    mock_factory_client.set_next_maturity(&3000);
+    mock_factory_client.set_pt_token(&pt3_id);
+    intent_engine_client.set_pt_token_intent(&pt3_id);
+    rollover.execute_rollover(&user_b);
+    let b_position = rollover.get_position(&user_b);
+    assert_eq!(b_position.pt_token, pt3_id);
+
+    // A's position must be completely unaffected by B's later roll.
+    let a_position = rollover.get_position(&user_a);
+    assert_eq!(a_position.pt_token, pt2_id);
+    assert_ne!(a_position.pt_token, b_position.pt_token);
+
+    // Custody invariant holds across both distinct PT tokens simultaneously.
+    assert_eq!(
+        pt_client.balance(&rollover.address), // pt_client is the ORIGINAL (epoch-N) token
+        0,
+        "epoch-N PT token should be fully drained once both positions have rolled off it"
+    );
+    let pt2_client = PtTokenClient::new(&env, &pt2_id);
+    let pt3_client = PtTokenClient::new(&env, &pt3_id);
+    assert_eq!(pt2_client.balance(&rollover.address), a_position.pt_balance);
+    assert_eq!(pt3_client.balance(&rollover.address), b_position.pt_balance);
+}
+
+#[test]
 fn test_execute_rollover_keeper_vs_permissionless_boundary() {
     // `execute_rollover` must require the registered keeper's authorization
     // while inside the post-maturity grace period (inclusive of its exact

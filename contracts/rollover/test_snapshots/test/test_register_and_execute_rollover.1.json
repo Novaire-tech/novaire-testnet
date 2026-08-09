@@ -967,6 +967,14 @@
                     },
                     {
                       "key": {
+                        "symbol": "pt_token"
+                      },
+                      "val": {
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                      }
+                    },
+                    {
+                      "key": {
                         "symbol": "realized_pnl"
                       },
                       "val": {
@@ -1048,6 +1056,18 @@
                         "key": {
                           "vec": [
                             {
+                              "symbol": "InitialPtToken"
+                            }
+                          ]
+                        },
+                        "val": {
+                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                        }
+                      },
+                      {
+                        "key": {
+                          "vec": [
+                            {
                               "symbol": "IntentEngine"
                             }
                           ]
@@ -1096,12 +1116,18 @@
                         "key": {
                           "vec": [
                             {
-                              "symbol": "PtToken"
+                              "symbol": "PtHeldByToken"
+                            },
+                            {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
                             }
                           ]
                         },
                         "val": {
-                          "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                          "i128": {
+                            "hi": 0,
+                            "lo": 1010
+                          }
                         }
                       },
                       {
@@ -1120,15 +1146,16 @@
                         "key": {
                           "vec": [
                             {
-                              "symbol": "TotalPtHeld"
+                              "symbol": "TrackedPtTokens"
                             }
                           ]
                         },
                         "val": {
-                          "i128": {
-                            "hi": 0,
-                            "lo": 1010
-                          }
+                          "vec": [
+                            {
+                              "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAOLZM"
+                            }
+                          ]
                         }
                       },
                       {

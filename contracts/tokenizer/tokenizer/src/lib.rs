@@ -60,6 +60,7 @@ pub trait VaultInterface {
 pub trait SyWrapperInterface {
     fn get_exchange_rate(env: Env) -> i128;
     fn refresh_rate(env: Env) -> Result<(), soroban_sdk::Error>;
+    fn mark_loss(env: Env) -> Result<i128, soroban_sdk::Error>;
 }
 
 /// Cross-contract client for the canonical epoch FSM. Tokenizer no longer
@@ -484,7 +485,13 @@ impl Tokenizer {
         let sy_wrapper_addr = storage::get_address(&env, DataKey::SyWrapper)?;
         let sy_client = SyWrapperClient::new(&env, &sy_wrapper_addr);
 
-        // Fix M3: Prevent stale settlement rate by refreshing accounting before freezing
+        // LOSS-02: Realize any Blend-pool loss BEFORE freezing the settlement rate.
+        // `refresh_rate` (Fix M3) only ratchets the rate up and rejects decreases, so if the
+        // yield source has actually lost value it would leave a stale, inflated rate to freeze
+        // forever into `settlement_rate`. `mark_loss` is the permissionless, ground-truth-only
+        // path that can record a decrease; call it first so settlement reflects real backing.
+        sy_client.mark_loss();
+        // Still refresh upward for any legitimate accrual not yet reflected.
         sy_client.refresh_rate();
 
         // Final distribution of any remaining organic growth to current YT holders
@@ -975,6 +982,7 @@ mod tests {
         yt_client: RealYtClient<'static>,
         tokenizer_client: TokenizerClient<'static>,
         maturity_ledger: u32,
+        pool_id: Address,
     }
 
     /// Builds a full Vault/SyWrapper/PtToken/YtToken/Tokenizer/MaturityEngine stack with a
@@ -998,7 +1006,7 @@ mod tests {
 
         let pool_id = env.register(MockBlendPool, ());
         MockBlendPoolClient::new(&env, &pool_id).init(&token_contract);
-        let yield_source = pool_id;
+        let yield_source = pool_id.clone();
 
         let sy_contract_id = env.register(SyWrapper, ());
         let sy_client = RealSyWrapperClient::new(&env, &sy_contract_id);
@@ -1054,7 +1062,21 @@ mod tests {
             yt_client,
             tokenizer_client,
             maturity_ledger,
+            pool_id,
         }
+    }
+
+    /// Simulates the Blend pool losing `amount` of the sy_wrapper's supplied position
+    /// (e.g. bad debt/slashing), directly draining the mock pool's tracked bToken-equivalent
+    /// supply for the sy_wrapper contract - mirroring `sy_wrapper::audit_tests`'
+    /// `simulate_yield(.., -amount)` pattern, adapted to this file's simpler 1:1 mock (which
+    /// has no `simulate_yield` hook of its own).
+    fn simulate_pool_loss(h: &Harness, amount: i128) {
+        h.env.as_contract(&h.pool_id, || {
+            let key = PoolDataKey::Supply(h.sy_client.address.clone());
+            let supply: i128 = h.env.storage().instance().get(&key).unwrap_or(0);
+            h.env.storage().instance().set(&key, &(supply - amount));
+        });
     }
 
     #[test]
@@ -1070,6 +1092,7 @@ mod tests {
             yt_client,
             tokenizer_client,
             maturity_ledger,
+            pool_id: _,
         } = setup(2000, 100);
 
         // Vault Deposit
@@ -1223,6 +1246,54 @@ mod tests {
         for _ in 0..10 {
             let res = h.tokenizer_client.try_settle_epoch();
             assert!(res.is_err());
+        }
+    }
+
+    #[test]
+    fn test_loss02_settle_epoch_does_not_freeze_stale_pre_loss_rate() {
+        // LOSS-02 regression: deposit, mint PT/YT, simulate a Blend-pool loss, then call
+        // `settle_epoch()` WITHOUT ever calling `mark_loss()` manually. Pre-fix,
+        // `settle_epoch()` only called `refresh_rate()` (which deliberately rejects rate
+        // decreases), so the stale pre-loss rate would be frozen into `settlement_rate`
+        // forever - PT holders would then redeem against backing that doesn't exist.
+        // Post-fix, `settle_epoch()` also realizes the loss (via the same internal logic
+        // `mark_loss` uses) before freezing, so the frozen rate can never be higher than
+        // what's actually recoverable.
+        let h = setup(10_000, 100);
+        h.vault_client.deposit(&h.user, &10_000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &9_000);
+
+        let pre_loss_rate = h.sy_client.get_exchange_rate();
+
+        // Simulate a 20% loss in the Blend pool - nobody calls mark_loss() afterward.
+        h.env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: h.maturity_ledger,
+            ..h.env.ledger().get()
+        });
+        simulate_pool_loss(&h, 2_000);
+
+        // Either settlement succeeds with a rate that reflects the realized loss (strictly
+        // below the stale pre-loss rate), or it reverts outright per the existing fail-closed
+        // insolvency invariant (`assert_invariant`) - both are acceptable outcomes. What must
+        // never happen is settlement silently succeeding with the stale, pre-loss rate frozen.
+        match h.tokenizer_client.try_settle_epoch() {
+            Ok(_) => {
+                let settlement_rate = h
+                    .tokenizer_client
+                    .metadata()
+                    .settlement_exchange_rate
+                    .expect("settlement_rate must be set after a successful settle_epoch");
+                assert!(
+                    settlement_rate < pre_loss_rate,
+                    "settle_epoch succeeded but froze the stale pre-loss rate ({}) instead of \
+                     realizing the loss (pre-loss rate was {})",
+                    settlement_rate,
+                    pre_loss_rate
+                );
+            }
+            Err(_) => {
+                // Fail-closed on insufficient backing is an acceptable, preserved outcome.
+            }
         }
     }
 

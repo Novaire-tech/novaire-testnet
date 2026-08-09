@@ -456,6 +456,15 @@ impl SyWrapper {
         }
 
         let underlying_addr = storage::get_underlying(&env)?;
+
+        // LOSS-01: realize any Blend-pool loss atomically before computing the payout rate.
+        // Without this, `withdraw` could read a stale (pre-loss) TotalUnderlying and pay out
+        // more than is actually recoverable - `refresh_rate` can't help here since it
+        // deliberately rejects rate decreases. This reuses the same permissionless,
+        // ground-truth-only logic as `mark_loss` so calling `withdraw` itself realizes the
+        // loss rather than depending on someone calling `mark_loss` first.
+        Self::realize_loss(&env, &underlying_addr)?;
+
         let rate = Self::get_exchange_rate(env.clone());
         let mut total_shares = storage::get_total_shares(&env);
 
@@ -586,10 +595,19 @@ impl SyWrapper {
     /// the moment it happens instead of waiting on a single key to notice and act.
     pub fn mark_loss(env: Env) -> Result<i128, NovaireSyError> {
         let underlying_addr = storage::get_underlying(&env)?;
-        let pool_id = storage::get_yield_source(&env)?;
-        let actual_balance = total_backing(&env, &underlying_addr, &pool_id)?;
+        Self::realize_loss(&env, &underlying_addr)
+    }
 
-        let total_underlying = storage::get_total_underlying(&env);
+    /// Internal, shared core of `mark_loss`. Reads the current recoverable backing and, if it
+    /// has dropped below the recorded `TotalUnderlying`, ratchets `TotalUnderlying` down to
+    /// match - never below the measured balance. Called both from the standalone permissionless
+    /// `mark_loss` entrypoint and from `withdraw` (LOSS-01) so a loss is realized atomically
+    /// within the same call as a payout, not dependent on a separate prior transaction.
+    fn realize_loss(env: &Env, underlying_addr: &Address) -> Result<i128, NovaireSyError> {
+        let pool_id = storage::get_yield_source(env)?;
+        let actual_balance = total_backing(env, underlying_addr, &pool_id)?;
+
+        let total_underlying = storage::get_total_underlying(env);
         if actual_balance >= total_underlying {
             return Ok(0);
         }
@@ -597,10 +615,10 @@ impl SyWrapper {
         let loss = total_underlying
             .checked_sub(actual_balance)
             .ok_or(NovaireSyError::MathUnderflow)?;
-        storage::set_total_underlying(&env, actual_balance);
+        storage::set_total_underlying(env, actual_balance);
 
         env.events().publish(
-            (Symbol::new(&env, "sy_loss_realized"),),
+            (Symbol::new(env, "sy_loss_realized"),),
             (loss, actual_balance, env.ledger().sequence()),
         );
 

@@ -512,6 +512,55 @@ fn test_mark_loss_is_permissionless() {
 }
 
 #[test]
+fn test_loss01_withdraw_realizes_loss_without_manual_mark_loss() {
+    // LOSS-01 regression: deposit, simulate a 20% Blend-pool loss, then withdraw
+    // WITHOUT ever calling `mark_loss()` manually. Pre-fix, `withdraw()` read the
+    // exchange rate from the stale (pre-loss) `TotalUnderlying`, so the first
+    // withdrawer would be paid out at the inflated pre-loss rate - overpaying
+    // relative to what's actually recoverable and leaving later withdrawers to
+    // eat the shortfall. Post-fix, `withdraw()` realizes the loss atomically
+    // (via the same internal logic `mark_loss` uses) before computing payout, so
+    // the payout reflects real, current backing.
+    let s = setup();
+    s.token_admin_client.mint(&s.user1, &100_000);
+    let shares = s.client.deposit(&s.user1, &100_000);
+
+    // Simulate a 20% loss in the Blend pool (e.g. bad debt/slashing) - nobody
+    // calls `mark_loss()` afterward.
+    let pool_balance_before = s.token_client.balance(&s.yield_source);
+    let loss_amount = pool_balance_before * 20 / 100;
+    s.pool_client.simulate_yield(&s.contract_id, &-loss_amount);
+
+    // The true, current recoverable backing for ALL shares (deposit minus the
+    // realized loss, minus the 1000-unit locked minimum).
+    let total_underlying_ground_truth = 100_000 - loss_amount;
+
+    let payout = s.client.withdraw(&s.user1, &shares);
+
+    // Payout must reflect the POST-loss backing, not the stale, pre-loss
+    // 100_000 total. Pre-fix this assertion fails because withdraw() pays out
+    // against the untouched stale rate (effectively ~100_000 worth), draining
+    // more than the pool actually has left and starving anyone who withdraws
+    // after user1.
+    assert!(
+        payout <= total_underlying_ground_truth,
+        "withdraw paid out {} against only {} of real recoverable backing - stale rate was used",
+        payout,
+        total_underlying_ground_truth
+    );
+
+    // The loss must have been realized as a side effect of withdraw() itself:
+    // a subsequent standalone mark_loss() call (on the remaining position) sees
+    // no further loss to record for this same drop.
+    let residual_loss = s.client.mark_loss();
+    assert_eq!(
+        residual_loss, 0,
+        "withdraw() should have already realized the loss; mark_loss() found more, meaning \
+         withdraw's payout was computed against a stale rate"
+    );
+}
+
+#[test]
 fn test_deposit_tiny_amount_above_minimum() {
     let s = setup();
     // Minimum first deposit is > 1000; 1001 is the smallest tiny amount that clears it.
