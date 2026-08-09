@@ -288,9 +288,9 @@ export function TradeInterface() {
           </span>
         </div>
         <div className="flex justify-between items-center text-sm">
-          <span className="text-nova-muted flex items-center gap-1">Implied Yield <Info className="w-3 h-3" /></span>
+          <span className="text-nova-muted flex items-center gap-1">Executable APY <Info className="w-3 h-3" /></span>
           <span className="font-medium text-[#3ECF8E]">
-            {marketData ? `${marketData.impliedYield.toFixed(2)}%` : '---'}
+            {marketData ? `${marketData.fixedApy.toFixed(2)}%` : '---'}
           </span>
         </div>
       </div>

@@ -6,15 +6,20 @@ import { useState, useEffect } from 'react';
 import { YieldService } from '../../services/yieldService';
 import type { Vault } from '../../types';
 import { ProtocolService, ProtocolState } from '../../services/protocolService';
+import { getUnderlyingApy } from '../../services/underlyingYieldService';
 
 export function MarketStatisticsPanel() {
   const { prices, loading: pricesLoading } = usePrices();
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [protocolState, setProtocolState] = useState<ProtocolState | null>(null);
+  const [underlyingApyLabel, setUnderlyingApyLabel] = useState('Loading...');
 
   useEffect(() => {
     YieldService.getVaults().then(setVaults).catch(console.error);
     ProtocolService.getProtocolState().then(setProtocolState).catch(console.error);
+    getUnderlyingApy().then(result => {
+      setUnderlyingApyLabel(result.status === 'ok' ? `${result.apy.toFixed(2)}%` : 'Insufficient data');
+    }).catch(() => setUnderlyingApyLabel('Insufficient data'));
   }, []);
 
   const activeVault = vaults[0];
@@ -28,9 +33,10 @@ export function MarketStatisticsPanel() {
     { label: 'Current PT Price', value: `$${ptPriceUsd.toFixed(3)}`, subtext: `${(protocolState?.ptPriceUnderlying || 0).toFixed(3)} XLM` },
     { label: 'Current YT Price', value: `$${ytPriceUsd.toFixed(3)}`, subtext: `${(1.0 - (protocolState?.ptPriceUnderlying || 1.0)).toFixed(3)} XLM` },
     { label: 'PT Discount', value: `${ptDiscount.toFixed(2)}%`, highlight: true },
-    { label: 'Implied Yield', value: `${(protocolState?.impliedYieldApy || 0).toFixed(2)}%`, subtext: 'Based on TWAP oracle' },
-    { label: 'Executable Yield', value: `${(protocolState?.executableApy || 0).toFixed(2)}%`, subtext: 'Based on spot price' },
-    { label: 'Fixed Yield', value: `${activeVault?.fixedApy || 0}%`, subtext: 'Guaranteed' },
+    { label: 'Underlying APY', value: underlyingApyLabel, subtext: 'Actual Blend-backed yield, from SY exchange-rate growth' },
+    { label: 'Implied APY', value: `${(protocolState?.impliedYieldApy || 0).toFixed(2)}%`, subtext: 'Market-implied yield from PT price (TWAP)' },
+    { label: 'Executable APY', value: `${(protocolState?.executableApy || 0).toFixed(2)}%`, subtext: 'Implied yield from current spot PT price' },
+    { label: 'Vault Fixed APY', value: `${activeVault?.fixedApy || 0}%`, subtext: 'Locked-in rate for the active vault' },
     { label: 'Market TVL', value: `$${(protocolState?.tvlUsd || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, subtext: `${(protocolState?.tvlXlm || 0).toLocaleString()} XLM` },
     { label: 'Total PT Supply', value: `${(protocolState?.ptSupplyXlm || 0).toLocaleString()} PT` },
     { label: 'Total YT Supply', value: `${(protocolState?.ytSupplyXlm || 0).toLocaleString()} YT` },

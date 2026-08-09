@@ -21,6 +21,8 @@ export interface ProtocolHistoryEntry {
   tvl: number;
   fixedApy: number;
   tradingVolume: number;
+  /** SY Wrapper's get_exchange_rate() at this instant. 0 means "not captured" — never treat 0 as a real rate. */
+  syExchangeRate: number;
 
   // Wallet state at this instant (0 when wallet not connected during server sync)
   ptBalance: number;
@@ -67,6 +69,7 @@ function isDuplicate(prev: ProtocolHistoryEntry, next: Omit<ProtocolHistoryEntry
     !numChanged(prev.tvl, next.tvl) &&
     !numChanged(prev.fixedApy, next.fixedApy) &&
     !numChanged(prev.tradingVolume, next.tradingVolume) &&
+    !numChanged(prev.syExchangeRate, next.syExchangeRate) &&
     !numChanged(prev.ptBalance, next.ptBalance) &&
     !numChanged(prev.ytBalance, next.ytBalance) &&
     !numChanged(prev.xlmBalance, next.xlmBalance) &&

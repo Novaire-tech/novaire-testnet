@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { HistoryStore } from '@/lib/historyStore';
 import { ProtocolService } from '@/services/protocolService';
+import { fetchSyExchangeRate } from '@/services/underlyingYieldService';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
     let ytPrice = 0;
     let tvl = 0;
     let fixedApy = 0;
+    const syExchangeRate = await fetchSyExchangeRate();
 
     try {
       const state = await ProtocolService.getProtocolState();
@@ -60,6 +62,7 @@ export async function POST(req: NextRequest) {
       tvl,
       fixedApy,
       tradingVolume: 0,
+      syExchangeRate,
       ptBalance,
       ytBalance,
       xlmBalance,

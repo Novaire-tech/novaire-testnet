@@ -7,7 +7,7 @@ import { ProtocolService, ProtocolState } from '@/services/protocolService';
 import { MetricCard } from '../ui/MetricCard';
 import { calculateProjectedDailyYield } from '../../utils/yield';
 
-const DAILY_YIELD_TOOLTIP = 'Estimated daily earnings based on the current market-implied APY derived from PT pricing. This is an estimate, not realized or accrued yield.';
+const DAILY_YIELD_TOOLTIP = 'Estimated daily earnings based on the selected APY. This is a projection, not accrued yield.';
 
 const KPIS = [
   {
@@ -21,7 +21,7 @@ const KPIS = [
   },
   {
     id: 'yield',
-    label: 'Est. Daily Yield',
+    label: 'Projected Daily Yield',
     value: '0.00',
     change: '',
     isPositive: true,

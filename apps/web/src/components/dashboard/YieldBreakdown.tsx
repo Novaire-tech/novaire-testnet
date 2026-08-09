@@ -4,18 +4,24 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { YieldService } from '../../services/yieldService';
 import { Vault } from '../../types';
+import { getUnderlyingApy } from '../../services/underlyingYieldService';
 
 export function YieldBreakdown() {
   const [vault, setVault] = useState<Vault | null>(null);
+  const [underlyingApyLabel, setUnderlyingApyLabel] = useState('Loading...');
 
   useEffect(() => {
     YieldService.getVaults().then(vaults => {
       if (vaults.length > 0) setVault(vaults[0]);
     }).catch(console.error);
+    getUnderlyingApy().then(result => {
+      setUnderlyingApyLabel(result.status === 'ok' ? `${result.apy.toFixed(2)}%` : 'Insufficient data');
+    }).catch(() => setUnderlyingApyLabel('Insufficient data'));
   }, []);
 
   const hasVault = !!vault;
-  const fixedApy = vault ? vault.fixedApy.toFixed(2) : '--';
+  // "Implied APY" — market-implied yield from PT price, NOT the underlying Blend APY.
+  const impliedApy = vault ? vault.fixedApy.toFixed(2) : '--';
   const totalApy = vault ? vault.fixedApy.toFixed(1) : '--';
 
   return (
@@ -59,7 +65,7 @@ export function YieldBreakdown() {
             {/* Inner Total APY */}
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <span className="font-serif text-[22px] text-nova-accent">{totalApy}%</span>
-              <span className="text-[9px] text-nova-muted uppercase tracking-wider mt-0.5">Total APY</span>
+              <span className="text-[9px] text-nova-muted uppercase tracking-wider mt-0.5">Implied APY</span>
             </div>
           </div>
 
@@ -73,9 +79,9 @@ export function YieldBreakdown() {
             >
               <div className="flex items-center gap-2 mb-1">
                 <div className="h-1.5 w-1.5 rounded-full bg-nova-accent" />
-                <span className="text-xs text-nova-muted">Fixed Base APY</span>
+                <span className="text-xs text-nova-muted">PT Implied APY</span>
               </div>
-              <div className="pl-3.5 font-medium text-nova-text text-sm">{fixedApy}%</div>
+              <div className="pl-3.5 font-medium text-nova-text text-sm">{impliedApy}%</div>
             </motion.div>
 
             <motion.div
@@ -85,9 +91,9 @@ export function YieldBreakdown() {
             >
               <div className="flex items-center gap-2 mb-1">
                 <div className="h-1.5 w-1.5 rounded-full bg-[#F5F5F2]" />
-                <span className="text-xs text-nova-muted">Est. Variable Yield</span>
+                <span className="text-xs text-nova-muted">Underlying APY (Blend)</span>
               </div>
-              <div className="pl-3.5 font-medium text-nova-text text-sm">Not available</div>
+              <div className="pl-3.5 font-medium text-nova-text text-sm">{underlyingApyLabel}</div>
             </motion.div>
 
           </div>

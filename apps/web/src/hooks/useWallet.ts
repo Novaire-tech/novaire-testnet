@@ -17,12 +17,9 @@ export function useWallet() {
     ...state,
     connect: async () => {
       try {
-        console.log("1. Connect Wallet button clicked");
-        console.log("2. Calling walletService.connectWallet()");
         await WalletService.connectWallet();
-        console.log("8. Final React wallet state:", WalletService.getState());
       } catch (e) {
-        console.error("7. Caught error in useWallet.connect():", e);
+        console.error("Failed to connect wallet:", e);
       }
     },
     disconnect: () => WalletService.disconnectWallet(),

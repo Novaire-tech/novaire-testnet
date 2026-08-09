@@ -3,6 +3,7 @@ import { rpc } from '@stellar/stellar-sdk';
 import { CONTRACTS, RPC_URL } from '@/config/contracts';
 import { ProtocolService } from '@/services/protocolService';
 import { HistoryStore } from '@/lib/historyStore';
+import { fetchSyExchangeRate } from '@/services/underlyingYieldService';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,6 +71,8 @@ export async function GET() {
           isFinite(tvl) && !isNaN(tvl) &&
           isFinite(fixedApy) && !isNaN(fixedApy)
         ) {
+          const syExchangeRate = await fetchSyExchangeRate();
+
           // Protocol-level snapshot — wallet balances are 0 here because the server
           // does not have access to an authenticated wallet session.
           // Wallet state is captured separately in analyticsHistoryService.ts on the client.
@@ -79,6 +82,7 @@ export async function GET() {
             tvl,
             fixedApy,
             tradingVolume: 0,
+            syExchangeRate,
             ptBalance: 0,
             ytBalance: 0,
             xlmBalance: 0,

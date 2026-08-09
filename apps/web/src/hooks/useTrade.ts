@@ -15,8 +15,10 @@ export interface MarketData {
   ptReserve: number;
   ytReserve: number;
   underlyingReserve: number;
+  /** Executable APY — spot-PT-price implied annualized yield (calculateMarketImpliedApy). */
   fixedApy: number;
-  impliedYield: number;
+  /** Raw YT/PT price ratio, expressed as a percentage. NOT an APY — not annualized, not maturity-aware. */
+  ytPtRatio: number;
 }
 
 export interface TradeQuote {
@@ -141,10 +143,10 @@ export function useTrade() {
       ]);
       const { calculateMarketImpliedApy } = await import('../utils/apy');
       const fixedApy = calculateMarketImpliedApy(ptPrice, ptFaceValueInUnderlying, maturityTimestampMs);
-      const impliedYield = ptPrice > 0 ? (ytPrice / ptPrice) * 100 : 0;
-      
+      const ytPtRatio = ptPrice > 0 ? (ytPrice / ptPrice) * 100 : 0;
+
       console.log('Computed Fixed APY:', fixedApy);
-      console.log('Computed Implied Yield:', impliedYield);
+      console.log('Computed YT/PT Ratio:', ytPtRatio);
 
       setMarketData({
         ptPrice: isNaN(ptPrice) ? 0 : ptPrice,
@@ -155,7 +157,7 @@ export function useTrade() {
         ytReserve: ytRes,
         underlyingReserve: undRes,
         fixedApy: isNaN(fixedApy) ? 0 : fixedApy,
-        impliedYield: isNaN(impliedYield) ? 0 : impliedYield,
+        ytPtRatio: isNaN(ytPtRatio) ? 0 : ytPtRatio,
       });
     } catch (e) {
       console.error('Failed to fetch market data', e);

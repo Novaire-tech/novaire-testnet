@@ -29,16 +29,6 @@ export function calculateMarketImpliedApy(ptPriceInUnderlying: number, ptFaceVal
   
   const apyDecimal = Math.pow(ratio, 365 / daysRemaining) - 1;
   const apy = isNaN(apyDecimal) ? 0 : apyDecimal * 100;
-  
-  console.log(`[Novaire APY Debug] 
-  Current Timestamp: ${now}
-  Maturity Timestamp: ${maturityTimestampMs}
-  Days Remaining: ${daysRemaining.toFixed(4)}
-  PT Price (input): ${ptPriceInUnderlying.toFixed(6)}
-  Face Value: ${ptFaceValueInUnderlying.toFixed(6)}
-  Ratio (Face/Price): ${ratio.toFixed(6)}
-  Exponent (365/Days): ${(365/daysRemaining).toFixed(4)}
-  Final APY: ${apy.toFixed(4)}%`);
-  
+
   return apy;
 }
