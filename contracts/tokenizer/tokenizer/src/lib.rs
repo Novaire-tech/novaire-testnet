@@ -60,6 +60,14 @@ pub trait VaultInterface {
 pub trait SyWrapperInterface {
     fn get_exchange_rate(env: Env) -> i128;
     fn refresh_rate(env: Env) -> Result<(), soroban_sdk::Error>;
+    /// C-1: realizes any pending loss in the yield source against real on-chain
+    /// backing. Must be called before `refresh_rate`/`get_exchange_rate` when
+    /// freezing a settlement rate, since `refresh_rate` can only ever ratchet
+    /// `TotalUnderlying` up and silently leaves a stale, pre-loss rate frozen
+    /// forever otherwise. See `SyWrapper::mark_loss` for why this is safe to
+    /// call permissionlessly (it can only ever push the recorded balance toward
+    /// on-chain ground truth, never away from it).
+    fn mark_loss(env: Env) -> Result<i128, soroban_sdk::Error>;
 }
 
 /// Cross-contract client for the canonical epoch FSM. Tokenizer no longer
@@ -483,6 +491,16 @@ impl Tokenizer {
         // State is Matured. We now transition to Settled.
         let sy_wrapper_addr = storage::get_address(&env, DataKey::SyWrapper)?;
         let sy_client = SyWrapperClient::new(&env, &sy_wrapper_addr);
+
+        // Fix C-1: realize any pending loss against real on-chain backing FIRST, in the
+        // same transaction, before freezing the settlement rate. `refresh_rate` alone
+        // (Fix M3) only ever ratchets `TotalUnderlying` up, so if a Blend loss happened
+        // and nobody has called `mark_loss` yet, `refresh_rate` would do nothing and the
+        // settlement rate would freeze the stale pre-loss backing, letting early PT
+        // redeemers extract more than actually exists. `mark_loss` is a no-op when there
+        // is no loss (see its doc comment in sy_wrapper), so this has no effect on the
+        // normal/gain path below.
+        sy_client.mark_loss();
 
         // Fix M3: Prevent stale settlement rate by refreshing accounting before freezing
         sy_client.refresh_rate();
@@ -917,6 +935,21 @@ mod tests {
             Self::positions_for(&env, supply)
         }
 
+        /// Test-only: simulates a Blend-side loss (exploit/slashing/bad debt) by directly
+        /// reducing `address`'s tracked supply, without moving any real underlying out of
+        /// the pool (mirroring `sy_wrapper::audit_tests::MockBlendPool::simulate_yield`
+        /// used with a negative amount, but this harness's mock never had that hook).
+        pub fn simulate_loss(env: Env, address: Address, amount: i128) {
+            let supply: i128 = env
+                .storage()
+                .instance()
+                .get(&PoolDataKey::Supply(address.clone()))
+                .unwrap_or(0);
+            env.storage()
+                .instance()
+                .set(&PoolDataKey::Supply(address), &(supply - amount));
+        }
+
         /// Identity `b_rate` (1 bToken == 1 underlying): this mock tracks `supply` directly
         /// in underlying units, so `pool_supplied_value`'s bToken * b_rate / BLEND_RATE_SCALAR
         /// conversion must be a no-op to keep this mock's existing 1:1 test behavior unchanged.
@@ -975,6 +1008,8 @@ mod tests {
         yt_client: RealYtClient<'static>,
         tokenizer_client: TokenizerClient<'static>,
         maturity_ledger: u32,
+        #[allow(dead_code)]
+        pool_client: MockBlendPoolClient<'static>,
     }
 
     /// Builds a full Vault/SyWrapper/PtToken/YtToken/Tokenizer/MaturityEngine stack with a
@@ -997,7 +1032,8 @@ mod tests {
         }
 
         let pool_id = env.register(MockBlendPool, ());
-        MockBlendPoolClient::new(&env, &pool_id).init(&token_contract);
+        let pool_client = MockBlendPoolClient::new(&env, &pool_id);
+        pool_client.init(&token_contract);
         let yield_source = pool_id;
 
         let sy_contract_id = env.register(SyWrapper, ());
@@ -1054,6 +1090,7 @@ mod tests {
             yt_client,
             tokenizer_client,
             maturity_ledger,
+            pool_client,
         }
     }
 
@@ -1070,6 +1107,7 @@ mod tests {
             yt_client,
             tokenizer_client,
             maturity_ledger,
+            ..
         } = setup(2000, 100);
 
         // Vault Deposit
@@ -1286,6 +1324,197 @@ mod tests {
         assert!(
             credited > 0,
             "late minter must receive an immediate historical-yield credit, got {credited}"
+        );
+    }
+
+    // ==========================================
+    // C-1 / M-1: stale-rate loss realization at settlement
+    // ==========================================
+
+    /// 1. A Blend loss happens but nobody calls `mark_loss` before `settle_epoch`.
+    ///
+    /// With `mint_pt_yt` minting PT 1:1 against the shares it pulls in at the
+    /// current (mint-time) rate, the Tokenizer holds exactly enough backing to
+    /// cover its PT liability and no more (zero cushion) the moment PT is
+    /// minted with no prior yield. So ANY uncompensated loss after that point
+    /// makes the position strictly insolvent (`assert_invariant`'s
+    /// `compute_surplus_raw` goes negative) - by design, H-1 says this
+    /// fail-closed freeze must be preserved, not papered over with a haircut.
+    ///
+    /// The actual C-1 bug: BEFORE this fix, `settle_epoch` only called
+    /// `refresh_rate` (which can never lower `TotalUnderlying`), so it would
+    /// freeze the STALE pre-loss rate and `assert_invariant` would compute
+    /// surplus using that stale, inflated rate - passing solvency checks it
+    /// should have failed, and letting the epoch settle at a rate that
+    /// doesn't reflect reality. With the fix (`mark_loss` called first, in
+    /// the same transaction), the real post-loss rate is used, so the
+    /// insolvency is correctly caught and `settle_epoch` reverts instead of
+    /// silently settling at a wrong price - fail-closed, not fail-open.
+    #[test]
+    fn test_settle_epoch_realizes_unmarked_loss() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000); // 1000 locked + 1000 user shares
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+
+        // Blend loses 20% of the supplied position. No one calls `mark_loss`.
+        h.pool_client.simulate_loss(&h.sy_client.address, &400);
+
+        h.env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: h.maturity_ledger,
+            ..h.env.ledger().get()
+        });
+        let res = h.tokenizer_client.try_settle_epoch();
+        assert!(
+            res.is_err(),
+            "C-1: an unmarked loss that breaches solvency must correctly fail \
+             settlement (fail-closed), not silently settle at a stale rate"
+        );
+    }
+
+    /// 2. Same scenario, but `mark_loss` is called explicitly before `settle_epoch`.
+    /// Result must match the unmarked case exactly - the fix makes `settle_epoch`
+    /// itself realize the loss, so calling `mark_loss` first changes nothing.
+    #[test]
+    fn test_settle_epoch_after_explicit_mark_loss() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+
+        h.pool_client.simulate_loss(&h.sy_client.address, &400);
+        h.sy_client.mark_loss();
+
+        h.env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: h.maturity_ledger,
+            ..h.env.ledger().get()
+        });
+        let res = h.tokenizer_client.try_settle_epoch();
+        assert!(
+            res.is_err(),
+            "marked and unmarked losses must produce identical (fail-closed) outcomes"
+        );
+    }
+
+    /// 3. No loss at all: settle_epoch's added `mark_loss()` call must be a pure
+    /// no-op, leaving the normal 1:1 settlement path unaffected.
+    #[test]
+    fn test_settle_epoch_no_loss_unaffected() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+        settle(&h);
+
+        let meta = h.tokenizer_client.metadata();
+        assert_eq!(meta.settlement_exchange_rate.unwrap(), 1_000_000_000);
+    }
+
+    /// 4. A yield gain prior to settlement must still flow through normally —
+    /// the new `mark_loss()` call must not interfere with the gain path handled
+    /// by `refresh_rate`.
+    #[test]
+    fn test_settle_epoch_gain_unaffected() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+
+        h.token_admin_client.mint(&h.sy_client.address, &200);
+        h.sy_client.harvest_yield();
+
+        h.env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: h.maturity_ledger,
+            ..h.env.ledger().get()
+        });
+        h.tokenizer_client.settle_epoch();
+
+        let meta = h.tokenizer_client.metadata();
+        assert_eq!(meta.settlement_exchange_rate.unwrap(), 1_100_000_000);
+    }
+
+    /// 5. Repeated `settle_epoch`/`mark_loss` calls must not double-count a loss.
+    /// `settle_epoch` itself can only run once (guarded by `AlreadySettled`), but
+    /// calling `mark_loss` again independently after settlement must be a no-op.
+    ///
+    /// Uses a loss small enough to stay inside the Tokenizer's cushion (built up
+    /// from organic yield accrued between mint and loss, per `compute_surplus_raw`)
+    /// so `settle_epoch` actually succeeds and there's a settled rate to compare.
+    #[test]
+    fn test_mark_loss_after_settlement_idempotent() {
+        let h = setup(2000, 100);
+        h.vault_client.deposit(&h.user, &2000); // 1000 locked + 1000 user shares
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000); // pt_liability_raw = 1000 * 1e9
+
+        // +10% organic yield before the loss: assets_held_raw becomes
+        // 1000 * 1.1e9 = 1.1e12, a 1e11-raw (100-underlying) cushion over the
+        // 1e12 liability.
+        h.token_admin_client.mint(&h.sy_client.address, &200);
+        h.sy_client.harvest_yield();
+
+        // A small loss, well within the cushion above.
+        h.pool_client.simulate_loss(&h.sy_client.address, &50);
+
+        h.env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: h.maturity_ledger,
+            ..h.env.ledger().get()
+        });
+        h.tokenizer_client.settle_epoch();
+
+        let meta_before = h.tokenizer_client.metadata();
+        let loss_again = h.sy_client.mark_loss();
+        assert_eq!(loss_again, 0, "loss already realized during settle_epoch");
+
+        let meta_after = h.tokenizer_client.metadata();
+        assert_eq!(
+            meta_before.settlement_exchange_rate,
+            meta_after.settlement_exchange_rate
+        );
+
+        let res = h.tokenizer_client.try_settle_epoch();
+        assert!(res.is_err(), "settle_epoch cannot run twice");
+    }
+
+    /// 6. Multiple PT redeemers after a (cushioned, solvent) loss: the sum of
+    /// what they redeem must never exceed the actual backing, proving no early
+    /// redeemer can extract more than what a stale rate would have over-promised.
+    #[test]
+    fn test_multiple_redeemers_cannot_exceed_actual_backing_after_loss() {
+        let h = setup(4000, 100);
+        let user2 = Address::generate(&h.env);
+        h.token_admin_client.mint(&user2, &2000);
+
+        h.vault_client.deposit(&h.user, &2000);
+        h.vault_client.deposit(&user2, &2000);
+        h.tokenizer_client.mint_pt_yt(&h.user, &1000);
+        h.tokenizer_client.mint_pt_yt(&user2, &1000); // pt_liability_raw = 2000 * 1e9
+
+        // +10% organic yield before the loss: assets_held_raw for the
+        // Tokenizer's own 2000 held shares becomes 2000 * 1.1e9 = 2.2e12,
+        // a 2e11-raw (200-underlying) cushion over the 2e12 liability.
+        let total_sy_shares = h.sy_client.total_shares();
+        h.token_admin_client
+            .mint(&h.sy_client.address, &(total_sy_shares / 10));
+        h.sy_client.harvest_yield();
+
+        // A loss within that cushion.
+        h.pool_client.simulate_loss(&h.sy_client.address, &100);
+
+        h.env.ledger().set(soroban_sdk::testutils::LedgerInfo {
+            sequence_number: h.maturity_ledger,
+            ..h.env.ledger().get()
+        });
+        h.tokenizer_client.settle_epoch();
+
+        // Actual on-chain backing at settlement time, derived the same way
+        // `get_exchange_rate` itself is (total_shares * rate / SCALAR).
+        let actual_backing_at_settlement =
+            h.sy_client.total_shares() * h.sy_client.get_exchange_rate() / 1_000_000_000;
+        let out1 = h.tokenizer_client.redeem_pt(&h.user, &1000);
+        let out2 = h.tokenizer_client.redeem_pt(&user2, &1000);
+
+        assert!(
+            out1 + out2 <= actual_backing_at_settlement,
+            "redeemers extracted more than actual backing: {} + {} > {}",
+            out1,
+            out2,
+            actual_backing_at_settlement
         );
     }
 }

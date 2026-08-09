@@ -91,11 +91,25 @@ pub enum DataKey {
     IntentEngine,
     Keeper,
     RolloverPositions(Address),
+    /// H-2: no longer used to resolve which PT contract a given position's
+    /// custody lives in (that's `RolloverPosition::pt_token`, resolved per
+    /// position at `register_rollover` time via `Factory::get_epoch_by_maturity`
+    /// and carried forward at each `execute_rollover`). Retained only as the
+    /// value `initialize` was given, for display/back-compat purposes.
     PtToken,
     UnderlyingToken,
     Paused,
     GracePeriodLedgers,
+    /// Aggregate PT accounted for across every position, regardless of which
+    /// epoch's PT contract actually custodies it. Purely a summary counter —
+    /// custody correctness is verified per-token via `TotalPtHeldByToken`.
     TotalPtHeld,
+    /// H-2: PT custody tracked per PT-token contract address, since positions
+    /// registered against different epochs are custodied in different PT
+    /// contracts simultaneously. A single global balance-vs-total check (the
+    /// pre-fix behavior) is meaningless once more than one PT contract is in
+    /// play at once.
+    TotalPtHeldByToken(Address),
     Factory,
 }
 
@@ -112,6 +126,13 @@ pub struct RolloverPosition {
     pub protocol_yield_earned: i128,
     pub realized_pnl: i128,
     pub min_underlying_out: i128,
+    /// H-2: the specific PT contract this position's `pt_balance` is actually
+    /// custodied in. Resolved at `register_rollover` (via
+    /// `Factory::get_epoch_by_maturity(current_epoch_maturity)`) and updated to
+    /// the next epoch's PT contract at each `execute_rollover` — never read
+    /// from a single global slot, so one user's roll can never point another
+    /// user's still-pending position at the wrong PT contract.
+    pub pt_token: Address,
 }
 
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -164,6 +185,19 @@ mod storage {
 
     pub fn set_total_pt_held(env: &Env, amount: i128) {
         env.storage().instance().set(&DataKey::TotalPtHeld, &amount);
+    }
+
+    pub fn get_total_pt_held_for_token(env: &Env, pt_token: &Address) -> i128 {
+        env.storage()
+            .instance()
+            .get(&DataKey::TotalPtHeldByToken(pt_token.clone()))
+            .unwrap_or(0)
+    }
+
+    pub fn set_total_pt_held_for_token(env: &Env, pt_token: &Address, amount: i128) {
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalPtHeldByToken(pt_token.clone()), &amount);
     }
 
     pub fn get_position(
@@ -292,7 +326,16 @@ impl AutonomousRollover {
             }
         }
 
-        let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
+        // H-2: resolve the PT contract for THIS position's own epoch via the
+        // Factory (mirroring `execute_rollover`'s own next-epoch resolution),
+        // rather than trusting whatever the global `DataKey::PtToken` slot
+        // currently holds — that slot can be overwritten mid-air by any other
+        // user's `execute_rollover` running between this call being submitted
+        // and applied.
+        let factory_addr = storage::get_address(&env, DataKey::Factory)?;
+        let factory_client = FactoryClient::new(&env, &factory_addr);
+        let epoch = factory_client.get_epoch_by_maturity(&current_epoch_maturity);
+        let pt_token_addr = epoch.pt_token;
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
 
         let user_bal = pt_client.balance(&user);
@@ -314,6 +357,7 @@ impl AutonomousRollover {
             protocol_yield_earned: 0,
             realized_pnl: 0,
             min_underlying_out,
+            pt_token: pt_token_addr.clone(),
         };
 
         storage::set_position(&env, &user, &position);
@@ -325,13 +369,21 @@ impl AutonomousRollover {
                 .checked_add(pt_amount)
                 .ok_or(NovaireRolloverError::MathOverflow)?,
         );
+        let current_total_for_token = storage::get_total_pt_held_for_token(&env, &pt_token_addr);
+        storage::set_total_pt_held_for_token(
+            &env,
+            &pt_token_addr,
+            current_total_for_token
+                .checked_add(pt_amount)
+                .ok_or(NovaireRolloverError::MathOverflow)?,
+        );
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "rollover_started"), user),
             (pt_amount, current_epoch_maturity),
         );
 
-        Self::assert_invariant(&env)?;
+        Self::assert_invariant(&env, &pt_token_addr)?;
         Ok(())
     }
 
@@ -473,6 +525,7 @@ impl AutonomousRollover {
 
         // 5. Update position
         let old_pt = position.pt_balance;
+        let old_pt_token = position.pt_token.clone();
         let new_pt = intent_record
             .total_pt_held
             .checked_sub(pt_held_before)
@@ -480,14 +533,13 @@ impl AutonomousRollover {
         position.pt_balance = new_pt;
         position.current_epoch_maturity = next_epoch.maturity_ledger;
         position.last_rolled_ledger = current_ledger;
+        // H-2: this position's own PT custody now lives in the NEXT epoch's PT
+        // contract. This is stored on the position itself, not in a global
+        // slot, so it can never be clobbered by another user's concurrent
+        // `execute_rollover` for a different epoch.
+        position.pt_token = next_epoch.pt_token.clone();
 
         storage::set_position(&env, &user, &position);
-
-        // Each epoch mints a fresh PT token contract; track the currently held
-        // one so custody can be verified against the right token going forward.
-        env.storage()
-            .instance()
-            .set(&DataKey::PtToken, &next_epoch.pt_token);
 
         let current_total = storage::get_total_pt_held(&env);
         let new_total = current_total
@@ -496,6 +548,25 @@ impl AutonomousRollover {
             .checked_add(new_pt)
             .ok_or(NovaireRolloverError::MathOverflow)?;
         storage::set_total_pt_held(&env, new_total);
+
+        // Move this position's per-token tracked custody from the old epoch's
+        // PT contract to the new one.
+        let old_token_total = storage::get_total_pt_held_for_token(&env, &old_pt_token);
+        storage::set_total_pt_held_for_token(
+            &env,
+            &old_pt_token,
+            old_token_total
+                .checked_sub(old_pt)
+                .ok_or(NovaireRolloverError::MathUnderflow)?,
+        );
+        let new_token_total = storage::get_total_pt_held_for_token(&env, &next_epoch.pt_token);
+        storage::set_total_pt_held_for_token(
+            &env,
+            &next_epoch.pt_token,
+            new_token_total
+                .checked_add(new_pt)
+                .ok_or(NovaireRolloverError::MathOverflow)?,
+        );
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "rollover_completed"), user),
@@ -509,7 +580,7 @@ impl AutonomousRollover {
             ),
         );
 
-        Self::assert_invariant(&env)?;
+        Self::assert_invariant(&env, &next_epoch.pt_token)?;
         Ok(())
     }
 
@@ -522,7 +593,13 @@ impl AutonomousRollover {
             return Err(NovaireRolloverError::PositionNotActive);
         }
 
-        let pt_token_addr = storage::get_address(&env, DataKey::PtToken)?;
+        // H-2: use THIS position's own recorded PT contract, not the (now
+        // removed) global slot — critical here specifically, since this is
+        // exactly the path that used to hand a user back the wrong token (or
+        // fail outright) whenever another user's `execute_rollover` had
+        // rotated the global pointer to a different epoch's PT contract in
+        // between this user's `register_rollover` and `exit_rollover`.
+        let pt_token_addr = position.pt_token.clone();
         let pt_client = PtTokenClient::new(&env, &pt_token_addr);
 
         let contract_addr = env.current_contract_address();
@@ -537,13 +614,21 @@ impl AutonomousRollover {
                 .checked_sub(position.pt_balance)
                 .ok_or(NovaireRolloverError::MathUnderflow)?,
         );
+        let current_total_for_token = storage::get_total_pt_held_for_token(&env, &pt_token_addr);
+        storage::set_total_pt_held_for_token(
+            &env,
+            &pt_token_addr,
+            current_total_for_token
+                .checked_sub(position.pt_balance)
+                .ok_or(NovaireRolloverError::MathUnderflow)?,
+        );
 
         env.events().publish(
             (soroban_sdk::Symbol::new(&env, "rollover_cancelled"), user),
             (position.pt_balance,),
         );
 
-        Self::assert_invariant(&env)?;
+        Self::assert_invariant(&env, &pt_token_addr)?;
         Ok(())
     }
 
@@ -553,6 +638,13 @@ impl AutonomousRollover {
 
     pub fn total_pt_held(env: Env) -> i128 {
         storage::get_total_pt_held(&env)
+    }
+
+    /// H-2: per-token custody counter, since positions across different
+    /// epochs are custodied in different PT contracts simultaneously — see
+    /// `RolloverPosition::pt_token` / `DataKey::TotalPtHeldByToken`.
+    pub fn total_pt_held_for_token(env: Env, pt_token: Address) -> i128 {
+        storage::get_total_pt_held_for_token(&env, &pt_token)
     }
 
     pub fn update_keeper(env: Env, new_keeper: Address) -> Result<(), NovaireRolloverError> {
@@ -568,7 +660,13 @@ impl AutonomousRollover {
         Ok(())
     }
 
-    fn assert_invariant(env: &Env) -> Result<(), NovaireRolloverError> {
+    /// `touched_pt_token` is the PT contract the calling operation just
+    /// moved custody in/out of. H-2: with positions spanning multiple PT
+    /// contracts (one per epoch) simultaneously, there is no single global
+    /// PT balance that can be checked against a single global total anymore
+    /// — only the per-token counter for the token this call actually
+    /// touched is guaranteed to be settled at this point.
+    fn assert_invariant(env: &Env, touched_pt_token: &Address) -> Result<(), NovaireRolloverError> {
         let contract_addr = env.current_contract_address();
 
         // Treasury consistency: rollover never warehouses underlying between ops.
@@ -579,16 +677,15 @@ impl AutonomousRollover {
             }
         }
 
-        // PT custody conservation: actual on-chain PT balance must equal the
-        // internally tracked total_pt_held accounting figure, independently of
-        // per-position bookkeeping.
-        if let Ok(pt_addr) = storage::get_address(env, DataKey::PtToken) {
-            let pt_client = PtTokenClient::new(env, &pt_addr);
-            let actual_pt = pt_client.balance(&contract_addr);
-            let tracked_pt = storage::get_total_pt_held(env);
-            if actual_pt != tracked_pt {
-                return Err(NovaireRolloverError::InvariantViolation);
-            }
+        // PT custody conservation, per-token: actual on-chain PT balance for the
+        // token this operation touched must equal its internally tracked
+        // per-token total (`TotalPtHeldByToken`), independently of per-position
+        // bookkeeping.
+        let pt_client = PtTokenClient::new(env, touched_pt_token);
+        let actual_pt = pt_client.balance(&contract_addr);
+        let tracked_pt = storage::get_total_pt_held_for_token(env, touched_pt_token);
+        if actual_pt != tracked_pt {
+            return Err(NovaireRolloverError::InvariantViolation);
         }
 
         Ok(())

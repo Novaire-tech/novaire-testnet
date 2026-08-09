@@ -766,5 +766,24 @@
       ]
     ]
   },
-  "events": []
+  "events": [
+    {
+      "event": {
+        "ext": "v0",
+        "contract_id": "0000000000000000000000000000000000000000000000000000000000000007",
+        "type_": "contract",
+        "body": {
+          "v0": {
+            "topics": [
+              {
+                "symbol": "yt_surplus_snapshot_read_failed"
+              }
+            ],
+            "data": "void"
+          }
+        }
+      },
+      "failed_call": true
+    }
+  ]
 }

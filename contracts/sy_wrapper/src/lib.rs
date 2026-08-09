@@ -456,6 +456,16 @@ impl SyWrapper {
         }
 
         let underlying_addr = storage::get_underlying(&env)?;
+
+        // M-1: realize any pending loss against real on-chain backing before pricing this
+        // withdrawal. Without this, `withdraw` prices against a stale, pre-loss
+        // `TotalUnderlying` whenever a loss has occurred in the yield source but nobody has
+        // called `mark_loss` yet, letting early withdrawers extract more than the real
+        // backing while later withdrawers absorb the shortfall (or hit a failed transfer).
+        // `mark_loss` is a no-op when there is no loss to realize (see its doc comment), so
+        // this has no effect on the normal/gain paths.
+        Self::mark_loss(env.clone())?;
+
         let rate = Self::get_exchange_rate(env.clone());
         let mut total_shares = storage::get_total_shares(&env);
 

@@ -452,40 +452,83 @@ impl YtToken {
             return;
         }
 
+        // M-2: harmless/expected - an uninitialized or not-yet-wired Tokenizer means
+        // there's nothing to refresh against yet (e.g. this YtToken instance predates
+        // Tokenizer wiring, or is only used in isolation in some tests). Silently
+        // skipping costs nothing economically: no index update happens, so no user
+        // gets over- or under-credited.
         let tokenizer_addr = match storage::get_tokenizer(env) {
             Ok(addr) => addr,
             Err(_) => return,
         };
         let tokenizer_client = TokenizerClient::new(env, &tokenizer_addr);
 
+        // M-2: harmless/expected - if the cross-contract read itself fails (e.g.
+        // Tokenizer temporarily unreachable/misconfigured), there is no snapshot to
+        // compute a delta from, so skipping is safe. Made observable via an event
+        // rather than a silent `return`, since a *persistently* failing snapshot read
+        // would otherwise starve YT holders of yield credit with no on-chain trace.
         let (current_surplus_raw, last_surplus_raw) =
             match tokenizer_client.try_get_surplus_snapshot() {
                 Ok(Ok(snapshot)) => snapshot,
-                _ => return,
+                _ => {
+                    env.events()
+                        .publish((Symbol::new(env, "yt_surplus_snapshot_read_failed"),), ());
+                    return;
+                }
             };
+
+        let auth_record_baseline = || {
+            env.authorize_as_current_contract(soroban_sdk::vec![
+                env,
+                soroban_sdk::auth::InvokerContractAuthEntry::Contract(
+                    soroban_sdk::auth::SubContractInvocation {
+                        context: soroban_sdk::auth::ContractContext {
+                            contract: tokenizer_addr.clone(),
+                            fn_name: Symbol::new(env, "record_surplus_baseline_pub"),
+                            args: soroban_sdk::vec![env],
+                        },
+                        sub_invocations: soroban_sdk::vec![env],
+                    },
+                )
+            ]);
+        };
 
         if let Ok(new_index) =
             Self::compute_local_index_preview(env, current_surplus_raw, last_surplus_raw)
         {
             let old_index = storage::get_yield_index(env);
             if new_index > old_index {
-                storage::set_yield_index(env, new_index);
+                // M-2 (economically-incorrect-if-swallowed): `new_index` was computed
+                // as a DELTA against Tokenizer's `LastRecordedSurplus` baseline. If we
+                // persisted `new_index` here but the baseline reset below then failed,
+                // the next call would recompute the *same* already-credited delta
+                // against the still-stale baseline and double-credit it into the index.
+                // So the local credit and the remote baseline reset must succeed or
+                // fail together: only persist `new_index` if the baseline reset that
+                // makes it safe to do so actually lands. On failure, skip the credit
+                // this cycle (nothing lost - the same raw snapshot delta is simply
+                // retried on the next call) and emit an event so a silently-wedged
+                // baseline reset is observable rather than quietly capping YT yield.
+                auth_record_baseline();
+                match tokenizer_client.try_record_surplus_baseline_pub() {
+                    Ok(Ok(())) => storage::set_yield_index(env, new_index),
+                    _ => {
+                        env.events().publish(
+                            (Symbol::new(env, "yt_baseline_record_failed"),),
+                            (current_surplus_raw, last_surplus_raw),
+                        );
+                    }
+                }
+                return;
             }
         }
 
-        env.authorize_as_current_contract(soroban_sdk::vec![
-            env,
-            soroban_sdk::auth::InvokerContractAuthEntry::Contract(
-                soroban_sdk::auth::SubContractInvocation {
-                    context: soroban_sdk::auth::ContractContext {
-                        contract: tokenizer_addr.clone(),
-                        fn_name: Symbol::new(env, "record_surplus_baseline_pub"),
-                        args: soroban_sdk::vec![env],
-                    },
-                    sub_invocations: soroban_sdk::vec![env],
-                }
-            )
-        ]);
+        // No accrual credited this cycle (either no delta, or the preview itself
+        // errored) - still worth opportunistically nudging the baseline forward so a
+        // future call's delta stays tight, but failure here is genuinely harmless
+        // best-effort: no local index credit is contingent on it.
+        auth_record_baseline();
         let _ = tokenizer_client.try_record_surplus_baseline_pub();
     }
 

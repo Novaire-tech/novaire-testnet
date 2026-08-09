@@ -17,6 +17,7 @@ use vault::VaultClient;
 use yt_token::YtTokenClient;
 
 use crate::mock_blend_pool::{MockBlendPool, MockBlendPoolClient};
+use crate::mock_factory::{MockFactory, MockFactoryClient};
 
 pub const SCALE: i128 = 1_000_000_000;
 pub const BOOTSTRAP_PT: i128 = 1_000_000_000;
@@ -92,6 +93,15 @@ impl<'a> Protocol<'a> {
         let blend_pool = MockBlendPoolClient::new(&env, &blend_pool_addr);
         blend_pool.init(&underlying_token_addr);
 
+        // H-2: `rollover::register_rollover` now resolves each position's PT
+        // contract via `Factory::get_epoch_by_maturity` rather than a single
+        // mutable global slot (see `mock_factory`'s doc comment), so it needs a
+        // real (if minimal) contract behind the `factory` address passed to
+        // `rollover.initialize` below.
+        let factory_addr = env.register(MockFactory, ());
+        let factory = MockFactoryClient::new(&env, &factory_addr);
+        factory.init(&pt_token_addr, &MATURITY_LEDGER);
+
         sy_wrapper.initialize(&admin, &underlying_token_addr, &blend_pool_addr);
         vault.initialize(&admin, &sy_wrapper_addr, &underlying_token_addr);
         pt_token.initialize(&admin, &tokenizer_addr);
@@ -147,7 +157,7 @@ impl<'a> Protocol<'a> {
             &keeper,
             &pt_token_addr,
             &underlying_token_addr,
-            &admin,
+            &factory_addr,
             &17_280,
         );
 
