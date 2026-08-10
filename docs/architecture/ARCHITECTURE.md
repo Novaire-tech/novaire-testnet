@@ -4,17 +4,18 @@
 Novaire is an institutional-grade protocol built on the Stellar network that enables the tokenization, separation, and trading of yield. By interacting with a modular suite of Soroban smart contracts, Novaire acts as the financial infrastructure for isolating future yield from principal assets, allowing markets to independently price the time-value of money.
 
 ## Core Design Principles
-1. **Modularity:** Isolation of custody, tokenization, and market making into distinct, upgradeable smart contracts.
+1. **Modularity:** Isolation of custody, tokenization, and market making into distinct Soroban contracts (currently non-upgradeable instances; see Security Considerations).
 2. **Capital Efficiency:** Standardized Yield (SY) wrappers ensure underlying assets remain productive while their derivatives are traded.
 3. **Intent-driven UX:** Users sign high-level intents rather than interacting with the complex underlying plumbing of tokenization and swaps.
 4. **Market-driven Rates:** Yield is not determined by an oracle, but via an automated market maker (AMM) balancing the supply and demand of Principal Tokens (PT).
 
 ## Protocol Layers
-1. **Asset Layer:** The base yield-bearing tokens (e.g., staked XLM, yield-bearing stablecoins).
+1. **Asset Layer:** The base yield-bearing asset — currently the native XLM SAC supplied into a Blend Capital lending pool (real, not simulated, yield).
 2. **Custody Layer:** Vaults and SY Wrappers that secure the underlying assets and standardize their accounting.
 3. **Derivatives Layer:** Tokenizers that mint fixed-term PT and YT against the SY wrapper.
-4. **Liquidity Layer:** The Yield-Space AMM providing deep liquidity and price discovery for PT and YT.
+4. **Liquidity Layer:** The YieldSpace-style AMM providing deep liquidity and price discovery for PT and YT.
 5. **Execution Layer:** The Intent Engine, routing complex strategies into single atomic transactions.
+6. **Lifecycle Layer:** The Maturity Engine — a dedicated per-epoch FSM (`NO_EPOCH → ACTIVE → MATURED → SETTLED → ARCHIVED`) that everyone else queries via `live_state`; plus the Rollover singleton that migrates matured PT between epochs.
 
 ## Architecture Diagram
 
@@ -34,10 +35,15 @@ graph TD
         T(Tokenizer)
         PT[PT Token]
         YT[YT Token]
+        ME[Maturity Engine]
     end
-    
+
     subgraph Liquidity Layer
         M(Marketplace AMM)
+    end
+
+    subgraph Lifecycle Layer
+        R(Rollover · shared singleton)
     end
 
     U -->|1. Submit Intent| IE
@@ -46,8 +52,12 @@ graph TD
     SY -->|4. Backing| T
     T -->|5. Mint 1:1| PT
     T -->|5. Mint 1:1| YT
+    ME -->|live_state| T
+    T -.->|maturity checks| ME
+    M -.->|maturity checks| ME
     PT -.->|6. Trade| M
     YT -.->|6. Trade| M
+    R -.->|rolls matured PT| T
 ```
 
 ## Detailed Lifecycle
@@ -92,21 +102,24 @@ The frontend calculates portfolio value by evaluating:
 Yield accrues within the Vault. The Tokenizer calculates the exchange rate between the underlying asset and SY shares. As the Vault's underlying balance grows from yield, the exchange rate increases, making YT more valuable.
 
 ### Automation & Rollover
-The Rollover contract facilitates the automated migration of capital. Users can opt-in to automatically roll their matured PT into the next epoch, saving gas and maintaining continuous fixed-yield exposure.
+The Rollover contract facilitates the automated migration of capital. Users can opt-in to automatically roll their matured PT into the next epoch, saving gas and maintaining continuous fixed-yield exposure. Rollover is a **long-lived shared singleton** across all epochs (not redeployed per epoch); PT custody is tracked per PT-token contract and per position, and execution is permissionless after a keeper grace period.
+
+### Epoch Lifecycle
+Every epoch is governed by the Maturity Engine state machine. The Tokenizer, YT Token, and Marketplace all delegate maturity/expiry checks to it via `live_state()` rather than performing local ledger comparisons. Epoch creation on the Factory is admin-`propose` + **timelocked**, with deliberately **permissionless execution** — the protocol cannot be bricked by an unresponsive admin.
 
 ### Analytics
-Novaire indexes blockchain state to provide detailed historical TVL, APY trends, and volume metrics via the frontend API routes.
+The frontend reads all financial state **live from the contracts via Soroban RPC** (generated TS bindings) and deliberately bypasses the off-chain database. Historical chart data is kept in a file-based JSON store (`history-store.json`, scoped by network + SY wrapper): the Next.js API route `GET /api/history/sync` records protocol-price snapshots when on-chain events occur on Marketplace/Vault, and `POST /api/history/snapshot` attaches client-side wallet balances to those points. The standalone indexer (`apps/indexer`) polls events but its processor is **stubbed** — no event reconstruction is implemented today.
 
 ## Detailed Module Explanations
 
 ### Frontend Architecture
-Built in Next.js 14, using React Server Components for performance and SEO. The frontend relies heavily on custom React hooks (`useTrade`, `usePortfolio`) that wrap the generated TypeScript bindings for the Soroban contracts.
+Built in Next.js 16 (React 19), using React Server Components for performance and SEO. The frontend relies heavily on custom React hooks (`useTrade`, `usePortfolio`, `useWallet`, `useYield`) that wrap the generated TypeScript bindings for the Soroban contracts. State is managed via custom services + `useSyncExternalStore` hooks with a subscription pattern (no SWR / server-state library is used).
 
 ### Backend Architecture
-Next.js Serverless API routes act as the middle-layer to cache heavy RPC queries. Background cron-jobs or triggered syncs aggregate ledger data for charts.
+Next.js API routes (`apps/web/src/app/api/*`) act as the middle layer: CoinDCX market-data proxies (`/api/prices`, `/api/markets`), the file-backed protocol-history store (`/api/history`, `/api/history/snapshot`, `/api/history/sync`), the waitlist stub, and `registered_users.json` registration. There is no standalone backend service. The `apps/indexer` service polls Soroban events but its processor is stubbed; a Prisma/Postgres schema exists but is not populated at runtime today.
 
 ### State Management
-React Context combined with `SWR` handles real-time data fetching, caching, and revalidation of blockchain state.
+Custom services (`protocolService`, `walletService`, `priceOracleService`, `portfolioService`, …) with singleton subscription patterns; React hooks bridge them via `useSyncExternalStore`.
 
 ### Wallet Interaction
 Freighter wallet integration via `@stellar/freighter-api`. All transactions are assembled via `stellar-sdk`, signed by the user, and submitted to the Soroban RPC.
@@ -117,7 +130,7 @@ Freighter wallet integration via `@stellar/freighter-api`. All transactions are 
 - **Upgradability:** Contracts are currently immutable on Testnet to guarantee deterministic behavior. Future versions will utilize a DAO-governed proxy architecture.
 
 ### Testnet Deployment Flow
-Deployment is handled via `scripts/deploy.ts` which uses the `stellar-cli` to compile the Rust contracts to WASM, deploy them, initialize them in topological order, and generate the strictly-typed TypeScript SDKs inside `/packages`.
+Deployment is handled via `scripts/deploy.ts` which uses the `stellar` CLI to compile the Rust contracts to WASM, upload and deploy instances, initialize the Factory, invoke the timelocked+permissionless `deploy_epoch` flow (which wires the per-epoch Maturity Engine and all epoch contracts via `DeployEpochParams`), and generate the strictly-typed TypeScript bindings under `packages/bindings/`. The Rollover address is pinned by the first epoch and reused by all later epochs. Verification is done via `npm run verify:testnet` against the live Testnet deployment. (Caveat: the committed deploy scripts' `deploy_epoch` params payload predates the `maturity_engine` field required by the current Factory — see the known-issue note in the root `README.md`.)
 
 ### Metric Canonical Sources
 To ensure economic correctness and avoid regressions, the Novaire web terminal strictly defines the following canonical data sources for metrics:

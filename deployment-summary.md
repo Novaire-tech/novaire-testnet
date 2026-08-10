@@ -27,10 +27,12 @@ Source: `scripts/deployments.testnet.json` (current, non-deprecated entries). Va
 
 ## Reserve / Epoch history
 
-Two prior epochs are marked deprecated in `scripts/deployments.testnet.json`:
+Prior epochs are marked deprecated in `scripts/deployments.testnet.json`:
 
-- **Epoch 1** — deployed against a stale/incorrect `underlying_token` that doesn't exist on testnet. Unusable, already initialized, cannot be reused.
-- **Epoch 2** — predates the SY Wrapper `b_rate` accounting fix (`004b62e`) and an intent_engine oracle-staleness fix. Superseded by current epoch.
+- **Epoch 1** — deployed against a stale/incorrect `underlying_token` that doesn't exist on testnet (`CAS3J7GY…`). Unusable, already initialized, cannot be reused. Maturity ledger `4032346`.
+- **Epoch 2** — predates the SY Wrapper `b_rate` accounting fix (`004b62e`) and an intent_engine oracle-staleness fix. Superseded. Maturity ledger `4471443`.
+- **Epoch 3** — fixed `sy_wrapper`/`intent_engine`, but reused stale cached WASM hashes for `vault`/`tokenizer`/`pt_token`/`yt_token`/`marketplace`/`rollover` (e.g. marketplace was missing `quote_underlying_for_yt`/`quote_yt_for_underlying`). Superseded by **Epoch 4**, which redeploys every child contract from current source. Maturity ledger `4134934`.
+- **Deprecated Factory** — the earlier factory instance (`CCCMNVS2…`) predates Maturity Engine wiring in `deploy_epoch`; a fresh factory instance was deployed for Epoch 4.
 
 Full deprecated-epoch contract ID sets are preserved in `scripts/deployments.testnet.json` for audit trail — not duplicated here.
 

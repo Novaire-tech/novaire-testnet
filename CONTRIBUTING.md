@@ -43,7 +43,7 @@ An **Intent Engine** contract routes multi-step user actions (deposit, mint PT/Y
 The monorepo holds the entire protocol and its surrounding tooling:
 
 1. **`contracts/`** — the on-chain protocol: ten interrelated Soroban contracts written in Rust, plus an integration-test crate.
-2. **`apps/web`** — a Next.js application: the frontend UI, the Next.js API routes that act as the backend, and the Prisma/SQLite data layer used for off-chain indexing and caching (prices, TVL history, waitlist, keeper registration).
+2. **`apps/web`** — a Next.js application: the frontend UI and the Next.js API routes that act as the backend. It reads all financial state live from the contracts over Soroban RPC; off-chain history uses a file-based JSON store (`history-store.json`), and waitlist/keeper-registration are flat-file/simulated placeholders. A Prisma/Postgres schema exists but is not populated at runtime today.
 3. **`apps/indexer`** — a standalone service that polls Soroban RPC and mirrors on-chain events into the same Prisma database.
 4. **`packages/bindings`** — generated TypeScript client bindings, one npm package per contract.
 5. **`scripts/`** — deployment, bootstrap, smoke, and verification tooling against Stellar Testnet.
@@ -92,13 +92,13 @@ Novaire/
 │   │   ├── e2e/                       # Playwright UI tests + real-wallet suites
 │   │   ├── eslint.config.mjs
 │   │   └── playwright.config.ts
-│   └── indexer/                       # Standalone Soroban event indexer → Prisma DB
+│   └── indexer/                       # Standalone Soroban event poller → Prisma/Postgres (processor stubbed)
 ├── packages/
 │   └── bindings/                      # Generated TS client bindings (one npm package per contract)
 │       ├── factory/  marketplace/  tokenizer/  pt_token/  yt_token/
 │       ├── vault/  sy_wrapper/  intent_engine/  rollover/
 ├── prisma/
-│   └── schema.prisma                  # Shared SQLite schema (web + indexer)
+│   └── schema.prisma                  # Postgres schema (web + indexer); schema-only at runtime today
 ├── scripts/                           # Deployment / bootstrap / smoke / verification tooling
 │   ├── deploy.ts                      # Full contract build + upload + deploy + bindings (Stellar CLI)
 │   ├── bootstrap_liquidity.ts         # Seeds initial vault/marketplace liquidity
@@ -124,11 +124,11 @@ Novaire/
 | Path | Responsibility |
 | :--- | :--- |
 | `contracts/` | All on-chain logic. Never touch PT/YT/yield accounting, Blend integration, or the AMM without a dedicated test and a security-minded review. |
-| `apps/web` | User-facing UI and the only HTTP backend (the Next.js API routes under `src/app/api/*`). Shares the Prisma schema with the indexer. |
-| `apps/indexer` | Off-chain mirror of on-chain events. Must tolerate RPC gaps and be safe to restart; writes only to Prisma. |
+| `apps/web` | User-facing UI and the only HTTP backend (the Next.js API routes under `src/app/api/*`). Reads all financial state live from the chain; history via the file-based `history-store.json`. |
+| `apps/indexer` | Off-chain poller of on-chain events. Processor is currently stubbed — only the `SyncState` ledger cursor is written to Prisma/Postgres. Must tolerate RPC gaps and be safe to restart. |
 | `packages/bindings/` | Generated code — do not hand-edit. Regenerate via deploy (Stellar CLI bindings) or per-package `npm run build`. |
 | `scripts/` | Operational tooling. Scripts that write `deployments.<network>.json` are footguns; never run them against a network you don't intend. |
-| `prisma/schema.prisma` | Schema shared by web + indexer. Changing it requires a migration and `prisma generate`. |
+| `prisma/schema.prisma` | Postgres schema (nominally shared by web + indexer; only the indexer's cursor is written today). Changing it requires a migration and `prisma generate`. |
 | `docs/` | Protocol/architecture knowledge. Treat `PROTOCOL_INVARIANTS.md` and `CONTRACTS.md` as authority. |
 | `SECURITY.md`, `SECURITY_AUDIT.md` | Trust boundaries, severity classification, and audit history. No PR should silently weaken a stated trust assumption. |
 
@@ -142,7 +142,7 @@ Novaire/
 
 | Tool | Version | Required for |
 | :--- | :--- | :--- |
-| **Node.js** | ≥ 18 (no `engines` field is enforced — test against your Node) | Frontend, API routes, scripts, bindings, indexer |
+| **Node.js** | ≥ 20.9 (required by Next.js 16; no `engines` field is enforced — test against your Node) | Frontend, API routes, scripts, bindings, indexer |
 | **npm** | ≥ 9 — **npm workspaces** are configured (`apps/*`, `packages/*`) and `package-lock.json` is the only lockfile | Everything that isn't Rust |
 | **Rust + Cargo** | Recent stable toolchain (workspace pins `soroban-sdk = 22.0.11`) | Building the Soroban contracts |
 | **WASM target** | `rustup target add wasm32-unknown-unknown` | Compiled Soroban WASM for building/testing contracts |
@@ -165,15 +165,15 @@ Create `.env` at the repo root from `.env.example` (`cp .env.example .env`). Onl
 | `NETWORK` | `scripts/deploy.ts`, `scripts/bootstrap_liquidity.ts` | `testnet` (default) or `mainnet`. Selects RPC/passphrase and the `deployments.<network>.json` file. |
 | `RPC_URL` | `scripts/deploy.ts`, `bootstrap_liquidity.ts`, `apps/indexer` | Soroban RPC endpoint (defaults per `NETWORK`). |
 | `NETWORK_PASSPHRASE` | `scripts/deploy.ts`, `bootstrap_liquidity.ts` | Overrides the passphrase (defaults per `NETWORK`). |
-| `ADMIN_SECRET` | `scripts/deploy.ts` (legacy `initialize.ts`) | **Required for deployment.** Secret key of the account that builds/uploads/deploys. |
-| `KEEPER_SECRET` | `scripts/deploy.ts` | **Required for deployment.** Secret key of the registered protocol keeper. |
-| `BOOTSTRAP_AMOUNT` | `scripts/bootstrap_liquidity.ts` | Amount used to seed initial liquidity. |
-| `SKIP_BOOTSTRAP` | `scripts/bootstrap_liquidity.ts` | If set, skips the liquidity bootstrap step. |
+| `ADMIN_SECRET` | legacy only: `scripts/initialize.ts`, `scripts/audit_mint.ts`, `scripts/check_keys.js` | Secret key for legacy scripts. **`npm run deploy` / `npm run bootstrap` do not read it** — they manage `scripts/testnet_keys.json` (auto-generated random keypairs, git-ignored). |
+| `KEEPER_SECRET` | `scripts/keeper.js` (rollover executor), legacy `scripts/initialize.ts` | Secret key of the rollover-executor account; `scripts/keeper.js` also requires `ROLLOVER_CONTRACT_ID`. Not required by `deploy`/`bootstrap`. |
+| `BOOTSTRAP_AMOUNT` | `scripts/bootstrap_liquidity.ts` | Amount used to seed initial liquidity (~12 XLM default). |
+| `SKIP_BOOTSTRAP` | `scripts/deploy.ts` | If set to `true`, skips the automatic liquidity bootstrap step after deploy. |
 | `NEXT_PUBLIC_RPC_URL` | Frontend (`apps/web`) | Soroban RPC the browser client talks to. |
-| `NEXT_PUBLIC_NETWORK` | Frontend (`apps/web`) | Network label surfaced to the client. |
+| `NEXT_PUBLIC_NETWORK` | Frontend (`apps/web`) | `TESTNET` (default) or `MAINNET`; selects the deployment set in `apps/web/src/config/`. |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Frontend (`apps/web`) | Passphrase for client-side transaction building. |
-| `DATABASE_URL` | Prisma (web + indexer) | Database connection string (local SQLite / `dev.db` by default). |
-| `DATABASE_URL_UNPOOLED` | Prisma migrations | Unpooled connection string where a pooler is in use. |
+| `DATABASE_URL` | `apps/indexer`, Prisma commands | Postgres connection string — needed only to run the indexer or Prisma tooling, **not** for the frontend (history is file-based). |
+| `DATABASE_URL_UNPOOLED` | Prisma migrations | Unpooled Postgres connection string where a pooler is in use. |
 
 **Never commit `.env`**, any `.env.*` variant, `*_keys.json`, or local files such as `testnet_keys.json` — see [Security](#security). The `.gitignore` already covers all of these; never force-add them.
 
@@ -188,9 +188,10 @@ git clone <your-fork-url> && cd Novaire
 # 2. Install JS dependencies (npm workspaces)
 npm install
 
-# 3. Environment (copy the template, then fill in secrets)
+# 3. Environment (copy the template; defaults target Testnet)
 cp .env.example .env
-# Required for deploy/bootstrap only: ADMIN_SECRET, KEEPER_SECRET
+# No secrets are required for deploy/bootstrap — they auto-generate scripts/testnet_keys.json.
+# Set DATABASE_URL only if you run the indexer or Prisma tooling.
 
 # 4. Compile the Rust contracts (add the WASM target once)
 rustup target add wasm32-unknown-unknown
@@ -388,7 +389,7 @@ Rules:
 
 - **One logical change per commit** — a PR is usually 1–5 commits; the squash-merge title is a clean `feat:` / `fix:` statement.
 - Add a `BREAKING CHANGE` footer when the change alters a deployed ABI, a public endpoint, or a persisted DB field.
-- **Never commit** machine-generated artifacts: `.next/`, `node_modules/`, `target/`, `test-results/`, `history-store.json`, `dev.db` (see `.gitignore`).
+- **Never commit** machine-generated artifacts: `.next/`, `node_modules/`, `target/`, `test-results/`, `history-store.json` (see `.gitignore`).
 - Link the motivating GitHub issue with `Refs:` / `Closes:` in the footer where one exists.
 
 ---
