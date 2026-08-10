@@ -1,49 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
 
 export default function NavHeader() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [activeSection, setActiveSection] = useState("");
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            setActiveSection(entry.target.id);
-          } else if (activeSection === entry.target.id) {
-            setActiveSection("");
-          }
-        });
-      },
-      { rootMargin: "-100px 0px -60% 0px" }
-    );
-
-    const section = document.getElementById("how-it-works");
-    if (section) observer.observe(section);
-
-    return () => observer.disconnect();
-  }, [activeSection]);
-
-  const handleScrollToHowItWorks = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const element = document.getElementById("how-it-works");
-    if (element) {
-      const headerOffset = 100;
-      const elementPosition = element.getBoundingClientRect().top;
-      const offsetPosition = elementPosition + window.scrollY - headerOffset;
-
-      window.scrollTo({
-        top: offsetPosition,
-        behavior: "smooth",
-      });
-      setIsMobileMenuOpen(false);
-    }
-  };
 
   return (
     <>
@@ -66,22 +29,19 @@ export default function NavHeader() {
           {/* Right: Navigation + CTA cluster */}
           <div className="hidden md:flex items-center gap-5 z-50">
             <ul className="flex items-center gap-6">
-              <Tab
-                isActive={activeSection === "how-it-works"}
-                onClick={handleScrollToHowItWorks}
-              >
-                Workflow
-              </Tab>
               <Tab href="https://stellar.org/" external>
                 Ecosystem
               </Tab>
               <Tab href="/docs">
                 Docs
               </Tab>
+              <Tab href="/app">
+                Product
+              </Tab>
             </ul>
 
             <Link
-              href="/app"
+              href="/#waitlist"
               style={{ color: '#112a46' }}
               className="inline-flex items-center justify-center px-6 py-3 rounded-full border border-[rgba(17,42,70,0.15)] bg-transparent text-[16px] font-medium tracking-[0.01em] transition-all duration-[250ms] ease-out hover:bg-[rgba(17,42,70,0.06)] hover:border-[rgba(17,42,70,0.3)] whitespace-nowrap"
             >
@@ -114,9 +74,9 @@ export default function NavHeader() {
           >
             <div className="flex flex-col gap-6 items-start flex-1 overflow-y-auto">
               {[
-                { label: 'Workflow', id: 'how-it-works' },
                 { label: 'Ecosystem', href: 'https://stellar.org/', external: true },
-                { label: 'Docs', href: '/docs' }
+                { label: 'Docs', href: '/docs' },
+                { label: 'Product', href: '/app' }
               ].map((item, idx) => (
                 <motion.div
                   initial={{ opacity: 0, x: -20 }}
@@ -125,16 +85,7 @@ export default function NavHeader() {
                   key={item.label}
                   className="w-full"
                 >
-                  {item.id === 'how-it-works' ? (
-                    <a
-                      href={`#${item.id}`}
-                      onClick={handleScrollToHowItWorks}
-                      style={{ color: '#112a46' }}
-                      className="text-[24px] font-medium tracking-[0.01em] transition-colors duration-200 block py-2 hover:text-[#0c2035]"
-                    >
-                      {item.label}
-                    </a>
-                  ) : item.href ? (
+                  {item.href ? (
                     item.external ? (
                       <a
                         href={item.href}
@@ -177,7 +128,7 @@ export default function NavHeader() {
               className="w-full mt-auto"
             >
               <Link
-                href="/app"
+                href="/#waitlist"
                 style={{ color: '#112a46' }}
                 className="flex items-center justify-center w-full px-6 py-3 rounded-full border border-[rgba(17,42,70,0.15)] bg-transparent text-[16px] font-medium tracking-[0.01em] transition-all duration-[250ms] ease-out hover:bg-[rgba(17,42,70,0.06)] hover:border-[rgba(17,42,70,0.3)] whitespace-nowrap"
                 onClick={() => setIsMobileMenuOpen(false)}

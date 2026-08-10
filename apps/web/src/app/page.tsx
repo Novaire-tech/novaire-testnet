@@ -3,12 +3,12 @@
 import { useEffect } from 'react';
 import Navbar from "@/components/Navbar";
 import { Hero } from "@/components/Hero";
-import Stats from "@/components/Stats";
-import Features from "@/components/Features";
-import Workflow from "@/components/Workflow";
-import Ecosystem from "@/components/Ecosystem";
-import BuiltOnStellar from "@/components/BuiltOnStellar";
-import Footer from "@/components/Footer";
+import { HowNovaireWorks } from "@/components/HowNovaireWorks/Section";
+import { TechMarquee } from "@/components/TechMarquee";
+import FinalCTA from "@/components/FinalCTA";
+import { FAQ } from "@/components/FAQ/Section";
+import { JoinIn } from "@/components/JoinIn";
+import { Footer } from "@/components/Footer";
 
 export default function Home() {
   useEffect(() => {
@@ -39,11 +39,11 @@ export default function Home() {
     <>
       <Navbar />
       <Hero />
-      <Stats />
-      <Features />
-      <Workflow />
-      <Ecosystem />
-      <BuiltOnStellar />
+      <HowNovaireWorks />
+      <TechMarquee />
+      <FinalCTA />
+      <FAQ />
+      <JoinIn />
       <Footer />
     </>
   );
