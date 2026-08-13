@@ -39,7 +39,7 @@ export async function GET() {
           filters: [
             {
               type: 'contract',
-              contractIds: [CONTRACTS.MARKETPLACE, CONTRACTS.VAULT],
+              contractIds: [CONTRACTS.AMM, CONTRACTS.SY_WRAPPER],
             },
           ],
           limit: 100,

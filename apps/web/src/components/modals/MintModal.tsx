@@ -19,22 +19,11 @@ interface MintModalProps {
 
 type YieldPreference = 'fixed' | 'keep' | 'custom';
 
-interface IntentExecutionArgs {
-  user: string;
-  usdc_amount: bigint;
-  min_implied_rate: bigint;
-  min_underlying_out: bigint;
-  _maturity_ledger: number;
-  yt_sale_percentage: number;
-}
-
-interface IntentEngineTxResult {
-  result?: unknown;
-  signAndSend: (opts: { signTransaction: typeof signTransaction }) => Promise<unknown>;
-}
-
-interface IntentEngineClient {
-  execute_fixed_yield_intent: (args: IntentExecutionArgs) => Promise<IntentEngineTxResult>;
+interface MintSimulationData {
+  amountStroops: bigint;
+  syEstimate: bigint;
+  ptEstimateStroops: bigint;
+  ytEstimateStroops: bigint;
 }
 
 export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: MintModalProps) {
@@ -51,7 +40,7 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
   const [errorMessage, setErrorMessage] = useState('');
 
   const [slippageBps, setSlippageBps] = useState<number>(50); // 0.5% default
-  const [simulationData, setSimulationData] = useState<{ expectedOut: bigint; minOut: bigint; client: IntentEngineClient; txArgs: IntentExecutionArgs } | null>(null);
+  const [simulationData, setSimulationData] = useState<MintSimulationData | null>(null);
 
   const [balance, setBalance] = useState<number>(0);
 
@@ -131,54 +120,36 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
 
     setStep('simulating');
     try {
-      const { Client } = await import('../../../../../packages/bindings/intent_engine/src/index');
-      const { rpc } = await import('@stellar/stellar-sdk');
+      const { Client: SyWrapperClient } = await import('../../../../../packages/bindings/sy_wrapper/src/index');
+      const { Client: TokenizerClient } = await import('../../../../../packages/bindings/tokenizer/src/index');
 
-      const server = new rpc.Server(RPC_URL, { allowHttp: true });
-      const latestLedger = await server.getLatestLedger();
-      const maturityLedger = latestLedger.sequence + 50000;
-
-      const client = new Client({
-        contractId: CONTRACTS.INTENT_ENGINE,
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        publicKey: address!,
-      });
+      const clientOptions = { rpcUrl: RPC_URL, networkPassphrase: NETWORK_PASSPHRASE, publicKey: address! };
+      const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: CONTRACTS.SY_WRAPPER });
+      const tokenizerClient = new TokenizerClient({ ...clientOptions, contractId: CONTRACTS.TOKENIZER });
 
       const amountStroops = BigInt(Math.floor(parsedAmount * 10_000_000));
-      const minImpliedRate = BigInt(0);
 
-      const txArgs = {
-        user: address!,
-        usdc_amount: amountStroops,
-        min_implied_rate: minImpliedRate,
-        min_underlying_out: BigInt(0), // Simulation dry run
-        _maturity_ledger: maturityLedger,
-        yt_sale_percentage: ytSalePercentage,
-      };
+      // Minting is now: sy_wrapper.deposit(underlying) -> SY shares, then
+      // tokenizer.split(sy_amount) -> equal-face PT + YT. Estimate the SY the deposit
+      // will mint using the live exchange rate, then preview the split on that estimate.
+      const exchangeRateTx = await syWrapperClient.exchange_rate();
+      const rawRate = exchangeRateTx.result as unknown as Record<string, unknown>;
+      const rate = Number(typeof rawRate?.unwrap === 'function' ? (rawRate.unwrap as () => unknown)() : rawRate) / 1e18;
+      if (!(rate > 0)) throw new Error('SY exchange rate unavailable');
 
-      const simTx = await client.execute_fixed_yield_intent(txArgs);
-      
-      let expectedOut = BigInt(0);
-      if (simTx.result) {
-        const rawResult = simTx.result as unknown as Record<string, unknown>;
-        const unwrapped = typeof rawResult.unwrap === 'function'
-          ? (rawResult.unwrap as () => unknown)()
-          : ('ok' in rawResult ? rawResult.ok : rawResult);
-        if (unwrapped && typeof unwrapped === 'object' && (unwrapped as Record<string, unknown>).total_underlying_received !== undefined) {
-          expectedOut = BigInt((unwrapped as Record<string, unknown>).total_underlying_received as string | number | bigint);
-        }
-      }
+      const syEstimate = BigInt(Math.floor(Number(amountStroops) / rate));
 
-      if (ytSalePercentage > 0 && expectedOut === BigInt(0) && amountStroops > BigInt(100)) {
-        throw new Error('Expected output from simulation is zero. Market may lack liquidity.');
-      }
+      const previewTx = await tokenizerClient.preview_split({ sy_amount: syEstimate });
+      const rawPreview = previewTx.result as unknown as Record<string, unknown>;
+      const unwrappedPreview = typeof rawPreview?.unwrap === 'function' ? (rawPreview.unwrap as () => unknown)() : rawPreview;
+      const [ptFace, ytFace] = Array.isArray(unwrappedPreview) ? unwrappedPreview : [syEstimate, syEstimate];
 
-      const minOut = ytSalePercentage > 0 
-        ? (expectedOut * BigInt(10000 - slippageBps)) / BigInt(10000) 
-        : BigInt(0);
-
-      setSimulationData({ expectedOut, minOut, client, txArgs });
+      setSimulationData({
+        amountStroops,
+        syEstimate,
+        ptEstimateStroops: BigInt(ptFace as string | number | bigint),
+        ytEstimateStroops: BigInt(ytFace as string | number | bigint),
+      });
       setStep('review');
     } catch (e) {
       console.error(e);
@@ -190,15 +161,32 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
   };
 
   const handleConfirm = async () => {
-    if (!simulationData) return;
+    if (!simulationData || !address) return;
     setStep('signing');
     try {
-      const { client, txArgs, minOut } = simulationData;
-      const finalTxArgs = { ...txArgs, min_underlying_out: minOut };
-      const tx = await client.execute_fixed_yield_intent(finalTxArgs);
+      const { Client: SyWrapperClient } = await import('../../../../../packages/bindings/sy_wrapper/src/index');
+      const { Client: TokenizerClient } = await import('../../../../../packages/bindings/tokenizer/src/index');
+
+      const clientOptions = { rpcUrl: RPC_URL, networkPassphrase: NETWORK_PASSPHRASE, publicKey: address };
+      const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: CONTRACTS.SY_WRAPPER });
+      const tokenizerClient = new TokenizerClient({ ...clientOptions, contractId: CONTRACTS.TOKENIZER });
+
+      // Step 1: deposit underlying -> SY shares.
+      const depositTx = await syWrapperClient.deposit({ from: address, amount: simulationData.amountStroops });
+      const depositResult = await depositTx.signAndSend({ signTransaction });
+      if (!depositResult) throw new Error('SY deposit failed on-chain');
+
+      const rawDeposit = depositTx.result as unknown as Record<string, unknown>;
+      const unwrappedDeposit = typeof rawDeposit?.unwrap === 'function' ? (rawDeposit.unwrap as () => unknown)() : rawDeposit;
+      const syMinted = unwrappedDeposit !== undefined && unwrappedDeposit !== null
+        ? BigInt(unwrappedDeposit as string | number | bigint)
+        : simulationData.syEstimate;
 
       setStep('broadcasting');
-      const result = await tx.signAndSend({ signTransaction });
+
+      // Step 2: split the minted SY into equal-face PT + YT.
+      const splitTx = await tokenizerClient.split({ from: address, sy_amount: syMinted });
+      const result = await splitTx.signAndSend({ signTransaction });
 
       if (result) {
         setStep('success');
@@ -514,15 +502,15 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
                     <>
                       <div className="h-px w-full bg-white/10" />
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-white/70">Expected Underlying Output</span>
+                        <span className="text-sm text-white/70">Expected YT (face)</span>
                         <span className="text-sm font-medium text-white">
-                          {(Number(simulationData.expectedOut) / 1e7).toFixed(4)} {currentAsset}
+                          {(Number(simulationData.ytEstimateStroops) / 1e7).toFixed(4)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-white/70">Minimum Underlying Output</span>
+                        <span className="text-sm text-white/70">Expected PT (face)</span>
                         <span className="text-sm font-medium text-nova-accent">
-                          {(Number(simulationData.minOut) / 1e7).toFixed(4)} {currentAsset}
+                          {(Number(simulationData.ptEstimateStroops) / 1e7).toFixed(4)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">

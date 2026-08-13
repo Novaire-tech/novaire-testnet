@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { WalletService } from '../services/walletService';
 import { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } from '../config/contracts';
-import { NovaireMarketError } from '../../../../packages/bindings/marketplace/src/index';
 
 export type TradeAsset = 'PT' | 'YT';
 export type TradeAction = 'Buy' | 'Sell';
@@ -10,7 +9,7 @@ export interface MarketData {
   ptPrice: number;
   ytPrice: number;
   twap: number;
-  /** True when get_twap_rate_checked reverted (checkpoint older than MAX_TWAP_AGE_LEDGERS). twap is 0 and must not be displayed as real market data. */
+  /** True when amm.twap_apy() failed/reverted (checkpoint stale or unavailable). twap is 0 and must not be displayed as real market data. */
   twapStale: boolean;
   ptReserve: number;
   ytReserve: number;
@@ -31,27 +30,17 @@ export interface TradeQuote {
 }
 
 function parseTradeError(e: unknown): string {
-  // Structured SDK error parsing
-  if (e && typeof e === 'object' && 'message' in e) {
-    const message = (e as { message: unknown }).message;
-    if (message === NovaireMarketError[8].message) return 'Pool liquidity is too low for this trade size.';
-    if (message === NovaireMarketError[5].message) return 'The pool does not currently have enough liquidity.';
-    if (message === NovaireMarketError[6].message) return 'Price moved beyond your slippage tolerance.';
-    if (message === NovaireMarketError[4].message) return 'This market has matured.';
-    if (message === NovaireMarketError[3].message) return 'Authorization required.';
-    if (message === NovaireMarketError[7].message) return 'Please enter a valid amount.';
-    if (message === NovaireMarketError[11].message) return 'YT has no remaining value because PT has reached face value.';
-    if (message === NovaireMarketError[9].message) return 'Internal protocol state unavailable.';
-    if (message === NovaireMarketError[10].message) return 'Protocol invariant check failed.';
-  }
-
-  // Fallback for Host errors and unmapped network errors where structured info is unavailable
+  // Fallback message parsing — the AMM's error enum isn't known until real bindings are
+  // generated, so we match on the raw error text rather than a NovaireMarketError-style enum.
   const msg = (e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : null) || String(e);
-  
+
   if (msg.includes('Insufficient balance') || (msg.includes('HostError') && (msg.includes('balance') || msg.includes('transfer') || msg.includes('underfunded')))) return 'Insufficient balance.';
   if (msg.includes('timeout') || msg.includes('Network error') || msg.includes('fetch') || msg.includes('Failed to fetch') || msg.includes('Simulation failed')) return 'Network error.';
   if (msg.includes('User rejected') || msg.includes('UserRejected') || msg.includes('User declined')) return 'Transaction cancelled.';
-  
+  if (msg.includes('liquidity') || msg.includes('Liquidity')) return 'Pool liquidity is too low for this trade size.';
+  if (msg.includes('slippage') || msg.includes('Slippage') || msg.includes('MinOut')) return 'Price moved beyond your slippage tolerance.';
+  if (msg.includes('matured') || msg.includes('Matured')) return 'This market has matured.';
+
   return 'Unexpected protocol error.';
 }
 
@@ -77,62 +66,56 @@ export function useTrade() {
   const [quoteError, setQuoteError] = useState<string | null>(null);
 
   const STROOP_SCALE = 10000000;
+  const WAD_SCALE = 1e18;
 
   const fetchMarketData = useCallback(async () => {
     try {
-      const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
+      const { Client: AmmClient } = await import('../../../../packages/bindings/amm/src/index');
+      const { Client: SyWrapperClient } = await import('../../../../packages/bindings/sy_wrapper/src/index');
       const address = await WalletService.getWalletAddress() || 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'; // dummy if not connected
-      
-      const client = new MarketplaceClient({
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        contractId: CONTRACTS.MARKETPLACE,
-        publicKey: address,
-      });
 
-      const PRICE_SCALE = 1000000000; // 1e9
+      const clientOptions = { rpcUrl: RPC_URL, networkPassphrase: NETWORK_PASSPHRASE, publicKey: address };
+      const ammClient = new AmmClient({ ...clientOptions, contractId: CONTRACTS.AMM });
+      const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: CONTRACTS.SY_WRAPPER });
 
-      const ptPriceTx = await client.get_pt_price();
-      
-      console.log('--- Market Data Audit ---');
-      console.log('Raw PT Price from contract:', ptPriceTx.result ? ptPriceTx.result.toString() : ptPriceTx.result);
-      
-      const rawContractPtPrice = Number(unwrapResult(ptPriceTx.result) || 0n) / PRICE_SCALE;
-      const ptPrice = rawContractPtPrice; // Contract now returns correct price (Underlying/PT)
-      const ytPrice = Math.max(0, 1.0 - ptPrice); // derived from invariant pt + yt = underlying
+      // PT/YT prices in underlying terms: quote 1 PT/YT -> SY via the AMM, then convert
+      // SY -> underlying via the SY Wrapper's exchange rate (the AMM only trades SY<->PT/YT).
+      const [ptQuoteTx, ytQuoteTx, exchangeRateTx] = await Promise.all([
+        ammClient.quote_pt_for_sy({ pt_in: BigInt(STROOP_SCALE) }),
+        ammClient.quote_yt_for_sy({ yt_in: BigInt(STROOP_SCALE) }),
+        syWrapperClient.exchange_rate(),
+      ]);
 
-      console.log('Scaled PT Price (displayed):', ptPrice);
-      console.log('Scaled YT Price (displayed):', ytPrice);
+      const rate = Number(unwrapResult(exchangeRateTx.result) || 0n) / WAD_SCALE;
+      const ptSyOut = Number(unwrapResult(ptQuoteTx.result) || 0n) / STROOP_SCALE;
+      const ytSyOut = Number(unwrapResult(ytQuoteTx.result) || 0n) / STROOP_SCALE;
+      const ptPrice = rate > 0 ? ptSyOut * rate : 0;
+      const ytPrice = rate > 0 ? ytSyOut * rate : 0;
 
-      // get_twap_rate_checked reverts if the TWAP checkpoint is older than
-      // MAX_TWAP_AGE_LEDGERS. Never display a stale TWAP as live market data.
+      // amm.twap_apy() has no documented "stale/reverts" behavior like the old
+      // get_twap_rate_checked; treat any failure to reach the contract as stale.
       let twap = 0;
       let twapStale = true;
       try {
-        const twapTx = await client.get_twap_rate_checked();
-        twap = Number(unwrapResult(twapTx.result) || 0n) / PRICE_SCALE;
+        const twapTx = await ammClient.twap_apy();
+        twap = Number(unwrapResult(twapTx.result) || 0n) / 1e16; // WAD rate -> percent
         twapStale = false;
       } catch {
-        console.warn('TWAP is stale or unavailable (get_twap_rate_checked reverted)');
+        console.warn('TWAP APY is stale or unavailable (amm.twap_apy failed)');
       }
 
-      const reservesTx = await client.get_reserves();
       let ptRes = 0, ytRes = 0, undRes = 0;
-      const rawReserves = reservesTx.result as unknown;
-
-      if (rawReserves) {
-        let unwrappedRes: unknown = rawReserves;
-        const obj = rawReserves as Record<string, unknown>;
-        if (typeof obj.unwrap === 'function') {
-           try { unwrappedRes = (obj.unwrap as () => unknown)(); } catch {}
-        }
-        if (Array.isArray(unwrappedRes) && unwrappedRes.length === 3) {
-          console.log(`Raw Reserves from contract: PT=${unwrappedRes[0].toString()}, Underlying=${unwrappedRes[1].toString()}, YT=${unwrappedRes[2].toString()}`);
-          ptRes = Number(unwrappedRes[0]) / STROOP_SCALE;
-          undRes = Number(unwrappedRes[1]) / STROOP_SCALE;
-          ytRes = Number(unwrappedRes[2]) / STROOP_SCALE;
-          console.log(`Scaled Reserves (displayed): PT=${ptRes}, Underlying=${undRes}, YT=${ytRes}`);
-        }
+      try {
+        const [reservePtTx, reserveSyTx] = await Promise.all([
+          ammClient.reserve_pt(),
+          ammClient.reserve_sy(),
+        ]);
+        ptRes = Number(unwrapResult(reservePtTx.result) || 0n) / STROOP_SCALE;
+        undRes = Number(unwrapResult(reserveSyTx.result) || 0n) / STROOP_SCALE;
+        // The AMM pools SY<->PT; there is no separate YT reserve leg to read directly.
+        ytRes = 0;
+      } catch (e) {
+        console.warn('Failed to fetch AMM reserves', e);
       }
 
       // Compute yields
@@ -144,9 +127,6 @@ export function useTrade() {
       const { calculateMarketImpliedApy } = await import('../utils/apy');
       const fixedApy = calculateMarketImpliedApy(ptPrice, ptFaceValueInUnderlying, maturityTimestampMs);
       const ytPtRatio = ptPrice > 0 ? (ytPrice / ptPrice) * 100 : 0;
-
-      console.log('Computed Fixed APY:', fixedApy);
-      console.log('Computed YT/PT Ratio:', ytPtRatio);
 
       setMarketData({
         ptPrice: isNaN(ptPrice) ? 0 : ptPrice,
@@ -180,30 +160,41 @@ export function useTrade() {
       const address = await WalletService.getWalletAddress();
       if (!address) throw new Error('Wallet not connected');
 
-      const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
-      const client = new MarketplaceClient({
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        contractId: CONTRACTS.MARKETPLACE,
-        publicKey: address,
-      });
+      const { Client: AmmClient } = await import('../../../../packages/bindings/amm/src/index');
+      const { Client: SyWrapperClient } = await import('../../../../packages/bindings/sy_wrapper/src/index');
+      const clientOptions = { rpcUrl: RPC_URL, networkPassphrase: NETWORK_PASSPHRASE, publicKey: address };
+      const ammClient = new AmmClient({ ...clientOptions, contractId: CONTRACTS.AMM });
+      const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: CONTRACTS.SY_WRAPPER });
 
       const amountInStroops = BigInt(Math.floor(amountIn * STROOP_SCALE));
+
+      // There is no direct underlying<->PT/YT swap anymore. Buying/selling PT or YT
+      // routes underlying through SY first: deposit() to mint SY, then swap SY<->PT/YT.
+      // We can't simulate deposit() + swap in one read-only round trip, so approximate
+      // the underlying-denominated quote using the live SY exchange rate for the
+      // deposit leg, and the AMM's read-only quote_* for the swap leg.
+      const exchangeRateTx = await syWrapperClient.exchange_rate();
+      const rate = Number(unwrapResult(exchangeRateTx.result) || 0n) / WAD_SCALE;
+      if (!(rate > 0)) throw new Error('SY exchange rate unavailable');
+
       let outStroops = 0n;
 
       if (action === 'Buy' && asset === 'PT') {
-        const tx = await client.swap_underlying_for_pt({ buyer: address, underlying_in: amountInStroops, min_pt_out: 1n });
+        const syIn = BigInt(Math.floor(Number(amountInStroops) / rate));
+        const tx = await ammClient.quote_sy_for_pt({ sy_in: syIn });
         outStroops = unwrapResult(tx.result) || 0n;
       } else if (action === 'Sell' && asset === 'PT') {
-        const tx = await client.swap_pt_for_underlying({ seller: address, pt_in: amountInStroops, min_underlying_out: 1n });
-        outStroops = unwrapResult(tx.result) || 0n;
+        const tx = await ammClient.quote_pt_for_sy({ pt_in: amountInStroops });
+        const syOut = unwrapResult(tx.result) || 0n;
+        outStroops = BigInt(Math.floor(Number(syOut) * rate));
       } else if (action === 'Buy' && asset === 'YT') {
-        // Read-only curve quote: no auth/state-mutation simulation needed, matches execution exactly.
-        const tx = await client.quote_underlying_for_yt({ underlying_in: amountInStroops });
+        const syIn = BigInt(Math.floor(Number(amountInStroops) / rate));
+        const tx = await ammClient.quote_sy_for_yt({ sy_in: syIn });
         outStroops = unwrapResult(tx.result) || 0n;
       } else if (action === 'Sell' && asset === 'YT') {
-        const tx = await client.quote_yt_for_underlying({ yt_in: amountInStroops });
-        outStroops = unwrapResult(tx.result) || 0n;
+        const tx = await ammClient.quote_yt_for_sy({ yt_in: amountInStroops });
+        const syOut = unwrapResult(tx.result) || 0n;
+        outStroops = BigInt(Math.floor(Number(syOut) * rate));
       }
 
       if (outStroops === 0n) {
@@ -212,7 +203,7 @@ export function useTrade() {
 
       const expectedOutput = Number(outStroops) / STROOP_SCALE;
       const minimumReceived = expectedOutput * (1 - slippagePercent / 100);
-      
+
       // Calculate price impact (rough estimation)
       let priceImpact = 0;
       let largeTradeWarning: string | undefined;
@@ -263,40 +254,52 @@ export function useTrade() {
       if (!address) throw new Error('Wallet not connected');
 
       const { signTransaction } = await import('@stellar/freighter-api');
-      const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
-      
-      const client = new MarketplaceClient({
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        contractId: CONTRACTS.MARKETPLACE,
-        publicKey: address,
-      });
+      const { Client: AmmClient } = await import('../../../../packages/bindings/amm/src/index');
+      const { Client: SyWrapperClient } = await import('../../../../packages/bindings/sy_wrapper/src/index');
 
-      // We need the quote to compute exact min out for slippage protection
+      const clientOptions = { rpcUrl: RPC_URL, networkPassphrase: NETWORK_PASSPHRASE, publicKey: address };
+      const ammClient = new AmmClient({ ...clientOptions, contractId: CONTRACTS.AMM });
+      const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: CONTRACTS.SY_WRAPPER });
+
       const amountInStroops = BigInt(Math.floor(amountIn * STROOP_SCALE));
       let minOutStroops = 0n;
-      
+
       if (quote) {
         minOutStroops = BigInt(Math.floor(quote.minimumReceived * STROOP_SCALE));
       } else {
         throw new Error('No valid quote available');
       }
 
-      let tx;
-      if (action === 'Buy' && asset === 'PT') {
-        tx = await client.swap_underlying_for_pt({ buyer: address, underlying_in: amountInStroops, min_pt_out: minOutStroops });
-      } else if (action === 'Sell' && asset === 'PT') {
-        tx = await client.swap_pt_for_underlying({ seller: address, pt_in: amountInStroops, min_underlying_out: minOutStroops });
-      } else if (action === 'Buy' && asset === 'YT') {
-        tx = await client.swap_underlying_for_yt({ buyer: address, underlying_in: amountInStroops, min_yt_out: minOutStroops });
-      } else if (action === 'Sell' && asset === 'YT') {
-        tx = await client.swap_yt_for_underlying({ seller: address, yt_in: amountInStroops, min_underlying_out: minOutStroops });
+      let result: unknown;
+
+      if (action === 'Buy' && (asset === 'PT' || asset === 'YT')) {
+        // Buying PT/YT with underlying: first deposit underlying into the SY Wrapper to
+        // mint SY, then swap SY for PT/YT on the AMM. Two on-chain transactions.
+        const depositTx = await syWrapperClient.deposit({ from: address, amount: amountInStroops });
+        const depositResult = await depositTx.signAndSend({ signTransaction });
+        const syMinted = unwrapResult(depositTx.result) || 0n;
+
+        const swapTx = asset === 'PT'
+          ? await ammClient.swap_sy_for_pt({ from: address, sy_in: syMinted, min_pt_out: minOutStroops })
+          : await ammClient.swap_sy_for_yt({ from: address, sy_in: syMinted, min_yt_out: minOutStroops });
+        result = await swapTx.signAndSend({ signTransaction });
+        if (!depositResult) throw new Error('SY deposit failed on-chain');
+      } else if (action === 'Sell' && (asset === 'PT' || asset === 'YT')) {
+        // Selling PT/YT for underlying: first swap PT/YT for SY on the AMM, then redeem
+        // the SY for underlying via the SY Wrapper. Two on-chain transactions.
+        const swapTx = asset === 'PT'
+          ? await ammClient.swap_pt_for_sy({ from: address, pt_in: amountInStroops, min_sy_out: 1n })
+          : await ammClient.swap_yt_for_sy({ from: address, yt_in: amountInStroops, min_sy_out: 1n });
+        const swapResult = await swapTx.signAndSend({ signTransaction });
+        const syReceived = unwrapResult(swapTx.result) || 0n;
+
+        const redeemTx = await syWrapperClient.redeem({ from: address, sy_amount: syReceived });
+        result = await redeemTx.signAndSend({ signTransaction });
+        if (!swapResult) throw new Error('AMM swap failed on-chain');
       }
 
-      if (!tx) throw new Error('Transaction assembly failed');
+      if (!result) throw new Error('Transaction assembly failed');
 
-      const result = await tx.signAndSend({ signTransaction });
-      
       return result;
     } catch (e) {
       console.error('Trade execution failed', e);

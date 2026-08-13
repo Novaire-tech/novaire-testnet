@@ -29,7 +29,7 @@ export interface Vault {
 
 export interface Activity {
   id: string;
-  type: 'deposit' | 'withdraw' | 'rollover' | 'claim';
+  type: 'deposit' | 'withdraw' | 'claim';
   asset: string;
   amount: number;
   valueUsd: number;

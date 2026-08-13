@@ -58,7 +58,7 @@ export interface PortfolioSummary {
 export class PortfolioService {
   /**
    * Retrieves the comprehensive portfolio combining wallet balances with live prices.
-   * Future extensibility: Will merge Vault positions, PT/YT tokens, and Yield here.
+   * Future extensibility: Will merge SY Wrapper positions, PT/YT tokens, and Yield here.
    */
   static async getPortfolio(): Promise<PortfolioSummary> {
     try {
@@ -80,7 +80,7 @@ export class PortfolioService {
       // Map over all balances and inject pricing
       for (const bal of rawBalances) {
         const balanceFloat = parseFloat(bal.amount) || 0;
-        
+
         let priceUsd = 0;
         try {
           const priceData = await PriceOracleService.getAssetPrice(bal.assetCode);
@@ -109,8 +109,8 @@ export class PortfolioService {
       try {
         const { Client: PtClient } = await import('../../../../packages/bindings/pt_token/src/index');
         const { Client: YtClient } = await import('../../../../packages/bindings/yt_token/src/index');
-        const { Client: VaultClient } = await import('../../../../packages/bindings/vault/src/index');
-        const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
+        const { Client: SyWrapperClient } = await import('../../../../packages/bindings/sy_wrapper/src/index');
+        const { Client: AmmClient } = await import('../../../../packages/bindings/amm/src/index');
         const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
 
         const clientOptions = {
@@ -121,8 +121,8 @@ export class PortfolioService {
 
         const ptClient = new PtClient({ ...clientOptions, contractId: CONTRACTS.PT_TOKEN });
         const ytClient = new YtClient({ ...clientOptions, contractId: CONTRACTS.YT_TOKEN });
-        const vaultClient = new VaultClient({ ...clientOptions, contractId: CONTRACTS.VAULT });
-        const marketplaceClient = new MarketplaceClient({ ...clientOptions, contractId: CONTRACTS.MARKETPLACE });
+        const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: CONTRACTS.SY_WRAPPER });
+        const ammClient = new AmmClient({ ...clientOptions, contractId: CONTRACTS.AMM });
 
         const epochId = 'Epoch 17';
         const underlyingAsset = 'XLM'; // Configured underlying for Epoch 17
@@ -145,59 +145,56 @@ export class PortfolioService {
         } catch (e) {
           console.warn("Could not fetch vaults for yield calculation", e);
         }
-        
+
         // Helper to get fixed APY for an underlying asset
         const getVaultApy = (asset: string) => {
           const vault = activeVaults.find(v => (Array.isArray(v.asset) ? v.asset.includes(asset) : v.asset === asset));
           return vault?.fixedApy || 0;
         };
 
-        // Get PT spot price from the Marketplace AMM
-        // Contract returns (A_pool + underlying) / (A_pool + pt) scaled to 1e9
-        // This is pt-per-underlying. Invert to get underlying-per-pt.
+        // Get PT spot price: quote 1 PT -> SY via the AMM, then convert SY -> underlying
+        // via the SY Wrapper's exchange rate (the AMM only trades SY<->PT/YT directly).
         let ptSpotPriceUnderlying = 0; // strict zero default if no AMM reserve exists
         let ytSpotPriceUnderlying = 0;
         try {
-          const priceTx = await marketplaceClient.get_pt_price();
-          const rawResult: unknown = priceTx?.result;
-
-          if (rawResult !== undefined) {
-             const parsedNumber = Number(unwrapContractResult(rawResult));
-             if (!isNaN(parsedNumber) && parsedNumber > 0) {
-               const rawContractPrice = parsedNumber / 1_000_000_000;
-               // Contract now correctly returns underlying-per-pt directly
-               ptSpotPriceUnderlying = rawContractPrice;
-               ytSpotPriceUnderlying = Math.max(0, 1.0 - ptSpotPriceUnderlying);
-             }
+          const [ptQuoteTx, exchangeRateTx] = await Promise.all([
+            ammClient.quote_pt_for_sy({ pt_in: BigInt(10000000) }),
+            syWrapperClient.exchange_rate()
+          ]);
+          const syOut = Number(unwrapContractResult(ptQuoteTx?.result)) / 10000000;
+          const rate = Number(unwrapContractResult(exchangeRateTx?.result)) / 1e18; // WAD-scaled, underlying per SY share
+          if (!isNaN(syOut) && !isNaN(rate) && rate > 0) {
+            ptSpotPriceUnderlying = syOut * rate;
+            ytSpotPriceUnderlying = Math.max(0, 1.0 - ptSpotPriceUnderlying);
           }
         } catch (e) {
-          console.warn("Marketplace PT price fetch error", e);
+          console.warn("AMM PT price fetch error", e);
         }
 
         const ptPriceUsd = (!isNaN(ptSpotPriceUnderlying) && !isNaN(underlyingSpotUsd)) ? (ptSpotPriceUnderlying * underlyingSpotUsd) : 0;
         const ytPriceUsd = (!isNaN(ytSpotPriceUnderlying) && !isNaN(underlyingSpotUsd)) ? (ytSpotPriceUnderlying * underlyingSpotUsd) : 0;
 
-        // NOTE: Vault LP shares (UserShares) and PT/YT balances are independent on-chain
-        // balances (contracts/vault/src/lib.rs UserShares vs pt_token/yt_token's own
-        // Balance storage). Tokenizing only burns/transfers the specific share amount
-        // passed to mint_pt_yt, so a user can hold untokenized LP AND PT/YT from a partial
-        // tokenization, AND PT bought separately on the marketplace (which never touches
-        // vault balances at all). These are genuinely separate positions and must both be
-        // counted, not treated as alternate representations of the same deposit.
+        // NOTE: SY Wrapper shares (the deposit-tracking balance) and PT/YT balances are
+        // independent on-chain balances. Splitting only burns/transfers the specific SY
+        // amount passed to tokenizer.split, so a user can hold un-split SY AND PT/YT from
+        // a partial split, AND PT bought separately on the AMM (which never touches SY
+        // Wrapper balances at all). These are genuinely separate positions and must both
+        // be counted, not treated as alternate representations of the same deposit.
         let realVaultBalanceFloat = 0;
         let realVaultValueUsd = 0;
         try {
-          const vaultTx = await vaultClient.balance_of({ user: address });
-          const rawVault: unknown = vaultTx?.result;
-          if (rawVault !== undefined) {
-             const parsedVault = Number(unwrapContractResult(rawVault));
-             if (!isNaN(parsedVault) && parsedVault > 0) {
-                realVaultBalanceFloat = parsedVault / 10000000;
-                realVaultValueUsd = (!isNaN(realVaultBalanceFloat) && !isNaN(underlyingSpotUsd)) ? realVaultBalanceFloat * underlyingSpotUsd : 0;
-                if (isNaN(realVaultValueUsd) || !isFinite(realVaultValueUsd)) realVaultValueUsd = 0;
-             }
+          const [syBalanceTx, exchangeRateTx] = await Promise.all([
+            syWrapperClient.balance({ id: address }),
+            syWrapperClient.exchange_rate()
+          ]);
+          const parsedSyShares = Number(unwrapContractResult(syBalanceTx?.result));
+          const rate = Number(unwrapContractResult(exchangeRateTx?.result)) / 1e18; // WAD-scaled, underlying per SY share
+          if (!isNaN(parsedSyShares) && parsedSyShares > 0 && !isNaN(rate) && rate > 0) {
+             realVaultBalanceFloat = (parsedSyShares / 10000000) * rate;
+             realVaultValueUsd = (!isNaN(realVaultBalanceFloat) && !isNaN(underlyingSpotUsd)) ? realVaultBalanceFloat * underlyingSpotUsd : 0;
+             if (isNaN(realVaultValueUsd) || !isFinite(realVaultValueUsd)) realVaultValueUsd = 0;
           }
-        } catch (e) { console.warn("Vault LP balance fetch error (expected for intent-flow users)", e); }
+        } catch (e) { console.warn("SY Wrapper balance fetch error", e); }
 
         // Fetch PT Balance
         // NOTE: The PT token balance represents the user's yield position.
@@ -211,7 +208,7 @@ export class PortfolioService {
 
           if (rawPt !== undefined) {
              const parsedPt = Number(unwrapContractResult(rawPt));
-             
+
              if (!isNaN(parsedPt) && parsedPt > 0) {
                 ptBalanceFloat = parsedPt / 10000000;
                 ptValueUsd = (!isNaN(ptBalanceFloat) && !isNaN(ptPriceUsd)) ? ptBalanceFloat * ptPriceUsd : 0;
@@ -245,7 +242,7 @@ export class PortfolioService {
                 ytBalanceFloat = parsedYt / 10000000;
                 ytValueUsd = (!isNaN(ytBalanceFloat) && !isNaN(ytPriceUsd)) ? ytBalanceFloat * ytPriceUsd : 0;
                 if (isNaN(ytValueUsd) || !isFinite(ytValueUsd)) ytValueUsd = 0;
-                
+
                 totalValueUsd += ytValueUsd;
                 assets.push({
                   assetCode: `YT-${underlyingAsset}`,
@@ -261,10 +258,11 @@ export class PortfolioService {
           }
         } catch (e) { console.warn("YT balance fetch error", e); }
 
-        // Fetch claimable yield from the YT contract
+        // Fetch claimable yield from the YT contract (actual claiming goes through
+        // tokenizer.claim_yield, but the accrued amount is read off the YT contract).
         let claimableYieldNative = 0;
         try {
-          const claimableTx = await ytClient.claimable_yield({ user: address });
+          const claimableTx = await ytClient.accrued_yield({ holder: address });
           if (claimableTx.result !== undefined) {
              const parsedClaimable = Number(unwrapContractResult(claimableTx.result));
              if (!isNaN(parsedClaimable) && parsedClaimable > 0) {
@@ -272,7 +270,7 @@ export class PortfolioService {
              }
           }
         } catch (e) {
-          console.warn("YT claimable yield fetch error", e);
+          console.warn("YT accrued yield fetch error", e);
         }
 
         // Intent-flow position (PT/YT balances), pushed as its own 'vault' entry. This is
@@ -298,7 +296,7 @@ export class PortfolioService {
              claimableYield: (!isNaN(claimableYieldUsd) && isFinite(claimableYieldUsd)) ? claimableYieldUsd : 0
            });
         }
-        // Untokenized raw LP is a separate position (see note above) and is additive with
+        // Untokenized raw SY is a separate position (see note above) and is additive with
         // any PT/YT position pushed above, not mutually exclusive with it.
         if (realVaultBalanceFloat > 0) {
            totalValueUsd += realVaultValueUsd;
@@ -385,7 +383,7 @@ export class PortfolioService {
       }
 
       // Calculate invested amount based on principal balance, not current market value.
-      // There can be up to two assetType: 'vault' entries per user: untokenized LP and a
+      // There can be up to two assetType: 'vault' entries per user: untokenized SY and a
       // PT/YT-derived position (see note above these are genuinely separate positions),
       // so both are summed here rather than picking one.
       const totalInvestedUsd = assets.filter(a => a.assetType === 'vault').reduce((sum, a) => (!isNaN(a.balance) && !isNaN(a.priceUsd)) ? sum + (a.balance * a.priceUsd) : sum, 0);

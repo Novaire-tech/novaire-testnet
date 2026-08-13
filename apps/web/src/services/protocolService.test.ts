@@ -12,24 +12,29 @@ vi.mock('../../../../packages/bindings/yt_token/src/index', () => ({
     return { total_supply: () => Promise.resolve({ result: { unwrap: () => 1000000000n } }) };
   },
 }));
-vi.mock('../../../../packages/bindings/vault/src/index', () => ({
+vi.mock('../../../../packages/bindings/sy_wrapper/src/index', () => ({
   Client: function () {
-    return { total_vault_shares: () => Promise.resolve({ result: { unwrap: () => 5000000000n } }) };
+    return {
+      total_supply: () => Promise.resolve({ result: { unwrap: () => 5000000000n } }),
+      exchange_rate: () => Promise.resolve({ result: { unwrap: () => 1000000000000000000n } }),
+    };
   },
 }));
 
-let twapImpl: () => Promise<{ result: { unwrap: () => bigint } }> = () => Promise.resolve({ result: { unwrap: () => 900000000n } });
-vi.mock('../../../../packages/bindings/marketplace/src/index', () => ({
+let twapImpl: () => Promise<{ result: { unwrap: () => bigint } }> = () => Promise.resolve({ result: { unwrap: () => 9000000000000000n } });
+vi.mock('../../../../packages/bindings/amm/src/index', () => ({
   Client: function () {
     return {
-      get_reserves: () => Promise.resolve({ result: { unwrap: () => [1000000000n, 2000000000n] } }),
-      get_pt_price: () => Promise.resolve({ result: { unwrap: () => 900000000n } }),
-      get_twap_rate_checked: () => twapImpl(),
+      reserve_pt: () => Promise.resolve({ result: { unwrap: () => 1000000000n } }),
+      reserve_sy: () => Promise.resolve({ result: { unwrap: () => 2000000000n } }),
+      spot_apy: () => Promise.resolve({ result: { unwrap: () => 9000000000000000n } }),
+      twap_apy: () => twapImpl(),
+      quote_pt_for_sy: () => Promise.resolve({ result: { unwrap: () => 9000000n } }),
     };
   },
 }));
 vi.mock('../config/contracts', () => ({
-  CONTRACTS: { PT_TOKEN: 'a', YT_TOKEN: 'b', VAULT: 'c', MARKETPLACE: 'd' },
+  CONTRACTS: { PT_TOKEN: 'a', YT_TOKEN: 'b', SY_WRAPPER: 'c', AMM: 'd', TOKENIZER: 'e' },
   RPC_URL: 'http://localhost',
   NETWORK_PASSPHRASE: 'test',
 }));
@@ -52,7 +57,7 @@ import { ProtocolService } from './protocolService';
 describe('ProtocolService.getProtocolState — price oracle safety', () => {
   beforeEach(() => {
     oracleImpl = () => Promise.resolve({ priceUsd: 0.42 });
-    twapImpl = () => Promise.resolve({ result: { unwrap: () => 900000000n } });
+    twapImpl = () => Promise.resolve({ result: { unwrap: () => 9000000000000000n } });
   });
 
   it('never fabricates a price when the oracle throws', async () => {
@@ -86,10 +91,10 @@ describe('ProtocolService.getProtocolState — price oracle safety', () => {
 describe('ProtocolService.getProtocolState — TWAP freshness safety', () => {
   beforeEach(() => {
     oracleImpl = () => Promise.resolve({ priceUsd: 0.42 });
-    twapImpl = () => Promise.resolve({ result: { unwrap: () => 900000000n } });
+    twapImpl = () => Promise.resolve({ result: { unwrap: () => 9000000000000000n } });
   });
 
-  it('never derives an implied APY when get_twap_rate_checked reverts (stale TWAP)', async () => {
+  it('never derives an implied APY when amm.twap_apy() reverts (stale TWAP)', async () => {
     twapImpl = () => Promise.reject(new Error('HostError: Error(Contract, #InvariantViolated)'));
     const state = await ProtocolService.getProtocolState();
     expect(state.twapStale).toBe(true);

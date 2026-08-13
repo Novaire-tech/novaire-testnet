@@ -18,7 +18,7 @@ export async function fetchSyExchangeRate(): Promise<number> {
       contractId: CONTRACTS.SY_WRAPPER,
     });
 
-    const res = await client.get_exchange_rate();
+    const res = await client.exchange_rate();
     const rate = Number(res.result);
     return isNaN(rate) || rate <= 0 ? 0 : rate;
   } catch (e) {

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { rpc } from '@stellar/stellar-sdk';
-import deployments from '../src/config/deployments.testnet.json';
+import { assertNotMatured } from './lib/chain';
 import { openDepositModal } from './helpers/vault-page';
 import { createFundedTestnetAccount } from './fixtures/testnet-account';
 import { launchWithFreighter } from './fixtures/freighter-extension';
@@ -26,13 +26,13 @@ test.describe('Deposit flow (real Freighter wallet, live testnet)', () => {
     testInfo.setTimeout(180_000);
 
     const server = new rpc.Server(RPC_URL, { allowHttp: true });
-    const latestLedger = await server.getLatestLedger();
-    const maturityLedger = Number(deployments.maturity_ledger);
-    test.skip(
-      latestLedger.sequence >= maturityLedger,
-      `testnet fixture matured (ledger ${latestLedger.sequence} >= maturity_ledger ${maturityLedger}) ` +
-        '— redeploy contracts with a future maturity before running this test.',
-    );
+    let matured = false;
+    try {
+      await assertNotMatured(server);
+    } catch {
+      matured = true;
+    }
+    test.skip(matured, 'testnet fixture matured — redeploy contracts with a future maturity before running this test.');
 
     const account = await createFundedTestnetAccount();
 

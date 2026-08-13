@@ -49,8 +49,8 @@ export class ProtocolService {
       // Dynamic imports to match portfolioService architecture
       const { Client: PtClient } = await import('../../../../packages/bindings/pt_token/src/index');
       const { Client: YtClient } = await import('../../../../packages/bindings/yt_token/src/index');
-      const { Client: VaultClient } = await import('../../../../packages/bindings/vault/src/index');
-      const { Client: MarketplaceClient } = await import('../../../../packages/bindings/marketplace/src/index');
+      const { Client: SyWrapperClient } = await import('../../../../packages/bindings/sy_wrapper/src/index');
+      const { Client: AmmClient } = await import('../../../../packages/bindings/amm/src/index');
       const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
 
       const clientOptions = {
@@ -60,83 +60,88 @@ export class ProtocolService {
 
       const ptClient = new PtClient({ ...clientOptions, contractId: CONTRACTS.PT_TOKEN });
       const ytClient = new YtClient({ ...clientOptions, contractId: CONTRACTS.YT_TOKEN });
-      const vaultClient = new VaultClient({ ...clientOptions, contractId: CONTRACTS.VAULT });
-      const marketClient = new MarketplaceClient({ ...clientOptions, contractId: CONTRACTS.MARKETPLACE });
+      const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: CONTRACTS.SY_WRAPPER });
+      const ammClient = new AmmClient({ ...clientOptions, contractId: CONTRACTS.AMM });
 
       // Fetch all state concurrently
       const [
         ptSupplyRes,
         ytSupplyRes,
-        vaultSharesRes,
-        reservesRes,
-        ptPriceRes,
-        twapRes
+        syTotalSupplyRes,
+        reservePtRes,
+        reserveSyRes,
+        spotApyRes,
+        twapApyRes
       ] = await Promise.allSettled([
         ptClient.total_supply(),
         ytClient.total_supply(),
-        vaultClient.total_vault_shares(),
-        marketClient.get_reserves(),
-        marketClient.get_pt_price(),
-        marketClient.get_twap_rate_checked()
+        syWrapperClient.total_supply(),
+        ammClient.reserve_pt(),
+        ammClient.reserve_sy(),
+        ammClient.spot_apy(),
+        ammClient.twap_apy()
       ]);
 
       // Parse Results
       const ptSupplyXlm = ptSupplyRes.status === 'fulfilled' ? Number(this.unwrapResult(ptSupplyRes.value.result) || 0) / 1e7 : 0;
       const ytSupplyXlm = ytSupplyRes.status === 'fulfilled' ? Number(this.unwrapResult(ytSupplyRes.value.result) || 0) / 1e7 : 0;
-      const totalDepositsXlm = vaultSharesRes.status === 'fulfilled' ? Number(this.unwrapResult(vaultSharesRes.value.result) || 0) / 1e7 : 0;
+      // SY shares ARE the deposit-tracking balance now — total SY supply stands in for the old vault total.
+      const totalDepositsXlm = syTotalSupplyRes.status === 'fulfilled' ? Number(this.unwrapResult(syTotalSupplyRes.value.result) || 0) / 1e7 : 0;
 
       let dexLiquidityXlm = 0;
-      if (reservesRes.status === 'fulfilled') {
-        const reserves = this.unwrapResult(reservesRes.value.result);
-        if (Array.isArray(reserves) && reserves.length >= 2) {
-          // reserves[1] is underlying_reserve. Assuming 50/50 AMM, total liquidity = underlying * 2
-          const underlyingReserve = Number(reserves[1]) / 1e7;
-          dexLiquidityXlm = underlyingReserve * 2;
-        }
+      if (reservePtRes.status === 'fulfilled' && reserveSyRes.status === 'fulfilled') {
+        const reservePt = Number(this.unwrapResult(reservePtRes.value.result) || 0) / 1e7;
+        const reserveSy = Number(this.unwrapResult(reserveSyRes.value.result) || 0) / 1e7;
+        dexLiquidityXlm = reservePt + reserveSy;
       }
 
       let ptPriceUnderlying = 1.0;
       let impliedYieldApy = 0;
       let executableApy = 0;
 
-      const rawPtPrice = ptPriceRes.status === 'fulfilled' ? Number(this.unwrapResult(ptPriceRes.value.result)) : 0;
+      // amm.spot_apy() reports the executable APY directly (WAD-scaled), replacing the
+      // old price-to-APY derivation via calculateMarketImpliedApy off a raw PT price.
+      const rawSpotApy = spotApyRes.status === 'fulfilled' ? Number(this.unwrapResult(spotApyRes.value.result)) : 0;
 
-      // get_twap_rate_checked reverts (InvariantViolated) when the on-chain TWAP
-      // checkpoint is older than MAX_TWAP_AGE_LEDGERS. Treat that — and any failure
-      // to reach the contract — as "stale", never fabricate an implied APY from it.
-      let rawTwap = 0;
+      // amm.twap_apy() has no documented "stale/reverts" behavior like the old
+      // get_twap_rate_checked; treat any failure to reach the contract as stale and
+      // never fabricate an implied APY from it.
+      let rawTwapApy = 0;
       let twapStale = true;
-      if (twapRes.status === 'fulfilled') {
+      if (twapApyRes.status === 'fulfilled') {
         try {
-          rawTwap = Number(this.unwrapResult(twapRes.value.result));
+          rawTwapApy = Number(this.unwrapResult(twapApyRes.value.result));
           twapStale = false;
         } catch {
-          console.warn('TWAP is stale or unavailable (get_twap_rate_checked reverted)');
+          console.warn('TWAP APY is stale or unavailable (amm.twap_apy failed)');
         }
       }
 
-      if (!isNaN(rawPtPrice) && rawPtPrice > 0) {
-        ptPriceUnderlying = rawPtPrice / 1e9;
+      if (!isNaN(rawSpotApy) && rawSpotApy > 0) {
+        executableApy = rawSpotApy / 1e16; // WAD (1e18) rate -> percent
+      }
+      if (!twapStale && !isNaN(rawTwapApy) && rawTwapApy > 0) {
+        impliedYieldApy = rawTwapApy / 1e16;
+      } else {
+        impliedYieldApy = 0;
+      }
 
-        const { YieldService } = await import('./yieldService');
-        const [maturityTimestampMs, ptFaceValueInUnderlying] = await Promise.all([
-          YieldService.getActiveMaturityTimestampMs(),
-          YieldService.getEpochStartIndex()
+      // Spot PT price in underlying terms: quote 1 PT -> SY via the AMM, then convert
+      // SY -> underlying via the SY Wrapper's exchange rate.
+      try {
+        const [ptQuoteRes, exchangeRateRes] = await Promise.allSettled([
+          ammClient.quote_pt_for_sy({ pt_in: BigInt(1e7) }),
+          syWrapperClient.exchange_rate()
         ]);
-
-        const { calculateMarketImpliedApy } = await import('../utils/apy');
-
-        // Executable APY (Spot Price) — priced off live curve state, unaffected by TWAP freshness.
-        executableApy = calculateMarketImpliedApy(ptPriceUnderlying, ptFaceValueInUnderlying, maturityTimestampMs);
-
-        // Primary Implied Yield APY: only derived from TWAP when the checkpoint is fresh.
-        // A stale TWAP must never be used to compute a displayed APY.
-        if (!twapStale && !isNaN(rawTwap) && rawTwap > 0) {
-          const twapUnderlying = rawTwap / 1e9;
-          impliedYieldApy = calculateMarketImpliedApy(twapUnderlying, ptFaceValueInUnderlying, maturityTimestampMs);
-        } else {
-          impliedYieldApy = 0;
+        if (ptQuoteRes.status === 'fulfilled' && exchangeRateRes.status === 'fulfilled') {
+          const syOut = Number(this.unwrapResult(ptQuoteRes.value.result) || 0) / 1e7;
+          const rate = Number(this.unwrapResult(exchangeRateRes.value.result) || 0) / 1e18; // WAD-scaled, underlying per SY share
+          if (!isNaN(syOut) && !isNaN(rate) && rate > 0) {
+            ptPriceUnderlying = syOut * rate;
+          }
         }
+      } catch {
+        console.warn('Could not derive PT spot price from AMM/SY Wrapper');
       }
 
       // XLM Price for TVL calculation. Never fabricate a price: if the oracle is
@@ -153,7 +158,7 @@ export class ProtocolService {
         console.warn('Could not fetch XLM price: oracle unavailable');
       }
 
-      // TVL = Total Deposits (Vault) + DEX Underlying Reserves
+      // TVL = Total Deposits (SY Wrapper) + DEX Underlying Reserves
       const tvlXlm = totalDepositsXlm + (dexLiquidityXlm / 2);
       const tvlUsd = priceUnavailable ? 0 : tvlXlm * xlmPriceUsd;
 

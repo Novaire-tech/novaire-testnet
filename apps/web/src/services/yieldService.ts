@@ -21,99 +21,30 @@ export class YieldService {
 
     try {
       const { Client: TokenizerClient } = await import('../../../../packages/bindings/tokenizer/src/index');
-      const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE, NETWORK } = await import('../config/contracts');
-      
-      const IS_DEV = process.env.NODE_ENV !== 'production';
-      const isMainnet = NETWORK === 'MAINNET';
-      const HORIZON_URL = isMainnet ? 'https://horizon.stellar.org/' : 'https://horizon-testnet.stellar.org/';
+      const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
 
-      const clientOptions = {
+      const tokenizerClient = new TokenizerClient({
         rpcUrl: RPC_URL,
         networkPassphrase: NETWORK_PASSPHRASE,
-      };
+        contractId: CONTRACTS.TOKENIZER,
+      });
 
-      const tokenizerClient = new TokenizerClient({ ...clientOptions, contractId: CONTRACTS.TOKENIZER });
-      
-      const metaTx = await tokenizerClient.metadata();
-      const metadata = this.unwrapResult(metaTx?.result);
-      
-      if (metadata && typeof metadata === 'object') {
-        const maturityLedger = Number((metadata as Record<string, unknown>).maturity_ledger || 0);
-        
-        if (maturityLedger > 0) {
-          try {
-            const res = await fetch(HORIZON_URL);
-            if (res.ok) {
-              const horizonData = await res.json();
-              const currentLedger = Number(horizonData.history_latest_ledger || horizonData.core_latest_ledger);
-              if (!isNaN(currentLedger) && currentLedger > 0) {
-                const ledgersRemaining = maturityLedger - currentLedger;
-                const secondsRemaining = ledgersRemaining * 5.5;
-                maturityMs = Date.now() + secondsRemaining * 1000;
-                if (IS_DEV) {
-                  console.log(`[Novaire Ledger Debug] 
-  Current Ledger: ${currentLedger}
-  Maturity Ledger: ${maturityLedger}
-  Remaining Ledgers: ${ledgersRemaining}
-  Calculated Seconds Remaining: ${secondsRemaining}`);
-                }
-              }
-            }
-          } catch {
-            if (IS_DEV) console.warn("Failed to fetch horizon ledger for maturity calculation, using approximation");
-          }
-        }
+      // The new tokenizer's maturity() returns a unix timestamp (seconds) directly —
+      // no more ledger-number-to-timestamp conversion via Horizon needed.
+      const maturityTx = await tokenizerClient.maturity();
+      const maturitySeconds = Number(this.unwrapResult(maturityTx?.result) || 0);
+      if (!isNaN(maturitySeconds) && maturitySeconds > 0) {
+        maturityMs = maturitySeconds * 1000;
       }
     } catch (e) {
-      console.warn("Could not fetch tokenizer metadata", e);
+      console.warn("Could not fetch tokenizer maturity", e);
     }
     return maturityMs;
   }
 
-  static async getActiveMaturityLedger(): Promise<number> {
-    try {
-      const { Client: TokenizerClient } = await import('../../../../packages/bindings/tokenizer/src/index');
-      const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
-
-      const tokenizerClient = new TokenizerClient({ 
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        contractId: CONTRACTS.TOKENIZER 
-      });
-      
-      const metaTx = await tokenizerClient.metadata();
-      const metadata = this.unwrapResult(metaTx?.result);
-      
-      if (metadata && typeof metadata === 'object') {
-        return Number((metadata as Record<string, unknown>).maturity_ledger || 0);
-      }
-    } catch (e) {
-      console.warn("Could not fetch tokenizer maturity_ledger", e);
-    }
-    return 0;
-  }
-
   static async getEpochStartIndex(): Promise<number> {
-    try {
-      const { Client: TokenizerClient } = await import('../../../../packages/bindings/tokenizer/src/index');
-      const { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } = await import('../config/contracts');
-
-      const tokenizerClient = new TokenizerClient({ 
-        rpcUrl: RPC_URL,
-        networkPassphrase: NETWORK_PASSPHRASE,
-        contractId: CONTRACTS.TOKENIZER 
-      });
-      
-      const metaTx = await tokenizerClient.metadata();
-      const metadata = this.unwrapResult(metaTx?.result);
-      
-      if (metadata && typeof metadata === 'object') {
-        const rawIndex = Number((metadata as Record<string, unknown>).epoch_start_index || 1000000000);
-        return rawIndex / 1e9;
-      }
-    } catch (e) {
-      console.warn("Could not fetch tokenizer epoch_start_index", e);
-    }
+    // Tokenizer.split() produces equal-face PT+YT from SY 1:1 — there is no separate
+    // "epoch start index" concept in the new contracts, so face value is always par (1.0).
     return 1.0;
   }
 

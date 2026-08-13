@@ -5,35 +5,27 @@ export const NETWORK = (process.env.NEXT_PUBLIC_NETWORK || 'TESTNET').toUpperCas
 const isMainnet = NETWORK === 'MAINNET';
 
 interface Deployments {
-  factory?: string;
-  vault?: string;
+  underlying_token?: string;
+  sy_wrapper?: string;
   pt_token?: string;
   yt_token?: string;
-  sy_wrapper?: string;
-  marketplace?: string;
-  intent_engine?: string;
-  rollover?: string;
   tokenizer?: string;
-  underlying_token?: string;
+  amm?: string;
 }
 
 const deployments: Deployments = isMainnet ? mainnetDeployments : testnetDeployments;
 
 export const CONTRACTS = {
-  FACTORY: deployments.factory || '',
-  VAULT: deployments.vault || '',
   PT_TOKEN: deployments.pt_token || '',
   YT_TOKEN: deployments.yt_token || '',
   SY_WRAPPER: deployments.sy_wrapper || '',
-  MARKETPLACE: deployments.marketplace || '',
-  INTENT_ENGINE: deployments.intent_engine || '',
-  ROLLOVER: deployments.rollover || '',
   TOKENIZER: deployments.tokenizer || '',
+  AMM: deployments.amm || '',
   MOCK_USDC: deployments.underlying_token || '',
 };
 
-export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL || 
+export const RPC_URL = process.env.NEXT_PUBLIC_RPC_URL ||
   (isMainnet ? 'https://mainnet.sorobanrpc.com' : 'https://soroban-testnet.stellar.org');
 
-export const NETWORK_PASSPHRASE = process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE || 
+export const NETWORK_PASSPHRASE = process.env.NEXT_PUBLIC_NETWORK_PASSPHRASE ||
   (isMainnet ? 'Public Global Stellar Network ; September 2015' : 'Test SDF Network ; September 2015');
