@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const server = new rpc.Server(RPC_URL);
-    const syncState = HistoryStore.getSyncState();
+    const syncState = HistoryStore.getSyncState(NETWORK, CONTRACTS.SY_WRAPPER);
 
     let startLedger = syncState.lastLedger;
 
@@ -104,7 +104,7 @@ export async function GET() {
         console.warn('[/api/history/sync] Could not fetch protocol state, skipping snapshot:', stateErr);
       }
 
-      HistoryStore.upsertSyncState(currentLedger);
+      HistoryStore.upsertSyncState(NETWORK, CONTRACTS.SY_WRAPPER, currentLedger);
     }
 
     return NextResponse.json({ success: true, syncedTo: currentLedger });

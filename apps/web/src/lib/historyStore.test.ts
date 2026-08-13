@@ -78,3 +78,23 @@ describe('HistoryStore scoping and validation', () => {
     expect(HistoryStore.getHistory('TESTNET', 'SY_A')).toHaveLength(2);
   });
 });
+
+describe('HistoryStore sync-state scoping', () => {
+  it('defaults an unseen (network, syWrapper) scope to ledger 0', () => {
+    const state = HistoryStore.getSyncState('TESTNET', 'SY_A');
+    expect(state.lastLedger).toBe(0);
+  });
+
+  it('never mixes sync cursors across networks', () => {
+    HistoryStore.upsertSyncState('TESTNET', 'SY_A', 100);
+    HistoryStore.upsertSyncState('MAINNET', 'SY_A', 500);
+    expect(HistoryStore.getSyncState('TESTNET', 'SY_A').lastLedger).toBe(100);
+    expect(HistoryStore.getSyncState('MAINNET', 'SY_A').lastLedger).toBe(500);
+  });
+
+  it('gives a redeployed SY wrapper its own cursor instead of inheriting the old epoch', () => {
+    HistoryStore.upsertSyncState('TESTNET', 'SY_OLD_EPOCH', 9000);
+    expect(HistoryStore.getSyncState('TESTNET', 'SY_NEW_EPOCH').lastLedger).toBe(0);
+    expect(HistoryStore.getSyncState('TESTNET', 'SY_OLD_EPOCH').lastLedger).toBe(9000);
+  });
+});

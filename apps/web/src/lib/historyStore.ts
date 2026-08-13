@@ -50,7 +50,12 @@ export interface SyncStateEntry {
 
 interface StoreData {
   history: ProtocolHistoryEntry[];
-  syncState: SyncStateEntry;
+  /** Keyed by `${network}:${syWrapper}` — a redeployed SY wrapper must resync from scratch. */
+  syncState: Record<string, SyncStateEntry>;
+}
+
+function syncStateKey(network: string, syWrapper: string): string {
+  return `${network}:${syWrapper}`;
 }
 
 // Store alongside the SQLite db file — at project root
@@ -90,19 +95,21 @@ function isDuplicate(prev: ProtocolHistoryEntry, next: Omit<ProtocolHistoryEntry
 }
 
 function readStore(): StoreData {
-  const defaults: StoreData = {
-    history: [],
-    syncState: { id: 'singleton', lastLedger: 0, updatedAt: new Date().toISOString() },
-  };
+  const defaults: StoreData = { history: [], syncState: {} };
   try {
     if (fs.existsSync(STORE_PATH)) {
       const raw = fs.readFileSync(STORE_PATH, 'utf-8');
       const parsed = JSON.parse(raw);
+      // Migrate the old singleton syncState shape ({id, lastLedger, updatedAt}) to
+      // an empty scoped map — its unscoped cursor can't be attributed to any one
+      // (network, syWrapper) epoch, so it must resync rather than be guessed at.
+      const syncState =
+        parsed.syncState && typeof parsed.syncState === 'object' && !('lastLedger' in parsed.syncState)
+          ? (parsed.syncState as Record<string, SyncStateEntry>)
+          : defaults.syncState;
       return {
         history: Array.isArray(parsed.history) ? parsed.history : defaults.history,
-        syncState: parsed.syncState && typeof parsed.syncState === 'object'
-          ? parsed.syncState
-          : defaults.syncState,
+        syncState,
       };
     }
   } catch {
@@ -180,18 +187,20 @@ export const HistoryStore = {
     return newEntry;
   },
 
-  getSyncState(): SyncStateEntry {
-    return readStore().syncState;
+  /** Scoped by (network, syWrapper) — a redeployed wrapper starts its own cursor from 0. */
+  getSyncState(network: string, syWrapper: string): SyncStateEntry {
+    const key = syncStateKey(network, syWrapper);
+    return (
+      readStore().syncState[key] ?? { id: key, lastLedger: 0, updatedAt: new Date().toISOString() }
+    );
   },
 
-  upsertSyncState(lastLedger: number): SyncStateEntry {
+  upsertSyncState(network: string, syWrapper: string, lastLedger: number): SyncStateEntry {
     const data = readStore();
-    data.syncState = {
-      id: 'singleton',
-      lastLedger,
-      updatedAt: new Date().toISOString(),
-    };
+    const key = syncStateKey(network, syWrapper);
+    const entry: SyncStateEntry = { id: key, lastLedger, updatedAt: new Date().toISOString() };
+    data.syncState[key] = entry;
     writeStore(data);
-    return data.syncState;
+    return entry;
   },
 };
