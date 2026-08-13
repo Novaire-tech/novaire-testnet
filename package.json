@@ -11,8 +11,9 @@
     "build": "npm run build -w web",
     "start": "npm run start -w web",
     "lint": "npm run lint -w web",
-    "deploy": "tsx --env-file=.env scripts/deploy.ts",
-    "deploy:epoch": "tsx --env-file=.env scripts/deploy.ts",
+    "contracts:test": "cd contracts && cargo test --workspace",
+    "contracts:build": "cd contracts && bash scripts/build-optimized-wasm.sh",
+    "deploy": "cd contracts && bash scripts/deploy-testnet-resilient.sh",
     "bootstrap": "tsx --env-file=.env scripts/bootstrap_liquidity.ts",
     "verify:testnet": "tsx scripts/verify-testnet.ts",
     "test:scripts": "cd scripts && vitest run --config vitest.config.ts"
