@@ -95,8 +95,18 @@ export function getServer(): rpc.Server {
  * number — deployments.testnet.json no longer carries a maturity_ledger field, so this
  * reads maturity live off the Tokenizer contract instead.
  */
+// rpc.Server.getAccountEntry requires the source account to actually exist
+// on-chain, even for a pure read-only simulation. A freshly random keypair
+// is never funded, so it always threw "Account not found" here — which the
+// caller's broad catch then misreported as "matured", skipping the whole
+// suite. Use the deployer's address instead: it's the same real, funded,
+// public (not secret) account published in deployments/testnet.toml and
+// wired into the frontend as NEXT_PUBLIC_SIMULATION_SOURCE_ADDRESS for this
+// exact purpose.
+const READ_ONLY_SIMULATION_ADDRESS = 'GAOFWNGYDQ5FEL7SDCGA7VHP2EP6RIMDWR3HN3FYQTES3LSVBZI4DK6D';
+
 export async function assertNotMatured(_server: rpc.Server) {
-  const readOnlyWallet: Wallet = { keypair: Keypair.random(), publicKey: Keypair.random().publicKey() };
+  const readOnlyWallet: Wallet = { keypair: Keypair.random(), publicKey: READ_ONLY_SIMULATION_ADDRESS };
   const client = clientFor(TokenizerClient, CONTRACTS.TOKENIZER, readOnlyWallet);
   const tx = await client.maturity();
   const raw = tx.result as unknown;
