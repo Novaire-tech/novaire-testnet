@@ -3,7 +3,8 @@
 #![cfg_attr(target_family = "wasm", no_std)]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, String,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, Address,
+    Env, String,
 };
 
 /// Display decimals for PT, matching SY and the 7-decimal underlying.
@@ -55,6 +56,35 @@ pub enum Error {
     InsufficientAllowance = 7,
     MathOverflow = 8,
     InvalidExpiration = 9,
+}
+
+/// Emitted when PT is minted to a holder.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Mint {
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+}
+
+/// Emitted when PT is burned from a holder.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Burn {
+    #[topic]
+    pub from: Address,
+    pub amount: i128,
+}
+
+/// Emitted on any PT balance transfer.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Transfer {
+    #[topic]
+    pub from: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
 }
 
 #[contract]
@@ -126,6 +156,8 @@ impl PtToken {
             &DataKey::TotalSupply,
             &Self::add_or_panic(&env, supply, amount),
         );
+
+        Mint { to, amount }.publish(&env);
     }
 
     // --- SEP-41 token interface -------------------------------------------
@@ -177,6 +209,7 @@ impl PtToken {
         Self::require_amount_or_panic(&env, amount);
         Self::bump_instance_ttl(&env);
         Self::move_balance(&env, &from, &to, amount);
+        Transfer { from, to, amount }.publish(&env);
     }
 
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
@@ -185,6 +218,7 @@ impl PtToken {
         Self::bump_instance_ttl(&env);
         Self::spend_allowance(&env, &from, &spender, amount);
         Self::move_balance(&env, &from, &to, amount);
+        Transfer { from, to, amount }.publish(&env);
     }
 
     /// Burns `amount` PT from `from`. The tokenizer burns PT on recombine and
@@ -194,6 +228,7 @@ impl PtToken {
         Self::require_amount_or_panic(&env, amount);
         Self::bump_instance_ttl(&env);
         Self::burn_balance(&env, &from, amount);
+        Burn { from, amount }.publish(&env);
     }
 
     pub fn burn_from(env: Env, spender: Address, from: Address, amount: i128) {
@@ -202,6 +237,7 @@ impl PtToken {
         Self::bump_instance_ttl(&env);
         Self::spend_allowance(&env, &from, &spender, amount);
         Self::burn_balance(&env, &from, amount);
+        Burn { from, amount }.publish(&env);
     }
 
     // --- internal helpers --------------------------------------------------

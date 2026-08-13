@@ -7,8 +7,8 @@ use core::cmp::min;
 use sidereal_shared_types::Market;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    contract, contracterror, contractimpl, contracttype, panic_with_error, token, vec, Address,
-    Env, IntoVal, MuxedAddress, Symbol, Val, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token,
+    vec, Address, Env, IntoVal, MuxedAddress, Symbol, Val, Vec,
 };
 
 const WAD: i128 = 1_000_000_000_000_000_000;
@@ -88,6 +88,40 @@ pub enum Error {
     TradeNotFound = 17,
     InputOutOfBounds = 18,
     InvalidSyRate = 19,
+}
+
+/// Emitted on any AMM swap (PT<->SY direct, SY<->YT via flash route).
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Swap {
+    #[topic]
+    pub trader: Address,
+    #[topic]
+    pub route: Symbol,
+    pub amount_in: i128,
+    pub amount_out: i128,
+}
+
+/// Emitted when liquidity is added to the pool.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AddLiquidity {
+    #[topic]
+    pub provider: Address,
+    pub pt_in: i128,
+    pub sy_in: i128,
+    pub lp_out: i128,
+}
+
+/// Emitted when liquidity is removed from the pool.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RemoveLiquidity {
+    #[topic]
+    pub provider: Address,
+    pub lp_in: i128,
+    pub pt_out: i128,
+    pub sy_out: i128,
 }
 
 struct Precompute {
@@ -304,19 +338,51 @@ impl AmmMarket {
     }
 
     pub fn swap_pt_for_sy(env: Env, from: Address, pt_in: i128, min_sy_out: i128) -> i128 {
-        <Self as Market>::swap_pt_for_sy(&env, from, pt_in, min_sy_out)
+        let sy_out = <Self as Market>::swap_pt_for_sy(&env, from.clone(), pt_in, min_sy_out);
+        Swap {
+            trader: from,
+            route: Symbol::new(&env, "pt_for_sy"),
+            amount_in: pt_in,
+            amount_out: sy_out,
+        }
+        .publish(&env);
+        sy_out
     }
 
     pub fn swap_sy_for_pt(env: Env, from: Address, sy_in: i128, min_pt_out: i128) -> i128 {
-        <Self as Market>::swap_sy_for_pt(&env, from, sy_in, min_pt_out)
+        let pt_out = <Self as Market>::swap_sy_for_pt(&env, from.clone(), sy_in, min_pt_out);
+        Swap {
+            trader: from,
+            route: Symbol::new(&env, "sy_for_pt"),
+            amount_in: sy_in,
+            amount_out: pt_out,
+        }
+        .publish(&env);
+        pt_out
     }
 
     pub fn swap_sy_for_yt(env: Env, from: Address, sy_in: i128, min_yt_out: i128) -> i128 {
-        <Self as Market>::swap_sy_for_yt(&env, from, sy_in, min_yt_out)
+        let yt_out = <Self as Market>::swap_sy_for_yt(&env, from.clone(), sy_in, min_yt_out);
+        Swap {
+            trader: from,
+            route: Symbol::new(&env, "sy_for_yt"),
+            amount_in: sy_in,
+            amount_out: yt_out,
+        }
+        .publish(&env);
+        yt_out
     }
 
     pub fn swap_yt_for_sy(env: Env, from: Address, yt_in: i128, min_sy_out: i128) -> i128 {
-        <Self as Market>::swap_yt_for_sy(&env, from, yt_in, min_sy_out)
+        let sy_out = <Self as Market>::swap_yt_for_sy(&env, from.clone(), yt_in, min_sy_out);
+        Swap {
+            trader: from,
+            route: Symbol::new(&env, "yt_for_sy"),
+            amount_in: yt_in,
+            amount_out: sy_out,
+        }
+        .publish(&env);
+        sy_out
     }
 
     pub fn add_liquidity(
@@ -326,7 +392,7 @@ impl AmmMarket {
         sy_in: i128,
         min_lp_out: i128,
     ) -> i128 {
-        let lp_out = <Self as Market>::add_liquidity(&env, from, pt_in, sy_in);
+        let lp_out = <Self as Market>::add_liquidity(&env, from.clone(), pt_in, sy_in);
         // Slippage bound enforced here, after the shared-trait implementation,
         // because the Market trait signature is frozen (contracts/shared/types).
         // A panic reverts the entire invocation, transfers included, so this is
@@ -334,6 +400,13 @@ impl AmmMarket {
         if lp_out < min_lp_out {
             panic_with_error!(&env, Error::SlippageExceeded);
         }
+        AddLiquidity {
+            provider: from,
+            pt_in,
+            sy_in,
+            lp_out,
+        }
+        .publish(&env);
         lp_out
     }
 
@@ -344,12 +417,19 @@ impl AmmMarket {
         min_pt_out: i128,
         min_sy_out: i128,
     ) -> (i128, i128) {
-        let (pt_out, sy_out) = <Self as Market>::remove_liquidity(&env, from, lp_in);
+        let (pt_out, sy_out) = <Self as Market>::remove_liquidity(&env, from.clone(), lp_in);
         // Same pattern as add_liquidity: bound checked after the frozen-trait
         // call; the panic reverts everything.
         if pt_out < min_pt_out || sy_out < min_sy_out {
             panic_with_error!(&env, Error::SlippageExceeded);
         }
+        RemoveLiquidity {
+            provider: from,
+            lp_in,
+            pt_out,
+            sy_out,
+        }
+        .publish(&env);
         (pt_out, sy_out)
     }
 

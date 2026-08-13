@@ -3,8 +3,8 @@
 #![cfg_attr(target_family = "wasm", no_std)]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, panic_with_error, vec, Address, Env,
-    String, Symbol, Val,
+    contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, vec,
+    Address, Env, String, Symbol, Val,
 };
 
 const WAD: i128 = 1_000_000_000_000_000_000;
@@ -69,6 +69,35 @@ pub enum Error {
     /// `settle` reported as banked), surfaced as an error rather than a silent
     /// underflow.
     ConsumeExceedsBanked = 11,
+}
+
+/// Emitted when YT is minted to a holder.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Mint {
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+}
+
+/// Emitted when YT is burned from a holder.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Burn {
+    #[topic]
+    pub from: Address,
+    pub amount: i128,
+}
+
+/// Emitted on any YT balance transfer.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Transfer {
+    #[topic]
+    pub from: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
 }
 
 #[contract]
@@ -221,6 +250,8 @@ impl YtToken {
             &DataKey::TotalSupply,
             &Self::add_or_panic(&env, supply, amount),
         );
+
+        Mint { to, amount }.publish(&env);
     }
 
     // --- SEP-41 token interface -------------------------------------------
@@ -276,6 +307,7 @@ impl YtToken {
         Self::settle_into_ledger(&env, &from, rate);
         Self::settle_into_ledger(&env, &to, rate);
         Self::move_balance(&env, &from, &to, amount);
+        Transfer { from, to, amount }.publish(&env);
     }
 
     pub fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
@@ -288,6 +320,7 @@ impl YtToken {
         Self::settle_into_ledger(&env, &from, rate);
         Self::settle_into_ledger(&env, &to, rate);
         Self::move_balance(&env, &from, &to, amount);
+        Transfer { from, to, amount }.publish(&env);
     }
 
     /// Burns `amount` YT from `from`, on a holder's own direct call. The
@@ -308,6 +341,7 @@ impl YtToken {
         let rate = Self::committing_rate(&env, &config);
         Self::settle_into_ledger(&env, &from, rate);
         Self::burn_balance(&env, &from, amount);
+        Burn { from, amount }.publish(&env);
     }
 
     /// Burns `amount` YT from `from`, settling them first at the `rate`
@@ -338,6 +372,7 @@ impl YtToken {
         let rate = Self::committing_rate(&env, &config);
         Self::settle_into_ledger(&env, &from, rate);
         Self::burn_balance(&env, &from, amount);
+        Burn { from, amount }.publish(&env);
     }
 
     // --- yield engine ------------------------------------------------------

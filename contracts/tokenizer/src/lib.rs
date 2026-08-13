@@ -4,8 +4,8 @@
 
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
-    contract, contracterror, contractimpl, contracttype, token, vec, Address, Env, I256, IntoVal,
-    MuxedAddress, Symbol, Val, Vec,
+    contract, contracterror, contractevent, contractimpl, contracttype, token, vec, Address, Env,
+    I256, IntoVal, MuxedAddress, Symbol, Val, Vec,
 };
 
 const WAD: i128 = 1_000_000_000_000_000_000;
@@ -65,6 +65,46 @@ pub enum Error {
     /// Retired: no entrypoint gates on escrow coverage anymore (shortfalls are
     /// priced pro-rata at redemption instead). Kept so code 9 stays reserved.
     Insolvent = 9,
+}
+
+/// Emitted when SY is split into equal-face PT and YT.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Split {
+    #[topic]
+    pub holder: Address,
+    pub sy_amount: i128,
+    pub face: i128,
+}
+
+/// Emitted when equal PT and YT are recombined back into SY.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Recombine {
+    #[topic]
+    pub holder: Address,
+    pub pt_amount: i128,
+    pub yt_amount: i128,
+    pub sy_out: i128,
+}
+
+/// Emitted when PT is redeemed for principal after maturity.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RedeemAtMaturity {
+    #[topic]
+    pub holder: Address,
+    pub pt_amount: i128,
+    pub sy_out: i128,
+}
+
+/// Emitted when a YT holder claims their accrued yield.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ClaimYield {
+    #[topic]
+    pub holder: Address,
+    pub sy_out: i128,
 }
 
 #[contract]
@@ -235,6 +275,13 @@ impl Tokenizer {
         mint_token(&env, &config.pt_token, &from, face);
         mint_token(&env, &config.yt_token, &from, face);
 
+        Split {
+            holder: from,
+            sy_amount,
+            face,
+        }
+        .publish(&env);
+
         // No solvency gate here. Split is collateral-neutral: it adds `sy_amount`
         // SY to escrow (asset value `face` at the current rate) and mints exactly
         // `face` of PT, so escrow coverage moves by an equal amount on both sides
@@ -297,6 +344,14 @@ impl Tokenizer {
         burn_settled_yt(&env, &config.yt_token, &from, yt_amount, rate);
         push_token(&env, &config.sy_token, &from, sy_equivalent);
 
+        Recombine {
+            holder: from,
+            pt_amount,
+            yt_amount,
+            sy_out: sy_equivalent,
+        }
+        .publish(&env);
+
         Ok(sy_equivalent)
     }
 
@@ -332,6 +387,13 @@ impl Tokenizer {
 
         burn_token(&env, &config.pt_token, &from, pt_amount);
         push_token(&env, &config.sy_token, &from, sy_to_pay);
+
+        RedeemAtMaturity {
+            holder: from,
+            pt_amount,
+            sy_out: sy_to_pay,
+        }
+        .publish(&env);
 
         Ok(sy_to_pay)
     }
@@ -401,6 +463,12 @@ impl Tokenizer {
         if pay > 0 {
             consume_yt(&env, &config.yt_token, &holder, pay);
             push_token(&env, &config.sy_token, &holder, pay);
+
+            ClaimYield {
+                holder,
+                sy_out: pay,
+            }
+            .publish(&env);
         }
 
         Ok(pay)

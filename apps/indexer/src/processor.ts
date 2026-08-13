@@ -9,39 +9,45 @@ export async function processEvent(event: any, txHash: string, timestamp: Date) 
 
   try {
     switch (topic) {
-      case 'epoch_deployed':
-        // Handle epoch_deployed
+      // sy-wrapper
+      case 'deposit':
+        // Handle SY deposit (holder, underlying_amount, shares_minted)
         break;
-      case 'vault_deposit':
-        // Handle vault_deposit
+      case 'redeem':
+        // Handle SY redeem (holder, shares_burned, underlying_amount)
         break;
-      case 'vault_withdraw':
-        // Handle vault_withdraw
+      // tokenizer
+      case 'split':
+        // Handle split (holder, sy_amount, face)
         break;
-      case 'pt_mint':
-      case 'yt_mint':
+      case 'recombine':
+        // Handle recombine (holder, pt_amount, yt_amount, sy_out)
+        break;
+      case 'redeem_at_maturity':
+        // Handle PT redemption at maturity (holder, pt_amount, sy_out)
+        break;
+      case 'claim_yield':
+        // Handle YT yield claim (holder, sy_out)
+        break;
+      // pt-token / yt-token
       case 'mint':
-        // Handle mint
+        // Handle PT/YT mint (to, amount)
         break;
-      case 'pt_burn':
-      case 'yt_burn':
       case 'burn':
-        // Handle burn
+        // Handle PT/YT burn (from, amount)
         break;
       case 'transfer':
-        // Handle transfer
+        // Handle PT/YT/SY transfer (from, to, amount)
         break;
+      // amm
       case 'swap':
-        // Handle swap
+        // Handle AMM swap (trader, route, amount_in, amount_out)
         break;
-      case 'yield_claimed':
-        // Handle yield_claimed
+      case 'add_liquidity':
+        // Handle AMM liquidity add (provider, pt_in, sy_in, lp_out)
         break;
-      case 'rollover_registered':
-        // Handle rollover
-        break;
-      case 'rollover_executed':
-        // Handle rollover execution
+      case 'remove_liquidity':
+        // Handle AMM liquidity remove (provider, lp_in, pt_out, sy_out)
         break;
       default:
         console.log(`Unhandled event topic: ${topic}`);

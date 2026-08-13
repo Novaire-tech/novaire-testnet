@@ -81,6 +81,26 @@ pub struct ReserveMigrated {
     pub new_index: u32,
 }
 
+/// Emitted when underlying is deposited and SY shares are minted.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Deposit {
+    #[topic]
+    pub holder: Address,
+    pub underlying_amount: i128,
+    pub shares_minted: i128,
+}
+
+/// Emitted when SY shares are redeemed for underlying.
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Redeem {
+    #[topic]
+    pub holder: Address,
+    pub shares_burned: i128,
+    pub underlying_amount: i128,
+}
+
 #[contract]
 pub struct SyWrapper;
 
@@ -532,6 +552,13 @@ impl StandardizedYield for SyWrapper {
         Self::write_principal(env, &from, add_or_panic(env, current_principal, amount));
         Self::write_total_supply(env, add_or_panic(env, total_shares, shares));
 
+        Deposit {
+            holder: from,
+            underlying_amount: amount,
+            shares_minted: shares,
+        }
+        .publish(env);
+
         shares
     }
 
@@ -606,6 +633,13 @@ impl StandardizedYield for SyWrapper {
 
         // Return the underlying from the vault to the holder.
         push_underlying(env, &config.underlying, &from, underlying_out);
+
+        Redeem {
+            holder: from,
+            shares_burned: shares_to_burn,
+            underlying_amount: underlying_out,
+        }
+        .publish(env);
 
         underlying_out
     }

@@ -7,11 +7,15 @@ import * as path from 'path';
 dotenv.config();
 
 const RPC_URL = process.env.RPC_URL || 'https://soroban-testnet.stellar.org';
+const NETWORK = process.env.NETWORK || 'testnet';
 const server = new rpc.Server(RPC_URL);
 
 async function loadDeployments() {
   try {
-    const filePath = path.resolve(__dirname, '../../../scripts/deployments.testnet.json');
+    const filePath = path.resolve(
+      __dirname,
+      `../../web/src/config/deployments.${NETWORK}.json`
+    );
     if (fs.existsSync(filePath)) {
       const data = fs.readFileSync(filePath, 'utf-8');
       return JSON.parse(data);
