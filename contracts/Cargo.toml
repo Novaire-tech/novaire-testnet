@@ -1,18 +1,25 @@
 [workspace]
 resolver = "2"
 members = [
-    "factory",
+    "amm",
+    "blend-adapter",
+    "pt-token",
+    "sy-wrapper",
+    "shared/types",
+    "tokenizer",
+    "yt-token",
     "integration_tests",
-    "intent_engine",
-    "marketplace",
-    "maturity_engine",
-    "rollover",
-    "sy_wrapper",
-    "tokenizer/tokenizer",
-    "tokenizer/pt_token",
-    "tokenizer/yt_token",
-    "vault"
 ]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91.0"
+license = "Apache-2.0"
+repository = "https://github.com/Novaire-tech/novaire-testnet"
+
+[workspace.dependencies]
+soroban-sdk = { version = "=26.1.0", default-features = false }
 
 [profile.release]
 opt-level = "z"

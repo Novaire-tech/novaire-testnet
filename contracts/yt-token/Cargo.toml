@@ -1,21 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
+
 [package]
-name = "sidereal-integration-tests"
+name = "sidereal-yt-token"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 publish = false
 
 [lib]
-doctest = false
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk.workspace = true
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-sidereal-blend-adapter = { path = "../blend-adapter" }
-sidereal-shared-types = { path = "../shared/types" }
 sidereal-sy-wrapper = { path = "../sy-wrapper" }
-sidereal-pt-token = { path = "../pt-token" }
-sidereal-yt-token = { path = "../yt-token" }
 sidereal-tokenizer = { path = "../tokenizer" }
-sidereal-amm = { path = "../amm" }

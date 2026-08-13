@@ -1,21 +1,8 @@
-#![cfg(test)]
+// SPDX-License-Identifier: Apache-2.0
 
-pub mod budget_debug;
-pub mod e2e;
-pub mod framework;
-pub mod fuzz;
-pub mod invariants;
-pub mod l1_regression;
-pub mod m1_production_bootstrap;
-pub mod m1_regression;
-pub mod m2_regression;
-pub mod m3_regression;
-pub mod m5_regression;
-pub mod mock_blend_pool;
-pub mod mock_factory;
-pub mod production_e2e;
-pub mod reentry_differential;
-pub mod reentry_regression;
-pub mod reproduce;
-pub mod simulation;
-pub mod stress;
+//! Cross-contract integration tests for the sidereal protocol. The contracts
+//! are unit-tested in isolation in their own crates; this crate registers all
+//! of them together in one Soroban test environment and exercises the full user
+//! journey across contract boundaries, asserting the PT + YT = SY invariant.
+//!
+//! Tests live under `tests/`.
