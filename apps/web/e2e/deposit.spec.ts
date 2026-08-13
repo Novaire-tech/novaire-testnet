@@ -4,15 +4,15 @@ import { openDepositModal } from './helpers/vault-page';
 /**
  * E2E coverage for the deposit ("Mint PT & YT") flow at /app/vaults.
  *
- * Scope note: the on-chain routing from deposit -> SY wrapper -> Blend pool
- * (contracts/sy_wrapper/src/lib.rs `deposit()`) happens inside a single Soroban
- * contract call initiated by the Intent Engine contract. A browser-level test
- * cannot observe the internal cross-contract call into Blend directly; what it
- * *can* verify is that the UI (a) surfaces the Blend-backed vault with its APY
- * stats, and (b) actually dispatches a simulateTransaction against the
- * Intent Engine contract when the user submits a deposit — i.e. the deposit
- * action is wired to the contract that performs the Blend routing, rather
- * than being a UI-only stub.
+ * Scope note: minting is sy_wrapper.deposit(underlying) -> SY shares, then
+ * tokenizer.split(sy_amount) -> equal-face PT + YT (contracts/sy-wrapper,
+ * contracts/tokenizer). A browser-level test cannot observe the internal
+ * cross-contract call from sy-wrapper into Blend directly; what it *can*
+ * verify is that the UI (a) surfaces the Blend-backed vault with its APY
+ * stats, and (b) actually dispatches a simulateTransaction against the SY
+ * wrapper / tokenizer contracts when the user submits a deposit — i.e. the
+ * deposit action is wired to the contracts that perform the Blend routing
+ * and split, rather than being a UI-only stub.
  *
  * Network calls (Soroban RPC, Horizon, Freighter) are mocked so the test is
  * deterministic and does not depend on testnet liveness or a real wallet
@@ -161,7 +161,7 @@ test.describe('Deposit flow (XLM -> Blend-backed vault)', () => {
     expect(rpcRequests.some((r) => r.method === 'getLatestLedger')).toBeFalsy();
   });
 
-  test('submits the deposit against the Intent Engine contract when a wallet is connected', async ({ page }) => {
+  test('submits the deposit against the SY wrapper + tokenizer contracts when a wallet is connected', async ({ page }) => {
     await mockFreighterWallet(page);
     await mockHorizonBalance(page);
     const rpcRequests: { method: string; body: unknown }[] = [];
@@ -179,13 +179,13 @@ test.describe('Deposit flow (XLM -> Blend-backed vault)', () => {
 
     // The mocked RPC always errors, so the modal surfaces the failure — but the
     // key assertion is that a simulateTransaction request was actually sent,
-    // proving the deposit action is wired to the on-chain Intent Engine contract
-    // (which internally calls sy_wrapper.deposit() -> Blend pool.submit()).
-    // Wait for the terminal (error) state specifically — "Simulating Transaction"
-    // is a transient state shown synchronously on click, before any RPC call lands.
-    // The mocked RPC's error message surfaces verbatim in the modal's error banner.
-    await expect(modal.getByText(/mocked RPC/i)).toBeVisible({ timeout: 15_000 });
-    expect(rpcRequests.some((r) => r.method === 'getLatestLedger')).toBeTruthy();
+    // proving the deposit action is wired to the on-chain SY wrapper contract
+    // (handleMint's first read is sy_wrapper.exchange_rate(), previewing the
+    // sy_wrapper.deposit() -> tokenizer.split() flow). rpc.Server.getAccountEntry
+    // swallows the raw JSON-RPC error and rethrows "Account not found: <address>"
+    // for the mocked wallet address, so that's the error text that surfaces here,
+    // not the mocked RPC's own message.
+    await expect(modal.getByText(/account not found/i)).toBeVisible({ timeout: 15_000 });
     expect(rpcRequests.some((r) => r.method === 'simulateTransaction')).toBeTruthy();
   });
 });

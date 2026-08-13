@@ -21,7 +21,7 @@ const KPIS = [
   },
   {
     id: 'yield',
-    label: 'Projected Daily Yield',
+    label: 'Est. Daily Yield',
     value: '0.00',
     change: '',
     isPositive: true,

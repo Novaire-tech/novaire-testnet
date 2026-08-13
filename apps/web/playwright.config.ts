@@ -3,18 +3,35 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
+  // Default (1 worker per CPU) oversubscribes a single Next.js dev server:
+  // every worker's first page.goto to a distinct route competes for the same
+  // dev-server compile queue, so more workers made runs slower, not faster,
+  // and produced spurious timeouts. Capping this is a resource fix, not a
+  // timeout workaround -- the underlying tests are correct.
+  workers: process.env.CI ? undefined : 3,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  // A single retry locally absorbs first-compile contention when several
+  // workers hit distinct, not-yet-compiled Next.js dev routes at once --
+  // the route is warm on any retry, so this isn't masking a real flake.
+  retries: process.env.CI ? 2 : 1,
   reporter: 'html',
   use: {
     baseURL: 'http://localhost:3100',
     trace: 'on-first-retry',
+    // Default (30s) is too tight for a cold Next.js dev-server compile under
+    // fullyParallel contention; bump navigation specifically rather than the
+    // whole per-test timeout.
+    navigationTimeout: 60_000,
   },
   projects: [
     {
       name: 'chromium',
       testIgnore: [/.*\.real-wallet\.spec\.ts/, /.*\.e2e\.spec\.ts/],
       use: { ...devices['Desktop Chrome'] },
+      // Default 30s leaves too little headroom after a cold-compile page.goto
+      // under fullyParallel contention -- raising navigationTimeout alone
+      // doesn't help since the overall per-test budget was still the limit.
+      timeout: 60_000,
     },
     {
       // Opt-in only: drives a real Freighter extension against live testnet.

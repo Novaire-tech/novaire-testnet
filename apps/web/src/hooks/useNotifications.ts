@@ -6,11 +6,16 @@ function subscribe(callback: () => void) {
   return () => window.removeEventListener('novaire:notifications_updated', callback);
 }
 
+// A stable reference, not `() => []`, so getServerSnapshot doesn't return a
+// new array identity on every call (React requires a cached snapshot).
+const EMPTY_NOTIFICATIONS: ReturnType<typeof NotificationService.getNotifications> = [];
+const getServerSnapshot = () => EMPTY_NOTIFICATIONS;
+
 export function useNotifications() {
   const notifications = useSyncExternalStore(
     subscribe,
     NotificationService.getNotifications.bind(NotificationService),
-    () => []
+    getServerSnapshot
   );
 
   const unreadCount = notifications.filter(n => !n.read).length;

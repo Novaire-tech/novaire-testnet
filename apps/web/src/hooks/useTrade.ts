@@ -72,7 +72,11 @@ export function useTrade() {
     try {
       const { Client: AmmClient } = await import('../../../../packages/bindings/amm/src/index');
       const { Client: SyWrapperClient } = await import('../../../../packages/bindings/sy_wrapper/src/index');
-      const address = await WalletService.getWalletAddress() || 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'; // dummy if not connected
+      // A real, funded account is required here even for read-only simulation
+      // (rpc.Server.getAccountEntry looks it up to build the envelope). Falls
+      // back to the deployer address written by the deploy script, which is
+      // always a real funded testnet/mainnet account.
+      const address = await WalletService.getWalletAddress() || process.env.NEXT_PUBLIC_SIMULATION_SOURCE_ADDRESS || '';
 
       const clientOptions = { rpcUrl: RPC_URL, networkPassphrase: NETWORK_PASSPHRASE, publicKey: address };
       const ammClient = new AmmClient({ ...clientOptions, contractId: CONTRACTS.AMM });
