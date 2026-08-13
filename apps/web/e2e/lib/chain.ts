@@ -157,6 +157,18 @@ export async function buyPT(wallet: Wallet, underlyingInXlm: number, minPtOut = 
   return tx.signAndSend();
 }
 
+/** Seeds AMM liquidity from a wallet's own SY/PT balances (e.g. after depositVault + mintPTYT). */
+export async function addLiquidity(wallet: Wallet, ptIn: number, syIn: number, minLpOut = 0n) {
+  const client = clientFor(AmmClient, CONTRACTS.AMM, wallet);
+  const tx = await client.add_liquidity({
+    from: wallet.publicKey,
+    pt_in: BigInt(Math.floor(ptIn * STROOP)),
+    sy_in: BigInt(Math.floor(syIn * STROOP)),
+    min_lp_out: minLpOut,
+  });
+  return tx.signAndSend();
+}
+
 /** Redeems raw (unsplit) SY shares back to underlying via the SY Wrapper. */
 export async function redeem(wallet: Wallet, shares: number) {
   const client = clientFor(SyWrapperClient, CONTRACTS.SY_WRAPPER, wallet);
