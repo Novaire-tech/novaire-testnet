@@ -1004,6 +1004,77 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 
 [[package]]
+name = "novaire-amm"
+version = "0.1.0"
+dependencies = [
+ "novaire-shared-types",
+ "novaire-sy-wrapper",
+ "proptest",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "novaire-blend-adapter"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "novaire-integration-tests"
+version = "0.1.0"
+dependencies = [
+ "novaire-amm",
+ "novaire-blend-adapter",
+ "novaire-pt-token",
+ "novaire-shared-types",
+ "novaire-sy-wrapper",
+ "novaire-tokenizer",
+ "novaire-yt-token",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "novaire-pt-token"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "novaire-shared-types"
+version = "0.1.0"
+dependencies = [
+ "soroban-sdk",
+]
+
+[[package]]
+name = "novaire-sy-wrapper"
+version = "0.1.0"
+dependencies = [
+ "novaire-blend-adapter",
+ "novaire-shared-types",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "novaire-tokenizer"
+version = "0.1.0"
+dependencies = [
+ "novaire-sy-wrapper",
+ "soroban-sdk",
+]
+
+[[package]]
+name = "novaire-yt-token"
+version = "0.1.0"
+dependencies = [
+ "novaire-sy-wrapper",
+ "novaire-tokenizer",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1477,77 +1548,6 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
-
-[[package]]
-name = "sidereal-amm"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "sidereal-shared-types",
- "sidereal-sy-wrapper",
- "soroban-sdk",
-]
-
-[[package]]
-name = "sidereal-blend-adapter"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
-]
-
-[[package]]
-name = "sidereal-integration-tests"
-version = "0.1.0"
-dependencies = [
- "sidereal-amm",
- "sidereal-blend-adapter",
- "sidereal-pt-token",
- "sidereal-shared-types",
- "sidereal-sy-wrapper",
- "sidereal-tokenizer",
- "sidereal-yt-token",
- "soroban-sdk",
-]
-
-[[package]]
-name = "sidereal-pt-token"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
-]
-
-[[package]]
-name = "sidereal-shared-types"
-version = "0.1.0"
-dependencies = [
- "soroban-sdk",
-]
-
-[[package]]
-name = "sidereal-sy-wrapper"
-version = "0.1.0"
-dependencies = [
- "sidereal-blend-adapter",
- "sidereal-shared-types",
- "soroban-sdk",
-]
-
-[[package]]
-name = "sidereal-tokenizer"
-version = "0.1.0"
-dependencies = [
- "sidereal-sy-wrapper",
- "soroban-sdk",
-]
-
-[[package]]
-name = "sidereal-yt-token"
-version = "0.1.0"
-dependencies = [
- "sidereal-sy-wrapper",
- "sidereal-tokenizer",
- "soroban-sdk",
-]
 
 [[package]]
 name = "signature"

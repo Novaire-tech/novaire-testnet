@@ -15,11 +15,11 @@ cd "$REPO"
 OPT_WASM_DIR="${OPT_WASM_DIR:-target/wasm32v1-none/release/optimized}"
 
 contracts=(
-  sidereal_sy_wrapper
-  sidereal_pt_token
-  sidereal_yt_token
-  sidereal_tokenizer
-  sidereal_amm
+  novaire_sy_wrapper
+  novaire_pt_token
+  novaire_yt_token
+  novaire_tokenizer
+  novaire_amm
 )
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -41,11 +41,11 @@ stellar contract build --locked --out-dir "$OPT_WASM_DIR"
 if [[ "${SKIP_WASM_FLOAT_CHECK:-0}" != "1" ]]; then
   require_cmd wasm-objdump
   bash scripts/check-wasm-floats.sh \
-    "$OPT_WASM_DIR/sidereal_sy_wrapper.wasm" \
-    "$OPT_WASM_DIR/sidereal_pt_token.wasm" \
-    "$OPT_WASM_DIR/sidereal_yt_token.wasm" \
-    "$OPT_WASM_DIR/sidereal_tokenizer.wasm" \
-    "$OPT_WASM_DIR/sidereal_amm.wasm"
+    "$OPT_WASM_DIR/novaire_sy_wrapper.wasm" \
+    "$OPT_WASM_DIR/novaire_pt_token.wasm" \
+    "$OPT_WASM_DIR/novaire_yt_token.wasm" \
+    "$OPT_WASM_DIR/novaire_tokenizer.wasm" \
+    "$OPT_WASM_DIR/novaire_amm.wasm"
 fi
 
 log "Deployable Wasm sizes"

@@ -706,7 +706,7 @@ extern crate std;
 #[cfg(test)]
 mod test {
     use super::*;
-    use sidereal_sy_wrapper::{SyWrapper, SyWrapperClient};
+    use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
     use soroban_sdk::testutils::{Address as _, Ledger};
 
     const NOW: u64 = 1_770_000_000;

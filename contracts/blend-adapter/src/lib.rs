@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #![cfg_attr(target_family = "wasm", no_std)]
 
-//! Blend yield-source adapter for the Sidereal SY wrapper.
+//! Blend yield-source adapter for the Novaire SY wrapper.
 //!
 //! This is Fix 2 from `docs/BLEND_INTEGRATION.md`: replace the admin-set SY rate
 //! with a rate derived from a real Blend pool position, so it moves only with
@@ -15,11 +15,11 @@
 
 use soroban_sdk::{contractclient, contracttype, Address, Env, Map, Vec};
 
-/// Minimal bindings for the deployed Blend v2 pool interface used by Sidereal.
+/// Minimal bindings for the deployed Blend v2 pool interface used by Novaire.
 ///
 /// These types are generated from the live testnet pool contract spec. The
 /// published `blend-contract-sdk` currently depends on Soroban SDK 25 while
-/// Sidereal is pinned to 26.1, so importing that crate would create incompatible
+/// Novaire is pinned to 26.1, so importing that crate would create incompatible
 /// SDK types. Keep this surface limited to the four calls the wrapper needs.
 #[contractclient(name = "BlendPoolClient")]
 pub trait BlendPool {

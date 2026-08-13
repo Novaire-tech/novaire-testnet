@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "sidereal-amm"
+name = "novaire-amm"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,10 +13,10 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sidereal-shared-types = { path = "../shared/types" }
+novaire-shared-types = { path = "../shared/types" }
 soroban-sdk.workspace = true
 
 [dev-dependencies]
 proptest = "1.9.0"
-sidereal-sy-wrapper = { path = "../sy-wrapper" }
+novaire-sy-wrapper = { path = "../sy-wrapper" }
 soroban-sdk = { workspace = true, features = ["testutils"] }

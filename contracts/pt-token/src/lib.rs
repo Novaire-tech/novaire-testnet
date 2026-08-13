@@ -175,7 +175,7 @@ impl PtToken {
     }
 
     pub fn name(env: Env) -> String {
-        String::from_str(&env, "Sidereal Principal Token")
+        String::from_str(&env, "Novaire Principal Token")
     }
 
     pub fn symbol(env: Env) -> String {

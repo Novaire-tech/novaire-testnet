@@ -2,14 +2,14 @@
 
 //! Blend-backed SY integration coverage using a Soroban pool test double.
 
-use sidereal_blend_adapter::{
+use novaire_blend_adapter::{
     assets_from_b_tokens, b_tokens_from_assets, derived_exchange_rate, Positions, Request, Reserve,
     ReserveConfig, ReserveData, BLEND_SCALAR_12, REQUEST_SUPPLY, REQUEST_WITHDRAW,
 };
-use sidereal_pt_token::{PtToken, PtTokenClient};
-use sidereal_sy_wrapper::{Error as SyError, SyWrapper, SyWrapperClient};
-use sidereal_tokenizer::{Tokenizer, TokenizerClient};
-use sidereal_yt_token::{YtToken, YtTokenClient};
+use novaire_pt_token::{PtToken, PtTokenClient};
+use novaire_sy_wrapper::{Error as SyError, SyWrapper, SyWrapperClient};
+use novaire_tokenizer::{Tokenizer, TokenizerClient};
+use novaire_yt_token::{YtToken, YtTokenClient};
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contracterror, contractimpl, contracttype,

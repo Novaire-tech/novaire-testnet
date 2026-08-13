@@ -14,11 +14,11 @@
 //! the_swap` is the strict end-state and stays in CI so the real auth tree
 //! cannot regress.
 
-use sidereal_amm::{AmmMarket, AmmMarketClient};
-use sidereal_pt_token::PtToken;
-use sidereal_sy_wrapper::{SyWrapper, SyWrapperClient};
-use sidereal_tokenizer::{Tokenizer, TokenizerClient};
-use sidereal_yt_token::YtToken;
+use novaire_amm::{AmmMarket, AmmMarketClient};
+use novaire_pt_token::PtToken;
+use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
+use novaire_tokenizer::{Tokenizer, TokenizerClient};
+use novaire_yt_token::YtToken;
 use soroban_sdk::{
     testutils::{Address as _, AuthorizedFunction, AuthorizedInvocation, MockAuth, MockAuthInvoke},
     Address, Env, IntoVal, Symbol, TryFromVal, Val, Vec as SVec,
@@ -53,8 +53,8 @@ fn deploy(env: Env) -> Market {
     let amm = env.register(AmmMarket, ());
 
     SyWrapperClient::new(&env, &sy).initialize(&admin, &underlying);
-    sidereal_pt_token::PtTokenClient::new(&env, &pt).initialize(&admin, &tokenizer, &sy, &MATURITY);
-    sidereal_yt_token::YtTokenClient::new(&env, &yt).initialize(&admin, &tokenizer, &sy, &MATURITY);
+    novaire_pt_token::PtTokenClient::new(&env, &pt).initialize(&admin, &tokenizer, &sy, &MATURITY);
+    novaire_yt_token::YtTokenClient::new(&env, &yt).initialize(&admin, &tokenizer, &sy, &MATURITY);
     TokenizerClient::new(&env, &tokenizer).initialize(&admin, &sy, &pt, &yt, &MATURITY);
     AmmMarketClient::new(&env, &amm).initialize(
         &admin,

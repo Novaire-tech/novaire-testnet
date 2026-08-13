@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Resumable testnet deployment for the novaire protocol (sidereal architecture:
+# Resumable testnet deployment for the novaire protocol (single-market architecture:
 # sy-wrapper, pt-token, yt-token, tokenizer, amm — blend-adapter is a library
 # crate used by sy-wrapper, not a separately deployed contract).
 #
@@ -310,11 +310,11 @@ save_state
 log "Building optimized deployable Wasm from $SOURCE_COMMIT"
 OPT_WASM_DIR="$WASM_DIR" bash scripts/build-optimized-wasm.sh
 
-SY_WASM_HASH="$(wasm_hash "$WASM_DIR/sidereal_sy_wrapper.wasm")"
-PT_WASM_HASH="$(wasm_hash "$WASM_DIR/sidereal_pt_token.wasm")"
-YT_WASM_HASH="$(wasm_hash "$WASM_DIR/sidereal_yt_token.wasm")"
-TK_WASM_HASH="$(wasm_hash "$WASM_DIR/sidereal_tokenizer.wasm")"
-AMM_WASM_HASH="$(wasm_hash "$WASM_DIR/sidereal_amm.wasm")"
+SY_WASM_HASH="$(wasm_hash "$WASM_DIR/novaire_sy_wrapper.wasm")"
+PT_WASM_HASH="$(wasm_hash "$WASM_DIR/novaire_pt_token.wasm")"
+YT_WASM_HASH="$(wasm_hash "$WASM_DIR/novaire_yt_token.wasm")"
+TK_WASM_HASH="$(wasm_hash "$WASM_DIR/novaire_tokenizer.wasm")"
+AMM_WASM_HASH="$(wasm_hash "$WASM_DIR/novaire_amm.wasm")"
 
 if ! stellar keys address "$IDENTITY" >/dev/null 2>&1; then
   log "Generating and funding deployer identity '$IDENTITY' on $NETWORK"
@@ -342,11 +342,11 @@ else
   log "Underlying (USDC): $UNDERLYING_ID"
 fi
 
-deploy_wasm_once SY sidereal_sy_wrapper
-deploy_wasm_once PT sidereal_pt_token
-deploy_wasm_once YT sidereal_yt_token
-deploy_wasm_once TK sidereal_tokenizer
-deploy_wasm_once AMM sidereal_amm
+deploy_wasm_once SY novaire_sy_wrapper
+deploy_wasm_once PT novaire_pt_token
+deploy_wasm_once YT novaire_yt_token
+deploy_wasm_once TK novaire_tokenizer
+deploy_wasm_once AMM novaire_amm
 
 log "Initializing SY wrapper"
 if [[ "$YIELD_SOURCE" == "blend" ]]; then

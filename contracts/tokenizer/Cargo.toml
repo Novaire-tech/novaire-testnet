@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "sidereal-tokenizer"
+name = "novaire-tokenizer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -17,4 +17,4 @@ soroban-sdk.workspace = true
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-sidereal-sy-wrapper = { path = "../sy-wrapper" }
+novaire-sy-wrapper = { path = "../sy-wrapper" }

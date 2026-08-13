@@ -269,7 +269,7 @@ impl YtToken {
     }
 
     pub fn name(env: Env) -> String {
-        String::from_str(&env, "Sidereal Yield Token")
+        String::from_str(&env, "Novaire Yield Token")
     }
 
     pub fn symbol(env: Env) -> String {
@@ -691,8 +691,8 @@ extern crate std;
 #[cfg(test)]
 mod test {
     use super::*;
-    use sidereal_sy_wrapper::{SyWrapper, SyWrapperClient};
-    use sidereal_tokenizer::{Tokenizer, TokenizerClient};
+    use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
+    use novaire_tokenizer::{Tokenizer, TokenizerClient};
     use soroban_sdk::testutils::{Address as _, Ledger};
 
     const NOW: u64 = 1_770_000_000;

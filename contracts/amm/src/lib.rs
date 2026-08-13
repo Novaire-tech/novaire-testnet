@@ -4,7 +4,7 @@
 
 use core::cmp::min;
 
-use sidereal_shared_types::Market;
+use novaire_shared_types::Market;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token,
@@ -1543,7 +1543,7 @@ extern crate std;
 mod test {
     use super::*;
     use proptest::prelude::*;
-    use sidereal_sy_wrapper::{SyWrapper, SyWrapperClient};
+    use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
     use soroban_sdk::testutils::{
         storage::Persistent, Address as _, Deployer, EnvTestConfig, Ledger,
     };

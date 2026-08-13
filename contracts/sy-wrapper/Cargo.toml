@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [package]
-name = "sidereal-sy-wrapper"
+name = "novaire-sy-wrapper"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,8 +13,8 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-sidereal-blend-adapter = { path = "../blend-adapter" }
-sidereal-shared-types = { path = "../shared/types" }
+novaire-blend-adapter = { path = "../blend-adapter" }
+novaire-shared-types = { path = "../shared/types" }
 soroban-sdk.workspace = true
 
 [dev-dependencies]

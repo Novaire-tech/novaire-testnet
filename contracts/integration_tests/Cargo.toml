@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 [package]
-name = "sidereal-integration-tests"
+name = "novaire-integration-tests"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,10 +12,10 @@ doctest = false
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-sidereal-blend-adapter = { path = "../blend-adapter" }
-sidereal-shared-types = { path = "../shared/types" }
-sidereal-sy-wrapper = { path = "../sy-wrapper" }
-sidereal-pt-token = { path = "../pt-token" }
-sidereal-yt-token = { path = "../yt-token" }
-sidereal-tokenizer = { path = "../tokenizer" }
-sidereal-amm = { path = "../amm" }
+novaire-blend-adapter = { path = "../blend-adapter" }
+novaire-shared-types = { path = "../shared/types" }
+novaire-sy-wrapper = { path = "../sy-wrapper" }
+novaire-pt-token = { path = "../pt-token" }
+novaire-yt-token = { path = "../yt-token" }
+novaire-tokenizer = { path = "../tokenizer" }
+novaire-amm = { path = "../amm" }

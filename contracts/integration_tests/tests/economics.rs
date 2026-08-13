@@ -19,10 +19,10 @@
 //! These started as RED specs against the old code (PT redeemed 1:1, YT paid
 //! nothing) and are now green. See docs/PROGRESS.md.
 
-use sidereal_pt_token::{PtToken, PtTokenClient};
-use sidereal_sy_wrapper::{SyWrapper, SyWrapperClient};
-use sidereal_tokenizer::{Tokenizer, TokenizerClient};
-use sidereal_yt_token::{YtToken, YtTokenClient};
+use novaire_pt_token::{PtToken, PtTokenClient};
+use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
+use novaire_tokenizer::{Tokenizer, TokenizerClient};
+use novaire_yt_token::{YtToken, YtTokenClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token, Address, Env,

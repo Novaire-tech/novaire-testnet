@@ -4,11 +4,11 @@
 //! redemption at maturity, asserting the PT + YT = SY invariant across the
 //! SY wrapper, tokenizer, PT/YT, and AMM together.
 
-use sidereal_amm::{AmmMarket, AmmMarketClient};
-use sidereal_pt_token::{PtToken, PtTokenClient};
-use sidereal_sy_wrapper::{SyWrapper, SyWrapperClient};
-use sidereal_tokenizer::{Tokenizer, TokenizerClient};
-use sidereal_yt_token::{YtToken, YtTokenClient};
+use novaire_amm::{AmmMarket, AmmMarketClient};
+use novaire_pt_token::{PtToken, PtTokenClient};
+use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
+use novaire_tokenizer::{Tokenizer, TokenizerClient};
+use novaire_yt_token::{YtToken, YtTokenClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
     token, Address, Env,
@@ -59,8 +59,8 @@ fn deploy(env: &Env) -> Market {
     let amm = env.register(AmmMarket, ());
 
     SyWrapperClient::new(env, &sy).initialize(&admin, &underlying);
-    sidereal_pt_token::PtTokenClient::new(env, &pt).initialize(&admin, &tokenizer, &sy, &MATURITY);
-    sidereal_yt_token::YtTokenClient::new(env, &yt).initialize(&admin, &tokenizer, &sy, &MATURITY);
+    novaire_pt_token::PtTokenClient::new(env, &pt).initialize(&admin, &tokenizer, &sy, &MATURITY);
+    novaire_yt_token::YtTokenClient::new(env, &yt).initialize(&admin, &tokenizer, &sy, &MATURITY);
     TokenizerClient::new(env, &tokenizer).initialize(&admin, &sy, &pt, &yt, &MATURITY);
     AmmMarketClient::new(env, &amm).initialize(
         &admin,

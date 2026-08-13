@@ -2,11 +2,11 @@
 
 #![cfg_attr(target_family = "wasm", no_std)]
 
-use sidereal_blend_adapter::{
+use novaire_blend_adapter::{
     assets_from_b_tokens, derived_exchange_rate, BlendPoolClient, Request, REQUEST_SUPPLY,
     REQUEST_WITHDRAW,
 };
-use sidereal_shared_types::StandardizedYield;
+use novaire_shared_types::StandardizedYield;
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contracterror, contractevent, contractimpl, contracttype, panic_with_error, token,
@@ -268,7 +268,7 @@ impl SyWrapper {
     }
 
     pub fn name(env: Env) -> String {
-        String::from_str(&env, "Sidereal Standardized Yield")
+        String::from_str(&env, "Novaire Standardized Yield")
     }
 
     pub fn symbol(env: Env) -> String {
