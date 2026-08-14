@@ -17,8 +17,8 @@ export function MermaidDiagram({ chart }: MermaidDiagramProps) {
       themeVariables: {
         primaryColor: '#064e3b',
         primaryTextColor: '#fff',
-        primaryBorderColor: '#3ECF8E',
-        lineColor: '#3ECF8E',
+        primaryBorderColor: '#BEB7A7',
+        lineColor: '#BEB7A7',
         secondaryColor: '#065f46',
         tertiaryColor: '#111827',
       }
