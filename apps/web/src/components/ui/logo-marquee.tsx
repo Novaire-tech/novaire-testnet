@@ -106,6 +106,7 @@ const InfiniteSlider = memo(function InfiniteSlider({
             : { y: translation }),
           gap: `${gap}px`,
           flexDirection: direction === "horizontal" ? "row" : "column",
+          willChange: "transform",
         }}
         {...hoverProps}
       >
@@ -156,8 +157,11 @@ export const LogoMarquee = memo(function LogoMarquee({
         className,
       )}
     >
-      <InfiniteSlider gap={72} reverse duration={95} durationOnHover={40}>
-        {[...logos, ...logos].map((logo, i) => (
+      <InfiniteSlider gap={72} reverse duration={65} durationOnHover={65}>
+        {/* Repeated 8x (not just 2x) so the set always overflows the viewport — with only
+            three short items, a light duplication left the translated half-width shorter
+            than the container, exposing bare navy background at the loop seam. */}
+        {Array.from({ length: 8 }, () => logos).flat().map((logo, i) => (
           <div key={`${logo.alt}-${i}`} className="group/logo flex items-center justify-center">
             <LogoImage logo={logo} />
           </div>

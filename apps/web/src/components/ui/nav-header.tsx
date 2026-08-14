@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
+import { scrollToWaitlist } from "@/lib/scrollToWaitlist";
 
 export default function NavHeader() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -42,6 +43,7 @@ export default function NavHeader() {
 
             <Link
               href="/#waitlist"
+              onClick={scrollToWaitlist}
               style={{ color: '#112a46' }}
               className="inline-flex items-center justify-center px-6 py-3 rounded-full border border-[rgba(17,42,70,0.15)] bg-transparent text-[16px] font-medium tracking-[0.01em] transition-all duration-[250ms] ease-out hover:bg-[rgba(17,42,70,0.06)] hover:border-[rgba(17,42,70,0.3)] whitespace-nowrap"
             >
@@ -131,7 +133,10 @@ export default function NavHeader() {
                 href="/#waitlist"
                 style={{ color: '#112a46' }}
                 className="flex items-center justify-center w-full px-6 py-3 rounded-full border border-[rgba(17,42,70,0.15)] bg-transparent text-[16px] font-medium tracking-[0.01em] transition-all duration-[250ms] ease-out hover:bg-[rgba(17,42,70,0.06)] hover:border-[rgba(17,42,70,0.3)] whitespace-nowrap"
-                onClick={() => setIsMobileMenuOpen(false)}
+                onClick={(e) => {
+                  setIsMobileMenuOpen(false);
+                  scrollToWaitlist(e);
+                }}
               >
                 <span style={{ color: '#112a46' }}>Get Early Access</span>
                 <span style={{ color: '#112a46' }} className="ml-2">↗</span>
