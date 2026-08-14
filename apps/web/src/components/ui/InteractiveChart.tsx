@@ -98,9 +98,9 @@ export function InteractiveChart({
       
     if (!lineSeriesRef.current) {
       lineSeriesRef.current = chart.addSeries(AreaSeries, {
-        lineColor: isPositive ? '#3ECF8E' : '#f87171',
-        topColor: isPositive ? '#3ECF8E40' : '#f8717140',
-        bottomColor: isPositive ? '#3ECF8E00' : '#f8717100',
+        lineColor: isPositive ? '#BEB7A7' : '#f87171',
+        topColor: isPositive ? '#BEB7A780' : '#f8717140',
+        bottomColor: isPositive ? '#BEB7A700' : '#f8717100',
         lineWidth: 2,
         priceFormat: {
           type: 'price',
@@ -110,9 +110,9 @@ export function InteractiveChart({
       });
     } else {
       lineSeriesRef.current.applyOptions({
-        lineColor: isPositive ? '#3ECF8E' : '#f87171',
-        topColor: isPositive ? '#3ECF8E40' : '#f8717140',
-        bottomColor: isPositive ? '#3ECF8E00' : '#f8717100',
+        lineColor: isPositive ? '#BEB7A7' : '#f87171',
+        topColor: isPositive ? '#BEB7A780' : '#f8717140',
+        bottomColor: isPositive ? '#BEB7A700' : '#f8717100',
       });
     }
 

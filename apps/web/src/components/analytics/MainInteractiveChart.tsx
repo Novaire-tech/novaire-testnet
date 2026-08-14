@@ -4,6 +4,7 @@ import { useState, useMemo } from 'react';
 import { useAnalyticsHistory } from '../../hooks/useAnalyticsHistory';
 import { AnalyticsSnapshot } from '../../services/analyticsHistoryService';
 import { InteractiveChart } from '../ui/InteractiveChart';
+import { CardWaveDecoration } from '../ui/CardWaveDecoration';
 
 type Timeframe = '1H' | '24H' | '7D' | '30D' | 'ALL';
 type DataMode = 'Portfolio Value' | 'PT Price' | 'YT Price' | 'Fixed APY' | 'TVL' | 'Trading Volume';
@@ -65,8 +66,9 @@ export function MainInteractiveChart() {
   const isPTAbovePar = currentPtPrice >= 1.0;
 
   return (
-    <div className="rounded-2xl border border-nova-border bg-white/5 p-6 backdrop-blur-xl relative overflow-hidden h-[500px] flex flex-col">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl relative overflow-hidden h-[500px] flex flex-col">
+      <CardWaveDecoration />
+      <div className="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
         <div className="flex flex-wrap gap-2 p-1 bg-black/20 rounded-lg w-full md:w-auto">
           {dataModes.map((mode) => (
             <button
@@ -74,8 +76,8 @@ export function MainInteractiveChart() {
               onClick={() => setDataMode(mode)}
               className={`px-3 py-1.5 text-xs font-medium rounded-md whitespace-nowrap transition-colors ${
                 dataMode === mode
-                  ? 'bg-emerald-500/20 text-emerald-400'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  ? 'bg-[#BEB7A7]/20 text-[#BEB7A7]'
+                  : 'text-[#F5F5F2]/60 hover:text-white hover:bg-white/5'
               }`}
             >
               {mode}
@@ -92,7 +94,7 @@ export function MainInteractiveChart() {
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
                   timeframe === tf
                     ? 'bg-white/10 text-white'
-                    : 'text-gray-500 hover:text-white'
+                    : 'text-[#F5F5F2]/60 hover:text-white'
                 }`}
               >
                 {tf}
@@ -102,19 +104,19 @@ export function MainInteractiveChart() {
         </div>
       </div>
       
-      <div className="mb-2 flex items-baseline gap-3">
+      <div className="relative z-10 mb-2 flex items-baseline gap-3">
         {dataMode !== 'Trading Volume' ? (
           <>
-            <h2 className="font-serif text-[32px] leading-none text-nova-text tracking-tight">
+            <h2 className="font-serif text-[32px] leading-none text-[#F5F5F2] tracking-tight">
               {dataMode === 'Fixed APY' ? `${currentVal.toFixed(2)}%` : `$${currentVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`}
             </h2>
-            <span className={`text-sm font-medium ${percentChange === null ? 'text-nova-muted' : isPositive ? 'text-nova-accent' : 'text-red-400'}`}>
+            <span className={`text-sm font-medium ${percentChange === null ? 'text-[#F5F5F2]/60' : isPositive ? 'text-[#BEB7A7]' : 'text-red-400'}`}>
               {percentChange === null ? '--' : `${isPositive ? '+' : ''}${percentChange.toFixed(2)}%`}
             </span>
           </>
         ) : (
           <>
-            <h2 className="font-serif text-[32px] leading-none text-nova-text tracking-tight opacity-50">
+            <h2 className="font-serif text-[32px] leading-none text-[#F5F5F2] tracking-tight opacity-50">
               --
             </h2>
           </>
@@ -139,11 +141,11 @@ export function MainInteractiveChart() {
         </div>
       )}
 
-      <div className="flex-1 w-full relative h-[300px]">
+      <div className="flex-1 w-full relative z-10 h-[300px]">
         {dataMode === 'Trading Volume' ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
-            <span className="text-nova-text text-sm font-medium">No trading history yet. Chart data will appear once trades execute.</span>
-            <span className="text-nova-muted text-xs mt-2 max-w-[250px]">Trading volume will appear after completed marketplace swaps.</span>
+            <span className="text-[#F5F5F2] text-sm font-medium">No trading history yet. Chart data will appear once trades execute.</span>
+            <span className="text-[#F5F5F2]/60 text-xs mt-2 max-w-[250px]">Trading volume will appear after completed marketplace swaps.</span>
           </div>
         ) : hasData ? (
           <InteractiveChart 
@@ -153,7 +155,7 @@ export function MainInteractiveChart() {
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-gray-500 text-sm animate-pulse">Initializing Live Data...</span>
+            <span className="text-[#F5F5F2]/60 text-sm animate-pulse">Initializing Live Data...</span>
           </div>
         )}
       </div>

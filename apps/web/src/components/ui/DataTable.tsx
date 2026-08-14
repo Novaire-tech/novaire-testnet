@@ -19,11 +19,11 @@ export function DataTable<T>({ data, columns, keyExtractor, emptyState }: DataTa
     <div className="w-full overflow-x-auto">
       <table className="w-full text-left border-collapse">
         <thead>
-          <tr className="border-b border-nova-border">
+          <tr className="border-b border-white/10">
             {columns.map((col, index) => (
               <th 
                 key={index} 
-                className={`py-4 px-2 text-xs font-medium text-gray-500 font-sans ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'}`}
+                className={`py-4 px-2 text-xs font-medium text-[#F5F5F2]/60 font-sans ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'}`}
                 style={{ width: col.width }}
               >
                 {col.header}
@@ -34,7 +34,7 @@ export function DataTable<T>({ data, columns, keyExtractor, emptyState }: DataTa
         <tbody>
           {data.length === 0 && emptyState ? (
             <tr>
-              <td colSpan={columns.length} className="py-8 text-center text-gray-500 font-sans">
+              <td colSpan={columns.length} className="py-8 text-center text-[#F5F5F2]/60 font-sans">
                 {emptyState}
               </td>
             </tr>
@@ -42,7 +42,7 @@ export function DataTable<T>({ data, columns, keyExtractor, emptyState }: DataTa
             data.map((row, rowIndex) => (
               <tr 
                 key={keyExtractor(row, rowIndex)} 
-                className="border-b border-nova-border hover:bg-white/5 transition-colors group"
+                className="border-b border-white/10 hover:bg-white/5 transition-colors group"
               >
                 {columns.map((col, colIndex) => (
                   <td 

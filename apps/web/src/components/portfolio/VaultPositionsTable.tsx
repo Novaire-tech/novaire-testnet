@@ -68,9 +68,9 @@ export function VaultPositionsTable() {
 
   const columns = [
     { header: 'Vault Name', accessor: (row: VaultPositionRow) => row.vaultName },
-    { header: 'Underlying', accessor: (row: VaultPositionRow) => <span className="text-nova-muted">{row.underlying}</span> },
+    { header: 'Underlying', accessor: (row: VaultPositionRow) => <span className="text-[#F5F5F2]/60">{row.underlying}</span> },
     { header: 'Deposit Amount', accessor: (row: VaultPositionRow) => row.depositAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 }), align: 'right' as const },
-    { header: 'Claimable Yield', accessor: (row: VaultPositionRow) => <span className="text-nova-accent">+{row.claimableYield.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>, align: 'right' as const },
+    { header: 'Claimable Yield', accessor: (row: VaultPositionRow) => <span className="text-[#BEB7A7]">+{row.claimableYield.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>, align: 'right' as const },
     { header: 'Fixed APY', accessor: (row: VaultPositionRow) => `${row.fixedApy}%`, align: 'right' as const },
     { header: 'Days Remaining', accessor: (row: VaultPositionRow) => `${row.daysRemaining} days`, align: 'right' as const },
     { header: 'Maturity Date', accessor: (row: VaultPositionRow) => row.maturityDate },
@@ -84,7 +84,7 @@ export function VaultPositionsTable() {
 
   return (
     <SectionCard className="p-0">
-      <div className="border-b border-nova-border p-6 flex justify-between items-center">
+      <div className="border-b border-white/10 p-6 flex justify-between items-center">
         <h3 className="font-sans font-medium ">Vault Positions</h3>
       </div>
       <DataTable

@@ -16,15 +16,15 @@ export function WalletAssetsTable() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.1, ease: 'easeOut' }}
-      className="flex flex-col overflow-hidden rounded-2xl border border-nova-border bg-nova-surface"
+      className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]"
     >
-      <div className="border-b border-nova-border p-6">
+      <div className="border-b border-white/10 p-6">
         <h3 className="font-sans font-medium ">Wallet Assets</h3>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="bg-nova-bg/50 text-xs text-nova-muted">
+          <thead className="bg-[#050505]/50 text-xs text-[#F5F5F2]/60">
             <tr>
               <th className="px-6 py-4 font-medium">Asset</th>
               <th className="px-6 py-4 font-medium text-right">Balance</th>
@@ -47,7 +47,7 @@ export function WalletAssetsTable() {
 
             {isDisconnected && (
               <tr>
-                <td colSpan={5} className="px-6 py-12 text-center text-nova-muted">
+                <td colSpan={5} className="px-6 py-12 text-center text-[#F5F5F2]/60">
                   Connect Wallet to view assets
                 </td>
               </tr>
@@ -55,7 +55,7 @@ export function WalletAssetsTable() {
 
             {isEmpty && (
               <tr>
-                <td colSpan={5} className="px-6 py-12 text-center text-nova-muted">
+                <td colSpan={5} className="px-6 py-12 text-center text-[#F5F5F2]/60">
                   No assets found in wallet.
                 </td>
               </tr>
@@ -69,19 +69,19 @@ export function WalletAssetsTable() {
                 transition={{ duration: 0.4, delay: 0.2 + i * 0.05 }}
                 className="group transition-colors hover:bg-white/5"
               >
-                <td className="whitespace-nowrap px-6 py-4 font-medium text-nova-text">
+                <td className="whitespace-nowrap px-6 py-4 font-medium text-[#F5F5F2]">
                   {asset.assetCode}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-nova-text">
+                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-[#F5F5F2]">
                   {asset.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-nova-muted">
+                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-[#F5F5F2]/60">
                   ${asset.priceUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-nova-text">
+                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-[#F5F5F2]">
                   ${asset.valueUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-nova-accent">
+                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-[#BEB7A7]">
                   {asset.allocationPercent.toFixed(1)}%
                 </td>
               </motion.tr>

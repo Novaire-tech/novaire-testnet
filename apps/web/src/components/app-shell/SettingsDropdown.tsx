@@ -67,7 +67,7 @@ export function SettingsDropdown({ isOpen, onClose }: SettingsDropdownProps) {
           animate={{ opacity: 1, y: 0, scale: 1 }}
           exit={{ opacity: 0, y: 10, scale: 0.95 }}
           transition={{ duration: 0.2 }}
-          className="absolute right-0 top-12 z-50 w-80 overflow-hidden rounded-2xl border border-white/10 bg-[#0A0A0A] shadow-2xl origin-top-right"
+          className="absolute right-0 top-12 z-50 w-80 overflow-hidden rounded-2xl border border-white/10 bg-[#050505] shadow-2xl origin-top-right"
         >
           <div className="p-5 space-y-6">
             {/* Notifications */}
@@ -83,7 +83,7 @@ export function SettingsDropdown({ isOpen, onClose }: SettingsDropdownProps) {
                     <button
                       onClick={() => toggleNotification(key as keyof typeof notifications)}
                       className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                        notifications[key as keyof typeof notifications] ? 'bg-[#3ECF8E]' : 'bg-white/10'
+                        notifications[key as keyof typeof notifications] ? 'bg-[#BEB7A7]' : 'bg-white/10'
                       }`}
                     >
                       <span
@@ -107,7 +107,7 @@ export function SettingsDropdown({ isOpen, onClose }: SettingsDropdownProps) {
                 </div>
                 <div className="flex justify-between">
                   <span>Network</span>
-                  <span className="text-[#3ECF8E]">Stellar Mainnet</span>
+                  <span className="text-[#BEB7A7]">Stellar Mainnet</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Current Epoch</span>

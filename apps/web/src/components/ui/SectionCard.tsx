@@ -1,5 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { CardWaveDecoration } from './CardWaveDecoration';
 
 export interface SectionCardProps {
   children: React.ReactNode;
@@ -17,7 +18,8 @@ export function SectionCard({ children, className = '', delay = 0 }: SectionCard
       className={`relative overflow-hidden rounded-2xl border border-nova-border bg-nova-surface transition-all duration-200 hover:border-nova-accent-hover hover:shadow-[0_0_18px_var(--accent-hover)] ${className}`}
       style={{ padding: '24px' }}
     >
-      {children}
+      <CardWaveDecoration />
+      <div className="relative z-10">{children}</div>
     </motion.div>
   );
 }

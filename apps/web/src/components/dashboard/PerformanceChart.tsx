@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAnalyticsHistory } from '../../hooks/useAnalyticsHistory';
 import { AnalyticsSnapshot } from '../../services/analyticsHistoryService';
 import { InteractiveChart } from '../ui/InteractiveChart';
+import { CardWaveDecoration } from '../ui/CardWaveDecoration';
 
 type Timeframe = '1H' | '24H' | '7D' | '30D' | 'ALL';
 type DataMode = 'Yield Position Value' | 'PT Price' | 'YT Price';
@@ -68,14 +69,16 @@ export function PerformanceChart() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.3, ease: 'easeOut' }}
-      className="flex h-[420px] flex-col overflow-hidden rounded-2xl border border-nova-border bg-nova-surface p-6 transition-colors hover:border-nova-accent/50 relative"
+      className="flex h-[420px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition-colors hover:border-[#BEB7A7]/50 relative"
     >
+      <CardWaveDecoration />
+
       {/* Header Area */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4 z-10">
         <div>
-          <span className="text-[13px] font-medium text-nova-muted uppercase tracking-wider">{dataMode}</span>
+          <span className="text-[13px] font-medium text-[#F5F5F2]/60 uppercase tracking-wider">{dataMode}</span>
           <div className="mt-2 flex items-baseline gap-3">
-            <h2 className="font-serif text-[40px] leading-none text-nova-text tracking-tight">
+            <h2 className="font-serif text-[40px] leading-none text-[#F5F5F2] tracking-tight">
               ${currentVal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
             </h2>
             <AnimatePresence mode="wait">
@@ -84,7 +87,7 @@ export function PerformanceChart() {
                 initial={{ opacity: 0, x: -5 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 5 }}
-                className={`text-sm font-medium ${percentChange === null ? 'text-nova-muted' : isPositive ? 'text-nova-accent' : 'text-red-400'}`}
+                className={`text-sm font-medium ${percentChange === null ? 'text-[#F5F5F2]/60' : isPositive ? 'text-[#BEB7A7]' : 'text-red-400'}`}
               >
                 {percentChange === null ? '--' : `${isPositive ? '+' : ''}${percentChange.toFixed(2)}%`}
               </motion.span>
@@ -95,15 +98,15 @@ export function PerformanceChart() {
         <div className="flex flex-col gap-3 items-end">
           {/* Top Row: Data Mode */}
           <div className="flex gap-2">
-            <div className="flex gap-1 p-1 bg-nova-bg border border-nova-border rounded-lg">
+            <div className="flex gap-1 p-1 bg-[#050505] border border-white/10 rounded-lg">
               {dataModes.map((mode) => (
                 <button
                   key={mode}
                   onClick={() => setDataMode(mode)}
                   className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
                     dataMode === mode
-                      ? 'bg-nova-accent/10 text-nova-accent shadow-sm'
-                      : 'text-nova-muted hover:text-nova-text'
+                      ? 'bg-[#BEB7A7]/10 text-[#BEB7A7] shadow-sm'
+                      : 'text-[#F5F5F2]/60 hover:text-[#F5F5F2]'
                   }`}
                 >
                   {mode === 'Yield Position Value' ? 'Position' : mode.split(' ')[0]}
@@ -113,15 +116,15 @@ export function PerformanceChart() {
           </div>
 
           {/* Bottom Row: Timeframes */}
-          <div className="flex gap-1 p-1 bg-nova-bg border border-nova-border rounded-lg">
+          <div className="flex gap-1 p-1 bg-[#050505] border border-white/10 rounded-lg">
             {timeframes.map((tf) => (
               <button
                 key={tf}
                 onClick={() => setTimeframe(tf)}
                 className={`px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
                   timeframe === tf
-                    ? 'bg-nova-accent/10 text-nova-accent shadow-sm'
-                    : 'text-nova-muted hover:text-nova-text'
+                    ? 'bg-[#BEB7A7]/10 text-[#BEB7A7] shadow-sm'
+                    : 'text-[#F5F5F2]/60 hover:text-[#F5F5F2]'
                 }`}
               >
                 {tf}
@@ -141,7 +144,7 @@ export function PerformanceChart() {
           />
         ) : (
           <div className="absolute inset-0 flex items-center justify-center ml-5">
-            <span className="text-nova-muted text-sm font-medium animate-pulse">Initializing Live Protocol State...</span>
+            <span className="text-[#F5F5F2]/60 text-sm font-medium animate-pulse">Initializing Live Protocol State...</span>
           </div>
         )}
       </div>

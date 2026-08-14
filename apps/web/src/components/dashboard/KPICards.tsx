@@ -93,7 +93,7 @@ export function KPICards() {
       return (
         <div className="flex items-baseline gap-2">
           <span>{xlmStr} XLM</span>
-          <span className="font-sans text-[20px] text-nova-muted tracking-normal">
+          <span className="font-sans text-[20px] text-[#F5F5F2]/60 tracking-normal">
             ({formatCurrency(usd)})
           </span>
         </div>
@@ -113,14 +113,14 @@ export function KPICards() {
         }
         const invested = portfolio.metrics.totalInvestedXlm;
         if (invested <= 0) {
-          return <span className="text-[20px] text-nova-muted">No active positions</span>;
+          return <span className="text-[20px] text-[#F5F5F2]/60">No active positions</span>;
         }
         // executableApy is priced off live curve state (always fresh); impliedYieldApy
         // is TWAP-derived and is 0 whenever protocolState.twapStale is true — never
         // fabricate a yield estimate from a stale TWAP.
         const apyPct = protocolState.executableApy || protocolState.impliedYieldApy || 0;
         if (apyPct <= 0) {
-          return <span className="text-[20px] text-nova-muted">Market data unavailable</span>;
+          return <span className="text-[20px] text-[#F5F5F2]/60">Market data unavailable</span>;
         }
         const dailyYieldXlm = calculateProjectedDailyYield(invested, apyPct);
         const dailyYieldUsd = calculateProjectedDailyYield(portfolio.metrics.totalInvestedUsd, apyPct);
@@ -133,7 +133,7 @@ export function KPICards() {
           return <div className="h-8 w-32 animate-pulse rounded bg-white/10" />;
         }
         if (protocolState.priceUnavailable) {
-          return <span className="text-[20px] text-nova-muted">Price feed unavailable</span>;
+          return <span className="text-[20px] text-[#F5F5F2]/60">Price feed unavailable</span>;
         }
         return formatXlmAndUsd(protocolState.tvlXlm, protocolState.tvlUsd);
       default:
@@ -171,7 +171,7 @@ export function KPICards() {
 
   const ClaimableYieldCallout = () => (
     <div className="flex flex-col mt-0.5">
-      <span className="text-[11px] font-medium tracking-wide text-nova-accent-hover font-sans">
+      <span className="text-[11px] font-medium tracking-wide text-[#BEB7A7] font-sans">
         No yield has accrued yet.
       </span>
       <span className="text-[10px] leading-tight text-white/70 font-sans mt-0.5">

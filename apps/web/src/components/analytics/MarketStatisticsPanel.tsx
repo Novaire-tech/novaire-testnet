@@ -7,6 +7,7 @@ import { YieldService } from '../../services/yieldService';
 import type { Vault } from '../../types';
 import { ProtocolService, ProtocolState } from '../../services/protocolService';
 import { getUnderlyingApy } from '../../services/underlyingYieldService';
+import { CardWaveDecoration } from '../ui/CardWaveDecoration';
 
 export function MarketStatisticsPanel() {
   const { prices, loading: pricesLoading } = usePrices();
@@ -47,20 +48,21 @@ export function MarketStatisticsPanel() {
       initial={{ opacity: 0, x: 10 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.4 }}
-      className="rounded-2xl border border-nova-border bg-white/5 p-6 backdrop-blur-xl flex flex-col gap-6"
+      className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl flex flex-col gap-6"
     >
-      <h3 className="text-lg font-semibold text-white">Market Statistics</h3>
-      
-      <div className="flex flex-col gap-4">
+      <CardWaveDecoration />
+      <h3 className="relative z-10 text-lg font-semibold text-white">Market Statistics</h3>
+
+      <div className="relative z-10 flex flex-col gap-4">
         {stats.map((stat, i) => (
-          <div key={i} className="flex justify-between items-center pb-3 border-b border-nova-border last:border-0 last:pb-0">
-            <span className="text-sm text-gray-400">{stat.label}</span>
+          <div key={i} className="flex justify-between items-center pb-3 border-b border-white/10 last:border-0 last:pb-0">
+            <span className="text-sm text-[#F5F5F2]/60">{stat.label}</span>
             <div className="text-right">
-              <div className={`text-sm font-medium ${stat.highlight ? 'text-emerald-400' : 'text-white'}`}>
+              <div className={`text-sm font-medium ${stat.highlight ? 'text-[#BEB7A7]' : 'text-white'}`}>
                 {stat.value}
               </div>
               {stat.subtext && (
-                <div className="text-xs text-gray-500 mt-0.5">{stat.subtext}</div>
+                <div className="text-xs text-[#F5F5F2]/60 mt-0.5">{stat.subtext}</div>
               )}
             </div>
           </div>

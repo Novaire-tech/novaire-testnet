@@ -36,29 +36,29 @@ export function DashboardHeader() {
           <button 
             onClick={disconnect}
             title="Disconnect Wallet"
-            className="flex h-10 items-center gap-3 rounded-xl border border-nova-border bg-nova-surface px-4 py-2 transition-colors hover:border-red-500/30 group"
+            className="flex h-10 items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 transition-colors hover:border-red-500/30 group"
           >
             <div className="flex items-center gap-2">
               <span className="relative flex h-2 w-2">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#3ECF8E] opacity-75 group-hover:hidden"></span>
-                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#3ECF8E] group-hover:bg-red-500"></span>
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#BEB7A7] opacity-75 group-hover:hidden"></span>
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-[#BEB7A7] group-hover:bg-red-500"></span>
               </span>
-              <span className="text-xs font-medium text-[#3ECF8E] group-hover:text-red-500 transition-colors">Connected</span>
+              <span className="text-xs font-medium text-[#BEB7A7] group-hover:text-red-500 transition-colors">Connected</span>
             </div>
             <div className="h-4 w-[1px] bg-white/10 group-hover:bg-red-500/20 transition-colors" />
             <div className="flex items-center gap-2">
-              <Wallet className="h-4 w-4 text-nova-muted group-hover:text-red-500/80 transition-colors" />
-              <span className="text-sm font-medium text-nova-text group-hover:text-red-500/90 transition-colors">{formattedAddress}</span>
+              <Wallet className="h-4 w-4 text-[#F5F5F2]/60 group-hover:text-red-500/80 transition-colors" />
+              <span className="text-sm font-medium text-[#F5F5F2] group-hover:text-red-500/90 transition-colors">{formattedAddress}</span>
             </div>
           </button>
         ) : (
           <button 
             onClick={connect}
-            className="flex h-10 items-center gap-3 rounded-xl border border-nova-border bg-nova-surface px-4 py-2 transition-colors hover:border-nova-accent/50 group"
+            className="flex h-10 items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 transition-colors hover:border-[#BEB7A7]/50 group"
           >
             <div className="flex items-center gap-2">
-              <Wallet className="h-4 w-4 text-nova-muted group-hover:text-nova-accent transition-colors" />
-              <span className="text-sm font-medium text-nova-text group-hover:text-nova-accent transition-colors">Connect Wallet</span>
+              <Wallet className="h-4 w-4 text-[#F5F5F2]/60 group-hover:text-[#BEB7A7] transition-colors" />
+              <span className="text-sm font-medium text-[#F5F5F2] group-hover:text-[#BEB7A7] transition-colors">Connect Wallet</span>
             </div>
           </button>
         )}
@@ -72,7 +72,7 @@ export function DashboardHeader() {
       >
         <button
           onClick={() => setIsMintModalOpen(true)}
-          className="flex h-10 items-center justify-center gap-2 rounded-xl bg-[#3ECF8E] px-5 py-2 font-semibold text-black transition-all duration-200 hover:brightness-110 hover:-translate-y-[1px] shadow-sm active:scale-[0.98]"
+          className="flex h-10 items-center justify-center gap-2 rounded-xl bg-[#BEB7A7] px-5 py-2 font-semibold text-black transition-all duration-200 hover:brightness-110 hover:-translate-y-[1px] shadow-sm active:scale-[0.98]"
         >
           <Plus className="h-4 w-4" />
           Mint PT & YT

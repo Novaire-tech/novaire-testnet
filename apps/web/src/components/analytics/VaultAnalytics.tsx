@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useState, useEffect } from 'react';
 import { YieldService } from '../../services/yieldService';
 import type { Vault } from '../../types';
+import { CardWaveDecoration } from '../ui/CardWaveDecoration';
 
 export function VaultAnalytics() {
   const [vaults, setVaults] = useState<Vault[]>([]);
@@ -16,7 +17,7 @@ export function VaultAnalytics() {
   
   if (!activeVault) {
     return (
-      <div className="rounded-2xl border border-nova-border bg-white/5 p-6 h-48 flex items-center justify-center">
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-6 h-48 flex items-center justify-center">
         <div className="animate-pulse flex space-x-4">
           <div className="flex-1 space-y-4 py-1">
             <div className="h-4 bg-white/10 rounded w-3/4"></div>
@@ -39,36 +40,37 @@ export function VaultAnalytics() {
       initial={{ opacity: 0, x: 10 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ duration: 0.4, delay: 0.1 }}
-      className="rounded-2xl border border-nova-border bg-white/5 p-6 backdrop-blur-xl"
+      className="relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-6 backdrop-blur-xl"
     >
-      <div className="flex justify-between items-center mb-6">
+      <CardWaveDecoration />
+      <div className="relative z-10 flex justify-between items-center mb-6">
         <h3 className="text-lg font-semibold text-white">Vault Analytics</h3>
-        <span className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/20 text-emerald-400">
+        <span className="px-2 py-1 text-xs font-medium rounded bg-[#BEB7A7]/20 text-[#BEB7A7]">
           Epoch 20 Active
         </span>
       </div>
 
-      <div className="space-y-4">
+      <div className="relative z-10 space-y-4">
         <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-400">Vault</span>
+          <span className="text-sm text-[#F5F5F2]/60">Vault</span>
           <span className="text-sm font-medium text-white">{activeVault.asset} Vault</span>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-400">Maturity Date</span>
+          <span className="text-sm text-[#F5F5F2]/60">Maturity Date</span>
           <span className="text-sm font-medium text-white">{maturityDate.toLocaleDateString()}</span>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-400">Days Remaining</span>
+          <span className="text-sm text-[#F5F5F2]/60">Days Remaining</span>
           <span className="text-sm font-medium text-white">{daysRemaining} Days</span>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-400">Vault TVL</span>
+          <span className="text-sm text-[#F5F5F2]/60">Vault TVL</span>
           <span className="text-sm font-medium text-white">
             {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(activeVault.tvlUsd)}
           </span>
         </div>
         <div className="flex justify-between items-center">
-          <span className="text-sm text-gray-400">Protocol Deposits</span>
+          <span className="text-sm text-[#F5F5F2]/60">Protocol Deposits</span>
           <span className="text-sm font-medium text-white">
             {new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(activeVault.tvlUsd * 0.95)}
           </span>

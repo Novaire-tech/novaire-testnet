@@ -70,15 +70,15 @@ export function YieldPositionsTable() {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay: 0.2, ease: 'easeOut' }}
-      className="flex flex-col overflow-hidden rounded-2xl border border-nova-border bg-nova-surface"
+      className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03]"
     >
-      <div className="border-b border-nova-border p-6 flex justify-between items-center">
+      <div className="border-b border-white/10 p-6 flex justify-between items-center">
         <h3 className="font-sans font-medium ">Yield Positions</h3>
       </div>
 
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="bg-nova-bg/50 text-xs text-nova-muted">
+          <thead className="bg-[#050505]/50 text-xs text-[#F5F5F2]/60">
             <tr>
               <th className="px-6 py-4 font-medium">Vault Name</th>
               <th className="px-6 py-4 font-medium">Underlying</th>
@@ -103,7 +103,7 @@ export function YieldPositionsTable() {
 
             {isDisconnected && (
               <tr>
-                <td colSpan={8} className="px-6 py-12 text-center text-nova-muted">
+                <td colSpan={8} className="px-6 py-12 text-center text-[#F5F5F2]/60">
                   Connect Wallet to view yield positions
                 </td>
               </tr>
@@ -113,10 +113,10 @@ export function YieldPositionsTable() {
               <tr>
                 <td colSpan={8} className="px-6 py-12 text-center">
                   <div className="flex flex-col items-center justify-center space-y-4">
-                    <span className="text-nova-muted">No yield positions.<br/>Mint PT & YT to begin.</span>
+                    <span className="text-[#F5F5F2]/60">No yield positions.<br/>Mint PT & YT to begin.</span>
                     <button
                       onClick={() => setIsMintModalOpen(true)}
-                      className="rounded-xl bg-nova-accent px-5 py-2 text-sm font-semibold text-black transition-transform hover:scale-105 active:scale-95"
+                      className="rounded-xl bg-[#BEB7A7] px-5 py-2 text-sm font-semibold text-black transition-transform hover:scale-105 active:scale-95"
                     >
                       Mint PT & YT
                     </button>
@@ -133,29 +133,29 @@ export function YieldPositionsTable() {
                 transition={{ duration: 0.4, delay: 0.2 + i * 0.05 }}
                 className="group transition-colors hover:bg-white/5"
               >
-                <td className="whitespace-nowrap px-6 py-4 font-medium text-nova-text">
+                <td className="whitespace-nowrap px-6 py-4 font-medium text-[#F5F5F2]">
                   {pos.vaultName}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-nova-muted">
+                <td className="whitespace-nowrap px-6 py-4 text-[#F5F5F2]/60">
                   {pos.underlying}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-nova-text">
+                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-[#F5F5F2]">
                   {pos.ptBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-nova-text">
+                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-[#F5F5F2]">
                   {pos.ytBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-nova-accent">
+                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-[#BEB7A7]">
                   {pos.fixedApy}%
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-nova-text">
+                <td className="whitespace-nowrap px-6 py-4 text-[#F5F5F2]">
                   {pos.maturityDate}
                 </td>
-                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-nova-text">
+                <td className="whitespace-nowrap px-6 py-4 text-right font-medium text-[#F5F5F2]">
                   ${pos.currentValueUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
                 <td className="whitespace-nowrap px-6 py-4">
-                  <span className={`inline-flex rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${pos.status === 'Active' ? 'bg-nova-accent/10 text-nova-accent' : 'bg-white/10 text-nova-muted'}`}>
+                  <span className={`inline-flex rounded px-2 py-1 text-[10px] font-bold uppercase tracking-wider ${pos.status === 'Active' ? 'bg-[#BEB7A7]/10 text-[#BEB7A7]' : 'bg-white/10 text-[#F5F5F2]/60'}`}>
                     {pos.status}
                   </span>
                 </td>

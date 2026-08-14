@@ -35,7 +35,7 @@ export function TopNav() {
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay: 0.1, ease: 'easeOut' }}
-      className="flex h-[68px] w-full shrink-0 items-center justify-between border-b border-white/10 bg-[#0A0A0A] px-6"
+      className="flex h-[68px] w-full shrink-0 items-center justify-between border-b border-white/10 bg-[#050505] px-6"
     >
       {/* Left: Wordmark & Links */}
       <div className="flex h-full items-center gap-8">
@@ -62,7 +62,7 @@ export function TopNav() {
                 {isActive && (
                   <motion.div
                     layoutId="activeTopNavIndicator"
-                    className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#3ECF8E]"
+                    className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#BEB7A7]"
                     transition={{ duration: 0.2 }}
                   />
                 )}
@@ -79,11 +79,11 @@ export function TopNav() {
           <motion.button 
             whileHover={{ scale: 1.05 }}
             onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-[#8E8E8E] transition-all hover:border-white/10 hover:bg-[#111111] hover:text-[#F5F5F2]"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-[#8E8E8E] transition-all hover:border-white/10 hover:bg-white/[0.06] hover:text-[#F5F5F2]"
           >
             <Bell className="h-[18px] w-[18px]" />
             {unreadCount > 0 && (
-              <span className="absolute top-1.5 right-1.5 flex h-2 w-2 items-center justify-center rounded-full bg-[#3ECF8E] text-[10px] font-bold text-black ring-2 ring-[#0A0A0A]">
+              <span className="absolute top-1.5 right-1.5 flex h-2 w-2 items-center justify-center rounded-full bg-[#BEB7A7] text-[10px] font-bold text-black ring-2 ring-[#050505]">
               </span>
             )}
           </motion.button>
@@ -98,7 +98,7 @@ export function TopNav() {
           <motion.button 
             whileHover={{ scale: 1.05 }}
             onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-[#8E8E8E] transition-all hover:border-white/10 hover:bg-[#111111] hover:text-[#F5F5F2]"
+            className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-[#8E8E8E] transition-all hover:border-white/10 hover:bg-white/[0.06] hover:text-[#F5F5F2]"
           >
             <Settings className="h-[18px] w-[18px]" />
           </motion.button>
@@ -110,7 +110,7 @@ export function TopNav() {
 
         {/* Stellar Network Icon */}
         <button 
-          className="ml-1 flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] transition-all duration-200 hover:border-[#3ECF8E] hover:bg-[rgba(255,255,255,0.08)]"
+          className="ml-1 flex h-9 w-9 items-center justify-center rounded-xl border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.03)] transition-all duration-200 hover:border-[#BEB7A7] hover:bg-[rgba(255,255,255,0.08)]"
         >
           <Image 
             src="/images/stellar.svg" 
