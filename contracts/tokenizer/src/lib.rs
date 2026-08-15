@@ -161,9 +161,15 @@ impl Tokenizer {
     /// keeper, or a YT holder who wants the freeze to credit yield accrued
     /// right up to maturity) can refresh the observation on an otherwise idle
     /// market without moving tokens. Returns the observed rate.
+    ///
+    /// After maturity, delegates to `freeze_maturity_rate` instead of erroring,
+    /// so a keeper polling this single entrypoint never dead-ends on a bare
+    /// `Error::Matured` with no indication of what to call instead.
     pub fn observe_rate(env: Env) -> Result<i128, Error> {
         let config = Self::read_config(&env)?;
-        Self::require_live(&env, &config)?;
+        if env.ledger().timestamp() >= config.maturity {
+            return Self::freeze_maturity_rate(env);
+        }
         Self::bump_instance_ttl(&env);
         Ok(observe_live_rate(&env, &config))
     }
@@ -839,5 +845,13 @@ mod test {
     fn redeem_at_maturity_before_initialize_fails() {
         let fixture = fixture(NOW);
         fixture.client.redeem_at_maturity(&fixture.admin, &10);
+    }
+
+    #[test]
+    fn observe_rate_after_maturity_delegates_to_freeze_instead_of_erroring() {
+        let fixture = fixture(NOW);
+        initialize(&fixture);
+        fixture.env.ledger().set_timestamp(MATURITY);
+        assert_eq!(fixture.client.observe_rate(), fixture.client.maturity_rate());
     }
 }
