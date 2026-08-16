@@ -1,5 +1,13 @@
 # Novaire Protocol Architecture
 
+> **SUPERSEDED — applies to the pre-2026-08-13 architecture.**
+>
+> This document describes the **10-contract architecture** (factory, vault, marketplace, maturity_engine, rollover, intent_engine, tokenizer, pt_token, yt_token, sy_wrapper) that was replaced in the migration of **2026-08-13** (commit `7a2f6bbf`). The current architecture is a **6-contract architecture** (5 deployed + 1 library) documented in [`docs/architecture/ARCHITECTURE.md`](./docs/architecture/ARCHITECTURE.md) and [`docs/protocol/CONTRACTS.md`](./docs/protocol/CONTRACTS.md).
+>
+> This document is retained for historical/audit purposes only. Do not use it to understand the current system.
+>
+> ---
+>
 > Read-only, code-grounded architecture extraction. Produced by auditing the actual repository at `/home/ahir/Projects/Novaire` (branch `master`) on 2026-08-09. Every material claim below is cited to a file path and function/line. Where something cannot be verified from code, it is marked **UNKNOWN**. Docs (README, `docs/`) are treated as claims, not truth, and checked against code in Section 23.
 
 ---

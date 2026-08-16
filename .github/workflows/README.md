@@ -1,6 +1,6 @@
 # Novaire CI/CD
 
-Monorepo: `contracts/` (Rust/Soroban workspace, 10 crates), `apps/web` (Next.js),
+Monorepo: `contracts/` (Rust/Soroban workspace, 6 crates), `apps/web` (Next.js),
 `apps/indexer`, `scripts/` (deploy/verify tooling, separate npm workspace).
 
 ## Workflows
@@ -43,19 +43,12 @@ gh workflow run deployment-validation.yml
 | `NETWORK_PASSPHRASE` | verify-testnet, nightly, release-validation | `Test SDF Network ; September 2015` for testnet |
 | `MAINNET_RPC` | future mainnet deploy workflow | Not currently wired into any workflow above — add before enabling mainnet automation |
 | `DEPLOYER_SECRET` | not used in CI today (deploys are manual/local) | **Do not** add to a workflow that runs on `pull_request` — only ever reference in `workflow_dispatch`/`release` jobs with required environment protection |
-| `KEEPER_SECRET` | same caveats as `DEPLOYER_SECRET` | |
 | `DATABASE_URL` | `ci.yml` (web build) | Falls back to a dummy local Postgres URL if unset so CI builds still succeed without a real DB |
 | `GITHUB_TOKEN` | gitleaks-action, dependency-review-action | Auto-provided by Actions, no setup needed |
 
-`BLEND_POOL`, `MARKETPLACE_ID` / marketplace, `VAULT_ID` / vault, `TOKENIZER_ID`,
-SY Wrapper, reserve/pool IDs: these live in `scripts/deployments.{testnet,mainnet}.json`,
-not GitHub Secrets — `deployment-validation.yml` validates that file directly rather than
-duplicating the values as secrets.
+`BLEND_POOL`, `SY_WRAPPER_ID`, `TOKENIZER_ID`, `PT_TOKEN_ID`, `YT_TOKEN_ID`, `AMM_ID`: these live in `scripts/deployments.{testnet,mainnet}.json`, not GitHub Secrets — `deployment-validation.yml` validates that file directly rather than duplicating the values as secrets.
 
-Add secrets in **repo Settings → Secrets and variables → Actions**. Scope
-`DEPLOYER_SECRET`/`KEEPER_SECRET` to a protected **Environment** (e.g. `mainnet-release`)
-with required reviewers if/when a real deploy-from-CI workflow is added — none of the
-workflows above currently deploy.
+Add secrets in **repo Settings → Secrets and variables → Actions**. Scope `DEPLOYER_SECRET` to a protected **Environment** (e.g. `mainnet-release`) with required reviewers if/when a real deploy-from-CI workflow is added — none of the workflows above currently deploy.
 
 ## Artifacts produced
 
