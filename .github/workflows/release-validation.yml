@@ -48,7 +48,7 @@ jobs:
       RPC_URL: ${{ secrets.TESTNET_RPC }}
       NETWORK_PASSPHRASE: ${{ secrets.NETWORK_PASSPHRASE }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-node
       - id: verify
         run: |
@@ -70,7 +70,7 @@ jobs:
     needs: [ci, protocol-integrity, security, deployment-validation, code-quality, docs-validation, verify-testnet]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build release-validation.md
         run: |
