@@ -23,7 +23,7 @@ jobs:
         run: node .github/scripts/scan-code-quality.mjs
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: code-quality-report
           path: code-quality-report.md

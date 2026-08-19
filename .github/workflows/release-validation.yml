@@ -56,7 +56,7 @@ jobs:
           mkdir -p artifacts
           npm run verify:testnet 2>&1 | tee artifacts/verify-testnet-report.md
         continue-on-error: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: release-verify-testnet-report
@@ -114,7 +114,7 @@ jobs:
             fi
           } > deployment-summary.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-validation-reports
           path: |

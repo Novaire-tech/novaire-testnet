@@ -46,7 +46,7 @@ jobs:
         working-directory: contracts
       - name: Upload test output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rust-test-report
           path: contracts/target/nextest
@@ -92,7 +92,7 @@ jobs:
         run: cargo build --release --target wasm32-unknown-unknown -p ${{ matrix.contract.crate }}
         working-directory: contracts
       - name: Upload contract WASM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wasm-${{ matrix.contract.crate }}
           path: contracts/target/wasm32-unknown-unknown/release/*.wasm
@@ -133,7 +133,7 @@ jobs:
 
       - name: Upload test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: node-test-report-${{ matrix.workspace.name }}
           path: |
@@ -157,7 +157,7 @@ jobs:
 
       - name: Upload web build artifact
         if: matrix.workspace.name == 'web'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-build
           path: apps/web/.next
