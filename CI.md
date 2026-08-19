@@ -1,6 +1,6 @@
 # CI/CD
 
-Novaire is a monorepo: a Rust/Soroban contract workspace (`contracts/`, 10 crates),
+Novaire is a monorepo: a Rust/Soroban contract workspace (`contracts/`, 6 crates),
 two Node/TypeScript apps (`apps/web` — Next.js, `apps/indexer`), and a standalone
 tooling workspace (`scripts/` — deploy/verify scripts, its own lockfile, not an npm
 workspace member). CI is implemented entirely in GitHub Actions under `.github/`.
@@ -15,7 +15,7 @@ this file summarizes how to reproduce CI locally and what's required before merg
 | Workflow | Trigger | What it checks |
 |---|---|---|
 | `ci.yml` | every PR, push to `main`/`develop` | Rust fmt/clippy/test/audit/build (per-contract wasm matrix) + Node tsc/lint/test/build for `web`, `indexer`, `scripts` |
-| `protocol-integrity.yml` | PR/push touching `contracts/**` | Invariant test suites, full workspace tests, NaN/Infinity accounting scan, portfolio/allocation vitest — see `docs/PROTOCOL_INVARIANTS.md` |
+| `protocol-integrity.yml` | PR/push touching `contracts/**` | Invariant test suites, full workspace tests, NaN/Infinity accounting scan, portfolio/allocation vitest |
 | `security.yml` | every PR, push, daily 03:17 UTC | gitleaks, custom secret/mnemonic/key pattern scan, `cargo audit`, unsafe-Rust detection, `npm audit` |
 | `code-quality.yml` | every PR, push | Configurable scan for TODO/FIXME/console.log/debugger/hardcoded values |
 | `docs-validation.yml` | every PR, push, manual | Confirms required docs exist and are non-empty |
@@ -42,16 +42,7 @@ cargo audit --file Cargo.lock
 cargo build --release --target wasm32-unknown-unknown -p <contract-crate>
 ```
 
-Contract crates: `factory`, `intent_engine`, `marketplace`, `maturity_engine`,
-`rollover`, `sy_wrapper`, `tokenizer/tokenizer`, `tokenizer/pt_token`,
-`tokenizer/yt_token`, `vault`.
-
-Protocol invariant suites (see `docs/PROTOCOL_INVARIANTS.md`):
-
-```bash
-cargo test -p integration_tests <filter> --all-features -- --nocapture
-# filters: pt_yt, vault, tokeniz, untokeniz, redeem, settle, rate, yield, invariant
-```
+Contract crates: `sy-wrapper`, `tokenizer`, `pt-token`, `yt-token`, `amm`, `blend-adapter`, `shared/types`, `integration_tests`.
 
 ### TypeScript / JavaScript
 
@@ -87,34 +78,23 @@ local equivalent — install the [gitleaks CLI](https://github.com/gitleaks/gitl
    directory (`contracts/`, `apps/web`, `apps/indexer`, or `scripts/`).
 3. Common fixes:
    - `rust-fmt-clippy` fails → `cargo fmt --all && cargo clippy --fix --allow-dirty` in `contracts/`.
-   - `protocol-integrity` fails → read `docs/PROTOCOL_INVARIANTS.md` first; this gate
-     blocks merge by design, do not bypass with `continue-on-error`.
-   - `security` fails on gitleaks/secret-patterns → assume the credential is
-     compromised, rotate it, then scrub it from git history (it isn't enough to remove
-     it from HEAD).
+   - `protocol-integrity` fails → this gate blocks merge by design, do not bypass with `continue-on-error`.
+   - `security` fails on gitleaks/secret-patterns → assume the credential is compromised, rotate it, then scrub it from git history (it isn't enough to remove it from HEAD).
    - `deployment-validation` fails → fix `scripts/deployments.*.json`, don't disable the check.
-4. Download job artifacts (test reports, coverage, nightly/release reports) from the
-   run summary for full output beyond what's printed in the log.
+4. Download job artifacts (test reports, coverage, nightly/release reports) from the run summary for full output beyond what's printed in the log.
 
 Full recovery notes per workflow are in
 [`.github/workflows/README.md#failure-recovery`](.github/workflows/README.md).
 
 ## Secrets and safety
 
-- No workflow prints secret values to logs; `DATABASE_URL` falls back to a dummy local
-  Postgres URL in `ci.yml` when unset so builds don't require a real secret.
-- `DEPLOYER_SECRET`/`KEEPER_SECRET` are never referenced by any `pull_request`-triggered
-  workflow — only `workflow_dispatch`/release jobs may use them, and only behind a
-  protected GitHub Environment.
-- Required secrets and their scope are documented in
-  [`.github/workflows/README.md#required-github-secrets`](.github/workflows/README.md).
+- No workflow prints secret values to logs; `DATABASE_URL` falls back to a dummy local Postgres URL in `ci.yml` when unset so builds don't require a real secret.
+- `DEPLOYER_SECRET`/`KEEPER_SECRET` are never referenced by any `pull_request`-triggered workflow — only `workflow_dispatch`/release jobs may use them, and only behind a protected GitHub Environment.
+- Required secrets and their scope are documented in [`.github/workflows/README.md#required-github-secrets`](.github/workflows/README.md).
 
 ## Required status checks before merge
 
-Configure these as required status checks in **Settings → Branches → Branch protection**
-for `main` (and `develop` with a lower approval count) — see
-[`.github/workflows/README.md#recommended-branch-protection-main`](.github/workflows/README.md)
-for the full recommended ruleset:
+Configure these as required status checks in **Settings → Branches → Branch protection** for `main` (and `develop` with a lower approval count) — see [`.github/workflows/README.md#recommended-branch-protection-main`](.github/workflows/README.md) for the full recommended ruleset:
 
 - `ci-gate`
 - `Protocol Integrity gate`
@@ -122,5 +102,4 @@ for the full recommended ruleset:
 - `Documentation Validation / check-required-docs`
 - `Deployment Validation gate`
 
-This repository does not modify branch protection automatically — enabling these is a
-manual step in GitHub repo settings.
+This repository does not modify branch protection automatically — enabling these is a manual step in GitHub repo settings.

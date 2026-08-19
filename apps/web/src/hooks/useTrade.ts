@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import { WalletService } from '../services/walletService';
 import { CONTRACTS, RPC_URL, NETWORK_PASSPHRASE } from '../config/contracts';
+import { applySlippage } from '../utils/slippage';
+import { Errors } from '../../../../packages/bindings/amm/src/index';
 
 export type TradeAsset = 'PT' | 'YT';
 export type TradeAction = 'Buy' | 'Sell';
@@ -29,11 +31,43 @@ export interface TradeQuote {
   warning?: string;
 }
 
+// Mirrors contracts/amm/src/lib.rs Error enum / packages/bindings/amm/src/index.ts Errors map.
+const AMM_ERROR_MESSAGES: Record<string, string> = {
+  AlreadyInitialized: 'Market already initialized.',
+  NotInitialized: 'Market not initialized.',
+  InvalidMaturity: 'Invalid maturity.',
+  InvalidAmount: 'Invalid trade amount.',
+  InvalidScalarRoot: 'Invalid market parameters.',
+  InvalidAnchor: 'Invalid market parameters.',
+  InvalidFee: 'Invalid fee configuration.',
+  InvalidTwapWindow: 'Invalid TWAP window.',
+  MarketNotSeeded: 'This market has not been seeded with liquidity yet.',
+  MarketMatured: 'This market has matured.',
+  SlippageExceeded: 'Price moved beyond your slippage tolerance.',
+  InsufficientLiquidity: 'Pool liquidity is too low for this trade size.',
+  MathOverflow: 'Trade amount is too large — calculation overflow.',
+  MarketProportionTooHigh: 'Trade would push the pool too far out of balance. Try a smaller amount.',
+  ExchangeRateBelowOne: 'Exchange rate is below the allowed minimum for this trade.',
+  UnsupportedRoute: 'Unsupported trade route.',
+  TradeNotFound: 'Trade not found.',
+  InputOutOfBounds: 'Trade input is out of bounds for this market.',
+  InvalidSyRate: 'Invalid yield-bearing asset rate — try again shortly.',
+};
+
 function parseTradeError(e: unknown): string {
-  // Fallback message parsing — the AMM's error enum isn't known until real bindings are
-  // generated, so we match on the raw error text rather than a NovaireMarketError-style enum.
   const msg = (e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : null) || String(e);
 
+  // Soroban contract errors surface as e.g. "Error(Contract, #14)" — map the numeric
+  // code through the generated Errors enum before falling back to text sniffing.
+  const codeMatch = msg.match(/Error\(Contract,\s*#(\d+)\)/) || msg.match(/#(\d+)\)/);
+  if (codeMatch) {
+    const code = Number(codeMatch[1]);
+    const entry = (Errors as Record<number, { message: string }>)[code];
+    const friendly = entry && AMM_ERROR_MESSAGES[entry.message];
+    if (friendly) return friendly;
+  }
+
+  // Fallback: not a recognized AMM contract error — sniff wallet/network/generic text.
   if (msg.includes('Insufficient balance') || (msg.includes('HostError') && (msg.includes('balance') || msg.includes('transfer') || msg.includes('underfunded')))) return 'Insufficient balance.';
   if (msg.includes('timeout') || msg.includes('Network error') || msg.includes('fetch') || msg.includes('Failed to fetch') || msg.includes('Simulation failed')) return 'Network error.';
   if (msg.includes('User rejected') || msg.includes('UserRejected') || msg.includes('User declined')) return 'Transaction cancelled.';
@@ -266,13 +300,8 @@ export function useTrade() {
       const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: CONTRACTS.SY_WRAPPER });
 
       const amountInStroops = BigInt(Math.floor(amountIn * STROOP_SCALE));
-      let minOutStroops = 0n;
 
-      if (quote) {
-        minOutStroops = BigInt(Math.floor(quote.minimumReceived * STROOP_SCALE));
-      } else {
-        throw new Error('No valid quote available');
-      }
+      if (!quote) throw new Error('No valid quote available');
 
       let result: unknown;
 
@@ -283,6 +312,15 @@ export function useTrade() {
         const depositResult = await depositTx.signAndSend({ signTransaction });
         const syMinted = unwrapResult(depositTx.result) || 0n;
 
+        // Resimulate against the actually-minted SY amount and current pool state
+        // immediately before signing — quote.minimumReceived may be stale (built from
+        // a debounced quote seconds/minutes old, no freshness check on it).
+        const freshQuoteTx = asset === 'PT'
+          ? await ammClient.quote_sy_for_pt({ sy_in: syMinted })
+          : await ammClient.quote_sy_for_yt({ sy_in: syMinted });
+        const freshOut = unwrapResult(freshQuoteTx.result) || 0n;
+        const minOutStroops = applySlippage(freshOut, slippagePercent);
+
         const swapTx = asset === 'PT'
           ? await ammClient.swap_sy_for_pt({ from: address, sy_in: syMinted, min_pt_out: minOutStroops })
           : await ammClient.swap_sy_for_yt({ from: address, sy_in: syMinted, min_yt_out: minOutStroops });
@@ -291,9 +329,18 @@ export function useTrade() {
       } else if (action === 'Sell' && (asset === 'PT' || asset === 'YT')) {
         // Selling PT/YT for underlying: first swap PT/YT for SY on the AMM, then redeem
         // the SY for underlying via the SY Wrapper. Two on-chain transactions.
+
+        // Resimulate immediately before signing rather than trusting the debounced
+        // quote's minimumReceived (was previously hardcoded to 1n — no real protection).
+        const freshQuoteTx = asset === 'PT'
+          ? await ammClient.quote_pt_for_sy({ pt_in: amountInStroops })
+          : await ammClient.quote_yt_for_sy({ yt_in: amountInStroops });
+        const freshSyOut = unwrapResult(freshQuoteTx.result) || 0n;
+        const minSyOutStroops = applySlippage(freshSyOut, slippagePercent);
+
         const swapTx = asset === 'PT'
-          ? await ammClient.swap_pt_for_sy({ from: address, pt_in: amountInStroops, min_sy_out: 1n })
-          : await ammClient.swap_yt_for_sy({ from: address, yt_in: amountInStroops, min_sy_out: 1n });
+          ? await ammClient.swap_pt_for_sy({ from: address, pt_in: amountInStroops, min_sy_out: minSyOutStroops })
+          : await ammClient.swap_yt_for_sy({ from: address, yt_in: amountInStroops, min_sy_out: minSyOutStroops });
         const swapResult = await swapTx.signAndSend({ signTransaction });
         const syReceived = unwrapResult(swapTx.result) || 0n;
 
@@ -307,7 +354,7 @@ export function useTrade() {
       return result;
     } catch (e) {
       console.error('Trade execution failed', e);
-      throw e;
+      throw new Error(parseTradeError(e));
     } finally {
       setIsExecuting(false);
     }

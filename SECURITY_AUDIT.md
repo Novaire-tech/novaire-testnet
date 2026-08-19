@@ -1,5 +1,13 @@
 # Novaire Protocol — Security Audit
 
+> **SUPERSEDED — applies to the pre-2026-08-13 architecture.**
+>
+> This audit report covers the **10-contract architecture** (factory, vault, marketplace, maturity_engine, rollover, intent_engine, tokenizer, pt_token, yt_token, sy_wrapper) that was replaced in the migration of **2026-08-13** (commit `7a2f6bbf`). The current **6-contract architecture** has not been independently audited.
+>
+> This document is retained for historical/audit purposes only. Do not use it to assess the current system's security.
+>
+> ---
+
 **Scope:** `contracts/{factory, intent_engine, marketplace, maturity_engine, rollover, sy_wrapper, vault, tokenizer/{tokenizer,pt_token,yt_token}}` (Soroban/Rust, Stellar). Workspace root: `contracts/Cargo.toml`.
 **Method:** Full read of every contract's `src/lib.rs` (10 contracts, ~9,760 lines total), test suites, `test_snapshots/`, `Cargo.toml` dependency manifests, and existing `docs/PROTOCOL_INVARIANTS.md`.
 **Date:** 2026-08-07

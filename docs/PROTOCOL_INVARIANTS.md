@@ -1,6 +1,14 @@
 # Protocol Invariants
 
-Source-of-truth reference for invariants enforced (or assumed) across the Novaire contracts. All citations are `file:line` in `contracts/`.
+> **SUPERSEDED — applies to the pre-2026-08-13 architecture.**
+>
+> This document describes invariants for the **10-contract architecture** (factory, vault, marketplace, maturity_engine, rollover, intent_engine, tokenizer, pt_token, yt_token, sy_wrapper) that was replaced in the migration of **2026-08-13** (commit `7a2f6bbf`). The current architecture's invariants are documented in [`docs/protocol/CONTRACTS.md`](./docs/protocol/CONTRACTS.md).
+>
+> This document is retained for historical/audit purposes only. Do not use it to understand the current system.
+>
+> ---
+>
+> Source-of-truth reference for invariants enforced (or assumed) across the Novaire contracts. All citations are `file:line` in `contracts/`.
 
 ## 1. PT Supply
 
