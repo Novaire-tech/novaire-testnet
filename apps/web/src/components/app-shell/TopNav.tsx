@@ -5,17 +5,17 @@ import { motion } from 'framer-motion';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Bell, Settings } from 'lucide-react';
+import { Bell, Settings, Wallet } from 'lucide-react';
 import { SettingsDropdown } from './SettingsDropdown';
 import { NotificationCenter } from '../notifications/NotificationCenter';
 import { useNotifications } from '../../hooks/useNotifications';
+import { useWallet } from '../../hooks/useWallet';
 
 const TOP_LINKS = [
-  { label: 'Dashboard', href: '/app' },
+  { label: 'Markets', href: '/app/markets' },
+  { label: 'Mint', href: '/app/mint' },
+  { label: 'Trade', href: '/app/trade' },
   { label: 'Portfolio', href: '/app/portfolio' },
-  { label: 'Vaults', href: '/app/vaults' },
-  { label: 'Analytics', href: '/app/analytics' },
-  { label: 'Resources', href: '/docs' },
 ];
 
 export function TopNav() {
@@ -23,6 +23,8 @@ export function TopNav() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const { unreadCount } = useNotifications();
+  const { isConnected, address, connect, disconnect } = useWallet();
+  const formattedAddress = address ? `${address.slice(0, 4)}...${address.slice(-4)}` : '';
 
   useEffect(() => {
     const handleOpen = () => setIsSettingsOpen(true);
@@ -49,7 +51,7 @@ export function TopNav() {
         
         <nav className="hidden h-full md:flex items-center gap-6">
           {TOP_LINKS.map((link) => {
-            const isActive = pathname === link.href;
+            const isActive = pathname === link.href || pathname.startsWith(`${link.href}/`);
             return (
               <Link
                 key={link.href}
@@ -74,6 +76,26 @@ export function TopNav() {
 
       {/* Right: Actions */}
       <div className="flex items-center gap-2">
+        {/* Connect Wallet */}
+        {isConnected ? (
+          <button
+            onClick={disconnect}
+            title="Disconnect Wallet"
+            className="flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 text-[13px] font-medium text-[#F5F5F2] transition-colors hover:border-red-500/30 hover:text-red-500"
+          >
+            <Wallet className="h-4 w-4" />
+            {formattedAddress}
+          </button>
+        ) : (
+          <button
+            onClick={connect}
+            className="flex h-9 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 text-[13px] font-medium text-[#F5F5F2] transition-colors hover:border-[#BEB7A7]/50 hover:text-[#BEB7A7]"
+          >
+            <Wallet className="h-4 w-4" />
+            Connect Wallet
+          </button>
+        )}
+
         {/* Notification & Settings */}
         <div className="relative">
           <motion.button 
