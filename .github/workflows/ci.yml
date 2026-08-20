@@ -22,7 +22,7 @@ jobs:
     name: Rust / fmt + clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           cache-key-prefix: fmt-clippy
@@ -37,7 +37,7 @@ jobs:
     name: Rust / test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           cache-key-prefix: test
@@ -46,7 +46,7 @@ jobs:
         working-directory: contracts
       - name: Upload test output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rust-test-report
           path: contracts/target/nextest
@@ -56,7 +56,7 @@ jobs:
     name: Rust / cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           components: ""
@@ -83,7 +83,7 @@ jobs:
           - { crate: yt_token, path: tokenizer/yt_token }
           - { crate: vault, path: vault }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           components: ""
@@ -92,7 +92,7 @@ jobs:
         run: cargo build --release --target wasm32-unknown-unknown -p ${{ matrix.contract.crate }}
         working-directory: contracts
       - name: Upload contract WASM
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wasm-${{ matrix.contract.crate }}
           path: contracts/target/wasm32-unknown-unknown/release/*.wasm
@@ -110,7 +110,7 @@ jobs:
           - { name: indexer, path: apps/indexer }
           - { name: scripts, path: scripts }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-node
 
       - name: prisma generate
@@ -133,7 +133,7 @@ jobs:
 
       - name: Upload test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: node-test-report-${{ matrix.workspace.name }}
           path: |
@@ -157,7 +157,7 @@ jobs:
 
       - name: Upload web build artifact
         if: matrix.workspace.name == 'web'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-build
           path: apps/web/.next

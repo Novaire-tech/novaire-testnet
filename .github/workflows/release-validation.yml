@@ -48,7 +48,7 @@ jobs:
       RPC_URL: ${{ secrets.TESTNET_RPC }}
       NETWORK_PASSPHRASE: ${{ secrets.NETWORK_PASSPHRASE }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-node
       - id: verify
         run: |
@@ -56,7 +56,7 @@ jobs:
           mkdir -p artifacts
           npm run verify:testnet 2>&1 | tee artifacts/verify-testnet-report.md
         continue-on-error: true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: release-verify-testnet-report
@@ -70,7 +70,7 @@ jobs:
     needs: [ci, protocol-integrity, security, deployment-validation, code-quality, docs-validation, verify-testnet]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build release-validation.md
         run: |
@@ -114,7 +114,7 @@ jobs:
             fi
           } > deployment-summary.md
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-validation-reports
           path: |

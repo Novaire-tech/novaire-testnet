@@ -20,7 +20,7 @@ jobs:
     name: Secret scan (gitleaks)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Install gitleaks
@@ -34,7 +34,7 @@ jobs:
     name: Wallet / mnemonic / key pattern scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Scan for hardcoded secrets
         run: bash .github/scripts/scan-secrets.sh
 
@@ -42,7 +42,7 @@ jobs:
     name: cargo audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           components: ""
@@ -54,7 +54,7 @@ jobs:
     name: Unsafe Rust detection
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fail on unsafe{} blocks in contract code
         run: |
           set -euo pipefail
@@ -73,7 +73,7 @@ jobs:
       matrix:
         workspace: [".", scripts]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
