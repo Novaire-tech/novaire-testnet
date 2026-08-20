@@ -15,6 +15,8 @@ interface MintModalProps {
   onClose: () => void;
   defaultAsset?: string;
   onSuccess?: () => void;
+  /** 'modal' (default) renders as a centered overlay dialog. 'page' renders inline as page content. */
+  variant?: 'modal' | 'page';
 }
 
 type YieldPreference = 'fixed' | 'keep' | 'custom';
@@ -26,7 +28,7 @@ interface MintSimulationData {
   ytEstimateStroops: bigint;
 }
 
-export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: MintModalProps) {
+export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess, variant = 'modal' }: MintModalProps) {
   const { isConnected, address, connect, balances, refreshBalances } = useWallet();
   const [amount, setAmount] = useState<string>('');
   const [vaults, setVaults] = useState<Vault[]>([]);
@@ -247,22 +249,17 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
     },
   ];
 
-  return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 10 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 10 }}
-          className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-[#050505] shadow-2xl max-h-[92vh] flex flex-col"
-        >
+  const content = (
+    <>
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-white/10 p-5 shrink-0">
-            <h2 className="text-xl font-semibold text-[#F5F5F2]">Mint PT &amp; YT</h2>
-            <button onClick={handleClose} className="rounded-lg p-2 text-white/50 hover:bg-white/5 hover:text-white transition-colors">
-              <X className="h-5 w-5" />
-            </button>
-          </div>
+          {variant === 'modal' && (
+            <div className="flex items-center justify-between border-b border-white/10 p-5 shrink-0">
+              <h2 className="text-xl font-semibold text-[#F5F5F2]">Mint PT &amp; YT</h2>
+              <button onClick={handleClose} className="rounded-lg p-2 text-white/50 hover:bg-white/5 hover:text-white transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          )}
 
           <div className="p-5 space-y-5 overflow-y-auto">
 
@@ -587,6 +584,27 @@ export function MintModal({ isOpen, onClose, defaultAsset = 'XLM', onSuccess }: 
               </button>
             )}
           </div>
+    </>
+  );
+
+  if (variant === 'page') {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-[#050505] shadow-2xl flex flex-col">
+        {content}
+      </div>
+    );
+  }
+
+  return (
+    <AnimatePresence>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+          className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-[#050505] shadow-2xl max-h-[92vh] flex flex-col"
+        >
+          {content}
         </motion.div>
       </div>
     </AnimatePresence>

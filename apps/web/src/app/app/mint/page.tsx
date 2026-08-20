@@ -16,6 +16,7 @@ export default function MintPage() {
     >
       <MintModal
         isOpen
+        variant="page"
         onClose={() => router.push('/app')}
         onSuccess={refreshPortfolio}
       />
