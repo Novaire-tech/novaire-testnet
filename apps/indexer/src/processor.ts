@@ -15,6 +15,9 @@ function stringifyAmounts(data: Record<string, unknown>): Record<string, string>
 }
 
 async function getOrCreateUser(tx: Tx, address: string) {
+  if (typeof address !== 'string' || address.length === 0) {
+    throw new Error(`getOrCreateUser: missing/invalid address (${JSON.stringify(address)})`);
+  }
   await tx.user.upsert({
     where: { id: address },
     create: { id: address },

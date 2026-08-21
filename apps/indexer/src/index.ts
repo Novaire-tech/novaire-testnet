@@ -78,13 +78,20 @@ async function start() {
 
         // All event writes + the cursor advance happen in one transaction, so a crash
         // mid-batch can never advance SyncState past events that weren't persisted.
+        // A single malformed/unexpected event (bad topic shape, missing address, ...)
+        // is caught and skipped here rather than rethrown — otherwise it would abort
+        // the whole batch every poll, wedging the cursor on the same bad event forever.
         await runInTransaction(async (tx) => {
           if (eventsResponse.events) {
             for (const event of eventsResponse.events) {
               if (!event.contractId) continue;
               const contractId = event.contractId.toString();
               const contractLabel = contractLabelById.get(contractId) ?? 'unknown';
-              await processEvent(tx, event, event.txHash, new Date(), contractId, contractLabel, epochId);
+              try {
+                await processEvent(tx, event, event.txHash, new Date(), contractId, contractLabel, epochId);
+              } catch (err) {
+                console.error(`Skipping unprocessable event ${event.id} (contract ${contractLabel}):`, err);
+              }
             }
           }
           await tx.syncState.update({ where: { id: 'singleton' }, data: { lastLedger: currentLedger } });

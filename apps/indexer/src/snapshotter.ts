@@ -13,6 +13,7 @@ interface ProtocolStateSnapshot {
   tvlUsd: number;
   priceUnavailable: boolean;
   impliedYieldApy: number;
+  apyUnavailable: boolean;
   ptSupplyXlm: number;
   ytSupplyXlm: number;
 }
@@ -50,6 +51,7 @@ async function getProtocolState(deployments: Record<string, string>): Promise<Pr
     tvlUsd: 0,
     priceUnavailable: true,
     impliedYieldApy: 0,
+    apyUnavailable: true,
     ptSupplyXlm: 0,
     ytSupplyXlm: 0,
   };
@@ -92,9 +94,16 @@ async function getProtocolState(deployments: Record<string, string>): Promise<Pr
       syTotalSupplyRes.status === 'fulfilled' ? Number(unwrapResult(syTotalSupplyRes.value.result) || 0) / 1e7 : 0;
 
     let impliedYieldApy = 0;
+    // Distinguish "the RPC call failed / returned garbage" (apyUnavailable) from a
+    // genuine non-positive APY reading — both used to collapse into a silent 0,
+    // which was indistinguishable from real 0% APY once persisted.
+    let apyUnavailable = true;
     if (twapApyRes.status === 'fulfilled') {
       const rawTwapApy = Number(unwrapResult(twapApyRes.value.result));
-      if (!isNaN(rawTwapApy) && rawTwapApy > 0) impliedYieldApy = rawTwapApy / 1e16;
+      if (!isNaN(rawTwapApy)) {
+        apyUnavailable = false;
+        if (rawTwapApy > 0) impliedYieldApy = rawTwapApy / 1e16;
+      }
     }
 
     let ptPriceUnderlying = 1.0;
@@ -109,7 +118,7 @@ async function getProtocolState(deployments: Record<string, string>): Promise<Pr
     const tvlXlm = totalDepositsXlm; // dexLiquidityXlm omitted — not needed for this snapshot's fields
     const tvlUsd = priceUnavailable ? 0 : tvlXlm * (xlmPriceUsd as number);
 
-    return { ptPriceUnderlying, tvlXlm, tvlUsd, priceUnavailable, impliedYieldApy, ptSupplyXlm, ytSupplyXlm };
+    return { ptPriceUnderlying, tvlXlm, tvlUsd, priceUnavailable, impliedYieldApy, apyUnavailable, ptSupplyXlm, ytSupplyXlm };
   } catch (e) {
     console.error('[snapshotter] Failed to fetch protocol state:', e);
     return defaultState;
@@ -127,6 +136,15 @@ export async function takeSnapshot(deployments: Record<string, string>, network:
   if (!syWrapper) return;
 
   const state = await getProtocolState(deployments);
+
+  // A failed RPC/price read produces a well-formed but fake zero-TVL/zero-APY
+  // state (see defaultState above) — write nothing rather than let a transient
+  // outage silently corrupt history with data indistinguishable from the real thing.
+  if (state.priceUnavailable || state.apyUnavailable) {
+    console.warn('[snapshotter] Protocol state unavailable (price or APY read failed), skipping snapshot.');
+    return;
+  }
+
   const ptPrice = state.ptPriceUnderlying;
   const ytPrice = Math.max(0, 1.0 - ptPrice);
   const tvl = state.tvlUsd;
