@@ -124,6 +124,32 @@ This is an operational step, not a code-enforceable one — no on-chain check ca
 
 ---
 
+## Security Note: ExchangeRateBelowOne
+
+`ExchangeRateBelowOne` is an intentional AMM invariant. Trades that would
+produce an exchange rate below `WAD` are reverted before the resulting
+`last_ln_implied_rate` can be persisted.
+
+The transaction is atomic, so the failed trade leaves the pool state unchanged
+and the market remains usable.
+
+A previously reported concern was that this error could persist an invalid
+market state and cause a trading DoS. It was investigated against the current
+source (`contracts/amm/src/lib.rs`) and the deployed testnet WASM. Multiple
+oversized-trade, boundary, repeated-swap, and near-expiry scenarios were
+reproduced. In every case the triggering transaction reverted atomically and
+subsequent quotes remained functional; the live testnet market was also
+queried directly and confirmed healthy.
+
+No alternate state-write path or separate AMM implementation was found.
+
+**Disposition:** Not reproducible in the current implementation or deployment.
+No protocol change required. On-chain history beyond the RPC retention window
+was not inspected — a specific transaction hash or ledger sequence would be
+required to investigate any future claim of a historical incident.
+
+---
+
 ## Testing Strategy
 
 - Unit and integration tests exist per-contract under `contracts/*/src/test.rs`, plus `contracts/integration_tests/` for cross-contract invariants, economics, and regression suites.

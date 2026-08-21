@@ -414,6 +414,7 @@ CI (`.github/workflows/ci.yml`) runs the same quality gates: Rust fmt/clippy/tes
 - **Flat-file / demo-grade state.** `history-store.json`, `registered_users.json`, and the simulated `/api/waitlist` are plain files with no access control — appropriate for local/testnet development only, not multi-user production deployment. The Prisma Postgres schema is not populated at runtime today.
 - **Indexer is a stub.** No on-chain event reconstruction exists (`apps/indexer/src/processor.ts`); the DB is non-authoritative and the frontend reads everything live from the chain.
 - **Legacy/inconsistent scripts.** `scripts/initialize.ts` targets the deprecated `soroban` CLI; `scripts/keeper.js` is a legacy rollover-executor script (rollover contract no longer exists). See also the deploy-script caveats in [Deploying to Stellar Testnet](#deploying-to-stellar-testnet).
+- **`ExchangeRateBelowOne` is an intentional trade-protection invariant**, not a persistent-DoS bug — an oversized trade reverts atomically before any bad rate is persisted. A reported concern that this could brick a market was investigated against current source and the deployed testnet WASM and could not be reproduced; see [`SECURITY.md`](./SECURITY.md#security-note-exchangeratebelowone) for the full disposition.
 
 ---
 
