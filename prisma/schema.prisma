@@ -93,11 +93,18 @@ model SyncState {
 model ProtocolHistory {
   id             String   @id @default(uuid())
   timestamp      DateTime @default(now())
+  network        String
+  syWrapper      String
   ptPrice        Float
   ytPrice        Float
   tvl            Float
   fixedApy       Float
   tradingVolume  Float    @default(0)
+  syExchangeRate Float?
+  ptSupply       String?
+  ytSupply       String?
   eventType      String?  // e.g., "swap_u_pt", "deposit", etc.
   txHash         String?
+
+  @@index([network, syWrapper, timestamp])
 }

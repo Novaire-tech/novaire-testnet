@@ -11,6 +11,7 @@
     "build": "npm run build -w web",
     "start": "npm run start -w web",
     "lint": "npm run lint -w web",
+    "indexer:dev": "npm run dev -w indexer",
     "contracts:test": "cd contracts && cargo test --workspace",
     "contracts:build": "cd contracts && bash scripts/build-optimized-wasm.sh",
     "deploy": "cd contracts && bash scripts/deploy-testnet-resilient.sh",

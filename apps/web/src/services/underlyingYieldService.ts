@@ -60,7 +60,10 @@ export function deriveUnderlyingApyFromHistory(history: ProtocolHistoryLikeEntry
 /** Client-side entry point: fetch history and derive underlying APY from it. */
 export async function getUnderlyingApy(): Promise<UnderlyingApyResult> {
   try {
-    const res = await fetch('/api/history');
+    // Postgres-backed, populated by the indexer's snapshotter — replaces
+    // history-store.json for this protocol-level-only read (syExchangeRate has no
+    // wallet-balance dependency, so no need to stay on the file store here).
+    const res = await fetch('/api/protocol-history');
     if (!res.ok) return { status: 'unavailable', reason: 'history unavailable' };
     const history = await res.json();
     if (!Array.isArray(history)) return { status: 'unavailable', reason: 'history unavailable' };

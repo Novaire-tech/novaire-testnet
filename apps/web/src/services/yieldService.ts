@@ -78,7 +78,10 @@ export class YieldService {
 
   static async getYieldHistory(vaultId: string): Promise<YieldHistory[]> {
     try {
-      const res = await fetch('/api/history');
+      // Postgres-backed, populated by the indexer's snapshotter — replaces
+      // history-store.json for this protocol-level-only read (fixedApy has no
+      // wallet-balance dependency, so no need to stay on the file store here).
+      const res = await fetch('/api/protocol-history');
       if (!res.ok) return [];
       const history: unknown = await res.json();
 
