@@ -25,9 +25,19 @@ import {
   settleAfterConfirmation,
   RPC_URL,
   FRIENDBOT_URL,
+  BLEND_POOL,
+  UNDERLYING_ASSET,
+  readBlendReserve,
+  readBlendPositions,
+  readSyExchangeRate,
+  readSyTotalSupply,
+  readAmmSpotApy,
+  redeem,
+  STROOP,
   type Wallet,
 } from './verify_testnet/chain';
-import { computeIndependent, computeAppFormula, withinTolerance, calculateProjectedDailyYield } from './verify_testnet/expected';
+import { computeIndependent, computeAppFormula, withinTolerance, calculateProjectedDailyYield, computeAdapterRate, withinToleranceBigInt } from './verify_testnet/expected';
+import { CONTRACTS } from '../apps/web/src/config/contracts';
 
 const USE_DETERMINISTIC = process.argv.includes('--deterministic');
 const XLM_SPOT_USD = 0.1; // fixed reference price; see README — avoids depending on a live price API for this local tool
@@ -222,6 +232,108 @@ async function scenarioClaimableYield() {
   }
 }
 
+function checkEqualBigInt(label: string, expected: bigint, actual: bigint, r: ReturnType<typeof record>, toleranceWad?: bigint) {
+  const pass = withinToleranceBigInt(expected, actual, toleranceWad);
+  r.push({ label, pass, detail: pass ? undefined : `expected ${expected}, got ${actual} (diff ${expected > actual ? expected - actual : actual - expected})` });
+}
+
+/**
+ * The chain this whole tool exists to prove for a Blend-backed vault:
+ *   real Blend Pool.get_reserve/get_positions
+ *     -> BlendPoolClient (Rust, exercised on-chain via the deployed sy-wrapper WASM)
+ *     -> SyWrapper.exchange_rate()          [on-chain read]
+ *     -> independently re-derived rate      [off-chain, expected.ts:computeAdapterRate]
+ *     -> AMM.spot_apy()                     [on-chain read, before vs after a real deposit]
+ *
+ * Talks only to the real deployed Blend pool (BLEND_POOL) — no mock. The
+ * existing MockBlendPool-based Rust tests
+ * (contracts/integration_tests/tests/blend_wrapper.rs, etc.) are untouched
+ * and still the place unit-level rate math is exercised in isolation.
+ */
+async function scenarioBlendRateReflectsRealPool() {
+  const wallet = await newFundedWallet('scenario-f-blend');
+  const r = record('F — Blend rate propagation (real pool)', wallet.publicKey);
+  const server = getServer();
+
+  const reserveBefore = await readBlendReserve(UNDERLYING_ASSET, wallet.publicKey);
+  r.push({
+    label: 'Blend reserve enabled',
+    pass: reserveBefore.enabled,
+    detail: `pool=${BLEND_POOL} asset=${UNDERLYING_ASSET} index=${reserveBefore.index} enabled=${reserveBefore.enabled}`,
+  });
+  r.push({
+    label: 'Blend b_rate plausible (>= 1.0 in 12-decimal terms)',
+    pass: reserveBefore.bRate >= 1_000_000_000_000n,
+    detail: `b_rate=${reserveBefore.bRate}`,
+  });
+  if (!reserveBefore.enabled) {
+    r.skip(`Blend reserve for ${UNDERLYING_ASSET} on pool ${BLEND_POOL} is disabled — cannot verify rate propagation this run.`);
+    return;
+  }
+
+  const [positionsBefore, sySupplyBefore, syRateBefore, apyBefore] = await Promise.all([
+    readBlendPositions(CONTRACTS.SY_WRAPPER, wallet.publicKey),
+    readSyTotalSupply(wallet.publicKey),
+    readSyExchangeRate(wallet.publicKey),
+    readAmmSpotApy(wallet.publicKey),
+  ]);
+
+  // Pre-deposit sanity: the wrapper's own bTokens/rate at this instant should
+  // already satisfy exchange_rate() == computeAdapterRate(...) — this is the
+  // real cross-contract chain, not a synthetic setup.
+  const bTokensBefore = positionsBefore.get(reserveBefore.index) ?? 0n;
+  const expectedRateBefore = computeAdapterRate(bTokensBefore, reserveBefore.bRate, sySupplyBefore);
+  checkEqualBigInt('exchange_rate() == independently-derived rate (pre-deposit)', expectedRateBefore, syRateBefore, r);
+
+  // Force a real Blend `submit` (supply) through the deployed sy-wrapper WASM.
+  const dep = await depositVault(wallet, 20);
+  r.tx('sy_wrapper.deposit(20 XLM) -> Blend submit(SUPPLY)', dep);
+  if (dep.hash) await waitForTransaction(dep.hash, server);
+  await settleAfterConfirmation();
+
+  const [reserveAfter, positionsAfter, sySupplyAfter, syRateAfter, apyAfterDeposit] = await Promise.all([
+    readBlendReserve(UNDERLYING_ASSET, wallet.publicKey),
+    readBlendPositions(CONTRACTS.SY_WRAPPER, wallet.publicKey),
+    readSyTotalSupply(wallet.publicKey),
+    readSyExchangeRate(wallet.publicKey),
+    readAmmSpotApy(wallet.publicKey),
+  ]);
+
+  const bTokensAfter = positionsAfter.get(reserveAfter.index) ?? 0n;
+  r.push({ label: 'Blend bTokens increased after supply', pass: bTokensAfter > bTokensBefore, detail: `before=${bTokensBefore} after=${bTokensAfter}` });
+  r.push({ label: 'SY total_supply increased after deposit', pass: sySupplyAfter > sySupplyBefore, detail: `before=${sySupplyBefore} after=${sySupplyAfter}` });
+
+  const expectedRateAfter = computeAdapterRate(bTokensAfter, reserveAfter.bRate, sySupplyAfter);
+  checkEqualBigInt('exchange_rate() == independently-derived rate (post-deposit)', expectedRateAfter, syRateAfter, r);
+  r.push({ label: 'exchange_rate() monotonic non-decreasing across deposit', pass: syRateAfter >= syRateBefore, detail: `before=${syRateBefore} after=${syRateAfter}` });
+  r.push({ label: 'AMM spot_apy() read succeeds after rate change (no revert)', pass: isFinite(Number(apyAfterDeposit)), detail: `before=${apyBefore} after=${apyAfterDeposit}` });
+
+  // Redeem leg: SyWrapper::redeem is a plain user-callable entry point (no
+  // maturity gate — contracts/sy-wrapper/src/lib.rs:606), so this is
+  // implementable now rather than SKIPPED.
+  const redeemAmount = Math.min(10, sySupplyAfter > 0n ? Number(sySupplyAfter) / STROOP : 0);
+  if (redeemAmount > 0) {
+    const red = await redeem(wallet, redeemAmount);
+    r.tx(`sy_wrapper.redeem(${redeemAmount} shares) -> Blend submit(WITHDRAW)`, red);
+    if (red.hash) await waitForTransaction(red.hash, server);
+    await settleAfterConfirmation();
+
+    const [reserveFinal, positionsFinal, sySupplyFinal, syRateFinal] = await Promise.all([
+      readBlendReserve(UNDERLYING_ASSET, wallet.publicKey),
+      readBlendPositions(CONTRACTS.SY_WRAPPER, wallet.publicKey),
+      readSyTotalSupply(wallet.publicKey),
+      readSyExchangeRate(wallet.publicKey),
+    ]);
+    const bTokensFinal = positionsFinal.get(reserveFinal.index) ?? 0n;
+    r.push({ label: 'Blend bTokens decreased after redeem', pass: bTokensFinal < bTokensAfter, detail: `after-deposit=${bTokensAfter} after-redeem=${bTokensFinal}` });
+    r.push({ label: 'SY total_supply decreased after redeem', pass: sySupplyFinal < sySupplyAfter, detail: `after-deposit=${sySupplyAfter} after-redeem=${sySupplyFinal}` });
+    const expectedRateFinal = computeAdapterRate(bTokensFinal, reserveFinal.bRate, sySupplyFinal);
+    checkEqualBigInt('exchange_rate() == independently-derived rate (post-redeem)', expectedRateFinal, syRateFinal, r);
+  } else {
+    r.skip('SY supply too small relative to STROOP to redeem a nonzero share amount this run.');
+  }
+}
+
 function printReport(): boolean {
   console.log('\n' + '='.repeat(72));
   console.log('NOVAIRE PORTFOLIO TESTNET VERIFICATION REPORT');
@@ -260,6 +372,7 @@ async function main() {
     ['C (PT purchase via protocol)', scenarioPtOnly],
     ['D (vault + PT)', scenarioVaultPlusPt],
     ['E (claimable yield)', scenarioClaimableYield],
+    ['F (Blend rate propagation, real pool)', scenarioBlendRateReflectsRealPool],
   ];
 
   for (const [label, fn] of scenarios) {

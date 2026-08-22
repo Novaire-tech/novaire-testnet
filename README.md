@@ -255,23 +255,23 @@ npx ts-node src/index.ts   # requires DATABASE_URL (Postgres); processor is stub
 
 ## Deployed Contract Addresses
 
-The full protocol suite is deployed and wired on Stellar Testnet, per `scripts/deployments.testnet.json` (an identical copy lives in `apps/web/src/config/deployments.testnet.json` for the frontend):
+The full protocol suite is deployed and wired on Stellar Testnet, per `deployments/testnet.toml` (the committed public manifest — see `deployments/README.md`; `apps/web/src/config/deployments.testnet.json` is the frontend's copy of the `[contracts]` section):
 
 | Contract | Testnet Address |
 | :--- | :--- |
 | **Underlying Token** (native XLM SAC) | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
 | **Blend Pool** (lending pool used by SY Wrapper) | `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF` |
-| **SY Wrapper** | `CDA5QOLRZWJLWHMKD2IPUFFZNXEAFRCFUWKBUZWP6X6RDXWS52SB42ZO` |
-| **Tokenizer** | `CAERQIJESV5K3K75WKB6W2UZGEMRE7SZCHZBGH766PQFDQ5GGZ57GB5E` |
-| **PT Token** | `CCF4IUEV73G5FUE6QPSWRYSS4COYU67NPBOVKE4HFA6QCAGHGVJSKLCV` |
-| **YT Token** | `CD4T6Z55OTUXTJM3V4SIIW2W7LBP6CER26F2RHGD57VN3O6PI2RX2OTO` |
-| **AMM** | `CCTSO5FM2LOSHNH4VMMUKBHT4273KDXB4LKGHVXC6AYEZKTZ4VSH5NBZ` |
+| **SY Wrapper** | `CB4LNG5GQEEACNEOYTXX533BVUXJ6ET2MSVHLUO2WZPWFVJ2DSQ52MS6` |
+| **Tokenizer** | `CA26BB3KXS4XCY3SSAHTBSFXZYI46Q2L4X4H56IVBCLYBVAJVAABJM3L` |
+| **PT Token** | `CAXX2VMEMSC2C4NMC3C75LJERLSQIMXLTUCA5AVY2N4SEBGAB3PV5NJ4` |
+| **YT Token** | `CBJNHGM6J64PS2ZLB4YNTQ7OENHBYFJI7Z4JXKE4FDCAHP3DBIZAVVCH` |
+| **AMM** | `CC4RS662LACJ6JBRJPZGKTVXCOODFGS5MJXKACUCFRFNLZUNMSAWEW5P` |
 
 Notes:
 
 - The SY Wrapper deposits into Blend's live Testnet lending pool (`CCEBVDYM32...`), and the underlying token is the pool's reserve asset (native XLM SAC), so wrapped deposit funds route into Blend correctly. In frontend config this address is (mis)named `MOCK_USDC` — a legacy label; it is the native XLM SAC.
-- **Deprecated instances** are preserved for audit trail in `scripts/deployments.testnet.json`: `_deprecated_epoch1` (stale, non-existent underlying token), `_deprecated_epoch2` (predates the Blend `b_rate` accounting fix), `_deprecated_epoch3` (reused stale WASM hashes), `_deprecated_factory` (predates Maturity Engine wiring). **Do not use these addresses.**
-- After any redeploy, update **both** `scripts/deployments.testnet.json` and `apps/web/src/config/deployments.testnet.json` (deploy script updates the former automatically; copy to the latter).
+- Older deployment instances predating this manifest format are no longer tracked in-repo; only `deployments/testnet.toml` is current. **Do not reuse addresses from outside that file.**
+- After any redeploy, `contracts/scripts/deploy-testnet-resilient.sh` regenerates `deployments/testnet.toml`, `apps/web/src/config/deployments.testnet.json`, and `apps/web/.env.local` together — don't hand-edit any of them individually.
 - `scripts/deployments.mainnet.json` contains a full set of addresses, but per this project's testnet-only status, treat that file as a historical/reference record rather than a live, supported Mainnet deployment.
 
 ---

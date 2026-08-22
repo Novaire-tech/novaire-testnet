@@ -4,7 +4,10 @@
 // Tokenizer -> PT/YT -> AMM). Adds only the pieces verify-testnet.ts needs
 // that the E2E lib doesn't already provide (retry/backoff wrappers,
 // deterministic wallets for reproducible local runs, network constants).
-import { Keypair, rpc } from '@stellar/stellar-sdk';
+import { Keypair, rpc, Contract, TransactionBuilder, BASE_FEE, nativeToScVal, scValToNative, xdr } from '@stellar/stellar-sdk';
+import { basicNodeSigner, ClientOptions } from '@stellar/stellar-sdk/contract';
+import { Client as SyWrapperClient } from '../../packages/bindings/sy_wrapper/src/index';
+import { Client as AmmClient } from '../../packages/bindings/amm/src/index';
 import {
   createWallet,
   fundWallet,
@@ -19,7 +22,19 @@ import {
   readOnChainState as readOnChainStateBase,
   type Wallet,
 } from '../../apps/web/e2e/lib/chain';
-import { RPC_URL, NETWORK_PASSPHRASE } from '../../apps/web/src/config/contracts';
+import { RPC_URL, NETWORK_PASSPHRASE, CONTRACTS } from '../../apps/web/src/config/contracts';
+import deployments from '../../apps/web/src/config/deployments.testnet.json';
+
+// The Blend pool this deployment's SY Wrapper is wired to
+// (deployments/testnet.toml: `blend_pool`). Not surfaced in
+// deployments.testnet.json / CONTRACTS since the frontend never talks to
+// Blend directly — only the SY Wrapper contract does. There is no generated
+// TS client for Blend (no `blend-contract-sdk` binding in this repo, by the
+// same SDK-version-mismatch decision documented in
+// contracts/blend-adapter/src/lib.rs), so reads below go through a raw
+// Contract().call() + simulateTransaction, mirroring scripts/read_tokenizer.ts.
+export const BLEND_POOL = 'CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF';
+export const UNDERLYING_ASSET = deployments.underlying_token;
 
 export { RPC_URL, NETWORK_PASSPHRASE };
 export const HORIZON_URL = 'https://horizon-testnet.stellar.org';
@@ -131,4 +146,105 @@ export async function readOnChainState(publicKey: string): Promise<OnChainState>
 export async function readClaimableYield(publicKey: string): Promise<number> {
   const state = await readOnChainState(publicKey);
   return state.claimableYield;
+}
+
+/**
+ * Simulates a read-only call against an arbitrary deployed contract (used
+ * for the Blend pool, which has no generated TS client in this repo). The
+ * source account only needs to exist on-chain for the simulation footprint —
+ * it is never a real submission — so any funded wallet works.
+ */
+async function simulateRawCall(contractId: string, method: string, args: xdr.ScVal[], sourcePublicKey: string): Promise<unknown> {
+  const server = getServer();
+  const account = await withRetry(() => server.getAccount(sourcePublicKey), 4, `getAccount(${sourcePublicKey})`);
+  const contract = new Contract(contractId);
+  const tx = new TransactionBuilder(account, { fee: BASE_FEE, networkPassphrase: NETWORK_PASSPHRASE })
+    .addOperation(contract.call(method, ...args))
+    .setTimeout(30)
+    .build();
+  const sim = await withRetry(() => server.simulateTransaction(tx), 4, `simulate(${method})`);
+  if (!rpc.Api.isSimulationSuccess(sim)) {
+    throw new Error(`simulate(${method}) on ${contractId} failed: ${JSON.stringify(sim)}`);
+  }
+  if (!sim.result?.retval) throw new Error(`simulate(${method}) on ${contractId} returned no retval`);
+  return scValToNative(sim.result.retval);
+}
+
+export interface BlendReserve {
+  index: number;
+  enabled: boolean;
+  bRate: bigint;
+}
+
+/** Reads the Blend pool's reserve for `asset` (`get_reserve`) — real pool state, not a mock. */
+export async function readBlendReserve(asset: string, sourcePublicKey: string): Promise<BlendReserve> {
+  const raw = (await simulateRawCall(
+    BLEND_POOL,
+    'get_reserve',
+    [nativeToScVal(asset, { type: 'address' })],
+    sourcePublicKey,
+  )) as { config: { index: number; enabled: boolean }; data: { b_rate: bigint } };
+  return {
+    index: Number(raw.config.index),
+    enabled: Boolean(raw.config.enabled),
+    bRate: BigInt(raw.data.b_rate),
+  };
+}
+
+/** Reads the wrapper's live bToken position in the Blend pool (`get_positions`). */
+export async function readBlendPositions(holder: string, sourcePublicKey: string): Promise<Map<number, bigint>> {
+  const raw = (await simulateRawCall(
+    BLEND_POOL,
+    'get_positions',
+    [nativeToScVal(holder, { type: 'address' })],
+    sourcePublicKey,
+  )) as { supply: Map<number, bigint> | Record<string, bigint> };
+  const supply = raw.supply;
+  if (supply instanceof Map) return supply;
+  return new Map(Object.entries(supply).map(([k, v]) => [Number(k), BigInt(v)]));
+}
+
+function clientFor<T extends new (opts: ClientOptions) => InstanceType<T>>(Ctor: T, contractId: string, wallet: Wallet) {
+  const signer = basicNodeSigner(wallet.keypair, NETWORK_PASSPHRASE);
+  return new Ctor({
+    contractId,
+    rpcUrl: RPC_URL,
+    networkPassphrase: NETWORK_PASSPHRASE,
+    publicKey: wallet.publicKey,
+    ...signer,
+  });
+}
+
+function unwrapResult(v: unknown): unknown {
+  if (v && typeof v === 'object') {
+    const obj = v as Record<string, unknown>;
+    if (typeof obj.unwrap === 'function') return (obj.unwrap as () => unknown)();
+    if ('ok' in obj) return obj.ok;
+    if ('value' in obj) return obj.value;
+  }
+  return v;
+}
+
+/** Reads the SY Wrapper's on-chain exchange_rate() (WAD, 18-decimal). Real contract read, via generated client. */
+export async function readSyExchangeRate(sourcePublicKey: string): Promise<bigint> {
+  const readOnlyWallet: Wallet = { keypair: Keypair.random(), publicKey: sourcePublicKey };
+  const client = clientFor(SyWrapperClient, CONTRACTS.SY_WRAPPER, readOnlyWallet);
+  const tx = await client.exchange_rate();
+  return BigInt(unwrapResult(tx.result) as bigint);
+}
+
+/** Reads the SY Wrapper's on-chain total_supply() (7-decimal shares). */
+export async function readSyTotalSupply(sourcePublicKey: string): Promise<bigint> {
+  const readOnlyWallet: Wallet = { keypair: Keypair.random(), publicKey: sourcePublicKey };
+  const client = clientFor(SyWrapperClient, CONTRACTS.SY_WRAPPER, readOnlyWallet);
+  const tx = await client.total_supply();
+  return BigInt(unwrapResult(tx.result) as bigint);
+}
+
+/** Reads the AMM's on-chain spot_apy() (bps). */
+export async function readAmmSpotApy(sourcePublicKey: string): Promise<bigint> {
+  const readOnlyWallet: Wallet = { keypair: Keypair.random(), publicKey: sourcePublicKey };
+  const client = clientFor(AmmClient, CONTRACTS.AMM, readOnlyWallet);
+  const tx = await client.spot_apy();
+  return BigInt(unwrapResult(tx.result) as bigint);
 }

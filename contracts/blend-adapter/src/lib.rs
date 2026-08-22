@@ -8,10 +8,13 @@
 //! actual accrued interest and cannot be arbitrarily lowered (the root cause of
 //! the `#9 Insolvent` incident).
 //!
-//! This pass implements and tests the **rate-derivation math** — the part most
-//! likely to hold a subtle scaling bug. The cross-contract wiring
-//! (`supply`/`withdraw`/`get_positions` calls into the live Blend pool) and its
-//! no-mock testnet authorization proof are the remaining work; see the doc.
+//! This crate implements and unit-tests the **rate-derivation math** — the
+//! part most likely to hold a subtle scaling bug — against `MockBlendPool`.
+//! The cross-contract wiring (`supply`/`withdraw`/`get_positions` calls into
+//! the live Blend pool) lives in `sy-wrapper` (`blend_submit`,
+//! `blend_assets_under_management`) and is exercised against the real
+//! deployed Testnet pool by `scripts/verify-testnet.ts`'s
+//! "Blend rate propagation" scenario — no mock, real pool, real transactions.
 
 use soroban_sdk::{contractclient, contracttype, Address, Env, Map, Vec};
 

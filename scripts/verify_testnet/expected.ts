@@ -139,3 +139,39 @@ export const TOLERANCE = 0.000001;
 export function withinTolerance(a: number, b: number, tolerance = TOLERANCE): boolean {
   return isFinite(a) && isFinite(b) && !isNaN(a) && !isNaN(b) && Math.abs(a - b) <= tolerance;
 }
+
+// Independent re-derivation (in BigInt, integer floor-division, matching
+// Rust's `/` on i128) of contracts/blend-adapter/src/lib.rs's
+// `assets_from_b_tokens` + `derived_exchange_rate`. Kept as a from-scratch
+// transcription — not a call into the Rust code — so a regression in the
+// deployed contract's math shows up as a mismatch against this
+// independently-computed value, the same cross-check pattern as
+// computeIndependent/computeAppFormula above.
+export const BLEND_SCALAR_12 = 1_000_000_000_000n;
+export const WAD = 1_000_000_000_000_000_000n;
+
+/** `assets = b_tokens * b_rate / SCALAR_12`, floored. */
+export function assetsFromBTokens(bTokens: bigint, bRate: bigint): bigint {
+  return (bTokens * bRate) / BLEND_SCALAR_12;
+}
+
+/** `rate = aum * WAD / sy_supply`, floored; WAD (bootstrap) when no SY is outstanding. */
+export function derivedExchangeRate(aum: bigint, sySupply: bigint): bigint {
+  if (sySupply <= 0n) return WAD;
+  return (aum * WAD) / sySupply;
+}
+
+/**
+ * The full chain: real Blend reserve b_rate + real wrapper bToken position ->
+ * expected SY exchange_rate, computed independently of the on-chain call.
+ */
+export function computeAdapterRate(bTokens: bigint, bRate: bigint, sySupply: bigint): bigint {
+  const aum = assetsFromBTokens(bTokens, bRate);
+  return derivedExchangeRate(aum, sySupply);
+}
+
+/** BigInt counterpart to withinTolerance, for WAD-scale (18-decimal) on-chain values. */
+export function withinToleranceBigInt(a: bigint, b: bigint, toleranceWad = 1_000_000_000n): boolean {
+  const diff = a > b ? a - b : b - a;
+  return diff <= toleranceWad;
+}
