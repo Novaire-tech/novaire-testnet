@@ -117,18 +117,19 @@ const InfiniteSlider = memo(function InfiniteSlider({
 });
 
 const LogoImage = memo(function LogoImage({ logo }: { logo: Logo }) {
-  // Real assets get forced to a single ivory tone (brightness(0) invert(1)) so every
-  // logo reads as one consistent, understated mark rather than a multicolor sponsor
-  // strip — the same technique used for the Novaire wordmark in the navbar.
+  // Real assets get forced to a single Novaire midnight-blue tone (via CSS mask, same
+  // technique as the navbar wordmark) so every logo reads as one consistent mark
+  // rather than a multicolor sponsor strip.
   if (logo.src) {
     return (
-      <img
-        alt={logo.alt}
-        src={logo.src}
-        width={logo.width ?? "auto"}
-        height={logo.height ?? "auto"}
-        loading="lazy"
-        className="pointer-events-none h-[32px] w-auto select-none opacity-70 transition-[opacity,transform] duration-[250ms] ease-out [filter:brightness(0)_invert(1)] group-hover/logo:scale-[1.08] group-hover/logo:opacity-100 sm:h-[37px] md:h-[41px]"
+      <span
+        role="img"
+        aria-label={logo.alt}
+        style={{
+          maskImage: `url('${logo.src}')`,
+          WebkitMaskImage: `url('${logo.src}')`,
+        }}
+        className="pointer-events-none block h-[32px] w-[32px] select-none bg-[#112a46] opacity-70 [mask-repeat:no-repeat] [mask-size:contain] [mask-position:center] [-webkit-mask-repeat:no-repeat] [-webkit-mask-size:contain] [-webkit-mask-position:center] transition-[opacity,transform] duration-[250ms] ease-out group-hover/logo:scale-[1.08] group-hover/logo:opacity-100 sm:h-[37px] sm:w-[37px] md:h-[41px] md:w-[41px]"
       />
     );
   }
@@ -136,7 +137,7 @@ const LogoImage = memo(function LogoImage({ logo }: { logo: Logo }) {
   // No verified official asset for this one — a clean text wordmark instead of a
   // fabricated/approximate brand mark.
   return (
-    <span className="pointer-events-none select-none whitespace-nowrap font-poppins text-[17px] font-medium tracking-[0.02em] text-[#F5F4F0]/70 transition-[opacity,transform] duration-[250ms] ease-out group-hover/logo:scale-[1.08] group-hover/logo:text-[#F5F4F0] sm:text-[18px] md:text-[19px]">
+    <span className="pointer-events-none select-none whitespace-nowrap font-poppins text-[17px] font-medium tracking-[0.02em] text-[#112a46]/70 transition-[opacity,transform] duration-[250ms] ease-out group-hover/logo:scale-[1.08] group-hover/logo:text-[#112a46] sm:text-[18px] md:text-[19px]">
       {logo.alt}
     </span>
   );

@@ -16,7 +16,7 @@ export default function NavHeader() {
           {/* Left: Logo */}
           <Link
             href="/"
-            className="flex items-center z-50 transition-opacity hover:opacity-80"
+            className="flex items-center z-50 transition-opacity hover:opacity-80 -ml-3 md:-ml-4"
             onClick={() => setIsMobileMenuOpen(false)}
           >
             <span

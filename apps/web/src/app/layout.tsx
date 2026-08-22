@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, Antic_Didone, Poppins, Instrument_Serif } from "next/font/google";
+import SmoothScrollProvider from "@/components/SmoothScrollProvider";
 import "./globals.css";
 
 const inter = Inter({
@@ -39,10 +40,10 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${anticDidone.variable} ${poppins.variable} ${instrumentSerif.variable} scroll-smooth`}
+      className={`${inter.variable} ${anticDidone.variable} ${poppins.variable} ${instrumentSerif.variable}`}
     >
       <body className="antialiased text-nova-text bg-nova-bg w-full min-h-screen">
-        {children}
+        <SmoothScrollProvider>{children}</SmoothScrollProvider>
       </body>
     </html>
   );

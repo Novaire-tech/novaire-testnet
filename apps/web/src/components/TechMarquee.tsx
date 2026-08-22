@@ -29,9 +29,7 @@ export function TechMarquee() {
           Powered by the networks and protocols that secure billions.
         </p>
 
-        {/* The Midnight Blue treatment is now scoped to just this floating pill, not the whole section.
-            Centered beneath the left-aligned heading — an intentional asymmetry, not a mistake. */}
-        <div className="mx-auto mt-8 w-full max-w-[1320px] overflow-hidden rounded-full bg-[#112a46] px-10 py-5 sm:px-14">
+        <div className="mx-auto mt-8 w-full max-w-[1320px]">
           <LogoMarquee logos={ecosystemLogos} className="mx-0 max-w-none px-0 py-0" />
         </div>
       </div>
