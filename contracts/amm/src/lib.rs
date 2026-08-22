@@ -1583,16 +1583,19 @@ mod test {
         let pt_token = env
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
-        // A real SY wrapper in idle mock-custody mode (no Blend pool), so the
-        // YT quote paths can read exchange_rate the same way the tokenizer
-        // does. All unit tests run at the default rate of 1.0, where SY shares
-        // and asset units coincide; the non-par flash routes are exercised in
+        // A real SY wrapper backed by a mock Blend pool, so the YT quote
+        // paths can read exchange_rate the same way the tokenizer does. All
+        // unit tests run at the default pool rate of 1.0, where SY shares and
+        // asset units coincide; the non-par flash routes are exercised in
         // tests/integration.
         let underlying = env
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
+        let pool = env.register(novaire_blend_adapter::testutils::MockBlendPool, ());
+        novaire_blend_adapter::testutils::MockBlendPoolClient::new(&env, &pool)
+            .initialize(&underlying);
         let sy_token = env.register(SyWrapper, ());
-        SyWrapperClient::new(&env, &sy_token).initialize(&admin, &underlying);
+        SyWrapperClient::new(&env, &sy_token).initialize_blend(&admin, &underlying, &pool);
         // A placeholder YT token; the unit fixture uses a stub tokenizer, so the
         // YT flash routes are exercised in tests/integration instead.
         let yt_token = env

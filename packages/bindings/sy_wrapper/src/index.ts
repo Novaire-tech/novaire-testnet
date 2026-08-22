@@ -31,6 +31,14 @@ if (typeof window !== "undefined") {
 }
 
 
+// NOTE: `contractId` below and the embedded ContractSpec XDR in `Client`'s
+// constructor still reflect the retired legacy sy-wrapper (admin-settable
+// rate, optional pool). They must be regenerated (`stellar contract
+// bindings typescript`) against the fresh mandatory-pool deployment once one
+// exists; until then, only the hand-updated TS-level `Client`/`Config`/
+// `Errors` surface in this file (which drops `initialize`/
+// `set_exchange_rate` and makes `Config.pool` non-optional) reflects the
+// current contract.
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
@@ -42,12 +50,10 @@ export const Errors = {
   1: {message:"AlreadyInitialized"},
   2: {message:"NotInitialized"},
   3: {message:"InvalidAmount"},
-  4: {message:"InvalidExchangeRate"},
   5: {message:"InsufficientBalance"},
   6: {message:"MathOverflow"},
   7: {message:"InsufficientAllowance"},
   8: {message:"InvalidExpiration"},
-  9: {message:"ReadOnlyExchangeRate"},
   10: {message:"InvalidBlendReserve"},
   11: {message:"BlendWithdrawalFailed"},
   12: {message:"NotAuthorized"}
@@ -56,7 +62,7 @@ export const Errors = {
 
 export interface Config {
   admin: string;
-  pool: Option<string>;
+  pool: string;
   reserve_index: u32;
   underlying: string;
 }
@@ -172,11 +178,6 @@ export interface Client {
   allowance: ({from, spender}: {from: string, spender: string}, options?: MethodOptions) => Promise<AssembledTransaction<i128>>
 
   /**
-   * Construct and simulate a initialize transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   */
-  initialize: ({admin, underlying}: {admin: string, underlying: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
-
-  /**
    * Construct and simulate a underlying transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
    */
   underlying: (options?: MethodOptions) => Promise<AssembledTransaction<string>>
@@ -217,11 +218,6 @@ export interface Client {
    * backed by a Blend v2 plain-supply position.
    */
   initialize_blend: ({admin, underlying, pool}: {admin: string, underlying: string, pool: string}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
-
-  /**
-   * Construct and simulate a set_exchange_rate transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   */
-  set_exchange_rate: ({admin, exchange_rate}: {admin: string, exchange_rate: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a migrate_reserve_index transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -309,7 +305,6 @@ export class Client extends ContractClient {
         decimals: this.txFromJSON<u32>,
         transfer: this.txFromJSON<null>,
         allowance: this.txFromJSON<i128>,
-        initialize: this.txFromJSON<Result<void>>,
         underlying: this.txFromJSON<string>,
         total_shares: this.txFromJSON<Result<i128>>,
         total_supply: this.txFromJSON<i128>,
@@ -318,7 +313,6 @@ export class Client extends ContractClient {
         share_balance: this.txFromJSON<Result<i128>>,
         transfer_from: this.txFromJSON<null>,
         initialize_blend: this.txFromJSON<Result<void>>,
-        set_exchange_rate: this.txFromJSON<Result<void>>,
         migrate_reserve_index: this.txFromJSON<Result<u32>>
   }
 }

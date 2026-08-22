@@ -712,6 +712,7 @@ extern crate std;
 #[cfg(test)]
 mod test {
     use super::*;
+    use novaire_blend_adapter::testutils::{MockBlendPool, MockBlendPoolClient};
     use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
     use soroban_sdk::testutils::{Address as _, Ledger};
 
@@ -736,10 +737,14 @@ mod test {
         let client = TokenizerClient::new(&env, &contract_id);
         let admin = Address::generate(&env);
 
-        // A real SY wrapper supplies the exchange rate the tokenizer reads to
-        // size mints and redemptions. It defaults to rate 1.00 after init.
+        // A real SY wrapper, backed by a mock Blend pool, supplies the
+        // exchange rate the tokenizer reads to size mints and redemptions. It
+        // defaults to rate 1.00 with no deposits yet.
+        let underlying = Address::generate(&env);
+        let pool = env.register(MockBlendPool, ());
+        MockBlendPoolClient::new(&env, &pool).initialize(&underlying);
         let sy_token = env.register(SyWrapper, ());
-        SyWrapperClient::new(&env, &sy_token).initialize(&admin, &Address::generate(&env));
+        SyWrapperClient::new(&env, &sy_token).initialize_blend(&admin, &underlying, &pool);
 
         let pt_token = Address::generate(&env);
         let yt_token = Address::generate(&env);

@@ -19,6 +19,8 @@
 //! These started as RED specs against the old code (PT redeemed 1:1, YT paid
 //! nothing) and are now green. See docs/PROGRESS.md.
 
+use novaire_blend_adapter::testutils::{MockBlendPool, MockBlendPoolClient};
+use novaire_blend_adapter::BLEND_SCALAR_12;
 use novaire_pt_token::{PtToken, PtTokenClient};
 use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
 use novaire_tokenizer::{Tokenizer, TokenizerClient};
@@ -36,9 +38,11 @@ const RATE_1_10: i128 = 1_100_000_000_000_000_000;
 
 struct Market {
     env: Env,
+    #[allow(dead_code)] // kept for symmetry with other test fixtures / possible future use
     admin: Address,
     underlying: Address,
     sy: Address,
+    pool: Address,
     pt: Address,
     yt: Address,
     tokenizer: Address,
@@ -54,11 +58,13 @@ fn deploy() -> Market {
         .address();
 
     let sy = env.register(SyWrapper, ());
+    let pool = env.register(MockBlendPool, ());
+    MockBlendPoolClient::new(&env, &pool).initialize(&underlying);
     let pt = env.register(PtToken, ());
     let yt = env.register(YtToken, ());
     let tokenizer = env.register(Tokenizer, ());
 
-    SyWrapperClient::new(&env, &sy).initialize(&admin, &underlying);
+    SyWrapperClient::new(&env, &sy).initialize_blend(&admin, &underlying, &pool);
     PtTokenClient::new(&env, &pt).initialize(&admin, &tokenizer, &sy, &MATURITY);
     YtTokenClient::new(&env, &yt).initialize(&admin, &tokenizer, &sy, &MATURITY);
     TokenizerClient::new(&env, &tokenizer).initialize(&admin, &sy, &pt, &yt, &MATURITY);
@@ -68,6 +74,7 @@ fn deploy() -> Market {
         admin,
         underlying,
         sy,
+        pool,
         pt,
         yt,
         tokenizer,
@@ -131,8 +138,50 @@ impl Market {
         TokenizerClient::new(&self.env, &self.tokenizer).claim_yield(holder)
     }
 
+    /// Moves the SY wrapper's pool-derived exchange rate to `rate` (WAD-scale)
+    /// by adjusting the mock Blend pool's b_rate against the wrapper's live
+    /// bToken supply. The legacy admin setter is gone; every rate move must
+    /// flow through the pool. Exact for the round decimal rates and
+    /// round-UNIT supplies this suite uses; asserts it landed exactly so any
+    /// drift fails loudly rather than silently skewing downstream math.
     fn set_rate(&self, rate: i128) {
-        SyWrapperClient::new(&self.env, &self.sy).set_exchange_rate(&self.admin, &rate);
+        self.adjust_rate(rate);
+        assert_eq!(
+            SyWrapperClient::new(&self.env, &self.sy).exchange_rate(),
+            rate,
+            "set_rate landed off its exact target; this suite's round supplies/rates should divide evenly"
+        );
+    }
+
+    /// Like `set_rate`, but for the one deliberate sub-stroop-precision case
+    /// (see `claim_yield_survives_a_sub_stroop_rate_regression`): does not
+    /// assert exactness, since `rate` here is intentionally finer than the
+    /// pool/wrapper's combined integer precision at the current supply, and
+    /// the floor lands on the smallest representable regression below it.
+    fn set_rate_lossy(&self, rate: i128) -> i128 {
+        self.adjust_rate(rate)
+    }
+
+    /// Common implementation: reads the wrapper's *actual* live bToken
+    /// position from the pool (not an assumed 1:1-with-supply figure, which
+    /// only holds right after a bootstrap-rate deposit — a deposit made
+    /// after any prior rate change mints bTokens at that rate, not 1:1), and
+    /// solves for the b_rate that makes the derived aum, and therefore the
+    /// wrapper's exchange rate, hit `rate`. Returns the rate actually landed
+    /// on (exact for round decimal rates/supplies; see `set_rate`).
+    fn adjust_rate(&self, rate: i128) -> i128 {
+        let sy = SyWrapperClient::new(&self.env, &self.sy);
+        let pool = MockBlendPoolClient::new(&self.env, &self.pool);
+        let supply = sy.total_supply();
+        let b_tokens = pool
+            .get_positions(&self.sy)
+            .supply
+            .get(0)
+            .unwrap_or(0);
+        let aum_target = rate * supply / WAD;
+        let new_b_rate = aum_target * BLEND_SCALAR_12 / b_tokens;
+        pool.set_b_rate(&new_b_rate);
+        sy.exchange_rate()
     }
 
     /// Records the current SY rate as the tokenizer's latest pre-maturity
@@ -700,8 +749,11 @@ fn claim_yield_survives_a_sub_stroop_rate_regression() {
     // Zero slack: escrow 100 shares at rate exactly 1.00 backs exactly 100 PT.
 
     // The smallest representable regression; the Blend rounding notch at demo
-    // scale (WAD minus 1e8) hits the same way, any dip below 1.00 did it.
-    m.set_rate(WAD - 1);
+    // scale hits the same way, any dip below 1.00 did it. `set_rate_lossy`
+    // floors WAD - 1 to the coarsest regression the pool's integer precision
+    // can represent at this supply, which is exactly this notch.
+    let landed_rate = m.set_rate_lossy(WAD - 1);
+    assert!(landed_rate < WAD, "must land strictly below par");
 
     let previewed = YtTokenClient::new(&m.env, &m.yt).preview_claim_yield(&alice);
     assert_eq!(previewed, 0, "preview must report zero, not trap");
@@ -980,9 +1032,12 @@ fn conservation_holds_across_random_sequences() {
                 }
             }
             _ => {
-                // bump the rate up by 0 to ~2%
+                // bump the rate up by 0 to ~2%. The pool's integer precision
+                // may not land exactly on this random target (unlike the
+                // round decimal rates used elsewhere in this file), so use
+                // the lossy setter and track what actually landed.
                 rate += (rng.below(20_000_000_000_000_000) + 1) as i128;
-                m.set_rate(rate);
+                rate = m.set_rate_lossy(rate);
             }
         }
 

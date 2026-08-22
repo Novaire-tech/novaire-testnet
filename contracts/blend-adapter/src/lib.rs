@@ -155,6 +155,258 @@ pub fn b_tokens_from_assets(assets: i128, b_rate: i128) -> Option<i128> {
     assets.checked_mul(BLEND_SCALAR_12).map(|v| v / b_rate)
 }
 
+/// A minimal in-memory Blend pool test double implementing [`BlendPool`],
+/// shared by every downstream crate's tests so `initialize_blend`'s mandatory
+/// pool requirement doesn't force each crate to reinvent one. Supports
+/// exactly the knobs the wrapper's tests need: seeding the underlying,
+/// bumping `b_rate` to simulate accrued interest, moving the reserve index to
+/// simulate a Blend reindex, and forcing a transient withdraw failure.
+#[cfg(any(test, feature = "testutils"))]
+pub mod testutils {
+    use crate::{
+        assets_from_b_tokens, b_tokens_from_assets, Positions, Request, Reserve, ReserveConfig,
+        ReserveData, BLEND_SCALAR_12, REQUEST_SUPPLY, REQUEST_WITHDRAW,
+    };
+    use soroban_sdk::{
+        auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
+        contract, contracterror, contractimpl, contracttype, panic_with_error, vec, Address, Env,
+        IntoVal, Map, Symbol, Vec,
+    };
+
+    #[derive(Clone)]
+    #[contracttype]
+    struct MockConfig {
+        underlying: Address,
+        b_rate: i128,
+    }
+
+    #[derive(Clone)]
+    #[contracttype]
+    enum DataKey {
+        Config,
+        Supply(Address),
+        /// Reserve index the pool reports for the underlying, 0 unless a test
+        /// simulates a pool reconfiguration.
+        ReserveIndex,
+        /// Reserve list the pool reports, defaulting to `[underlying]`. A test
+        /// that simulates a reindex sets this so the underlying sits at a new
+        /// position.
+        ReserveList,
+        /// When set, `submit` fails a withdraw request as a transient Blend
+        /// hiccup would, so the wrapper's tolerated-failure path can be
+        /// exercised.
+        FailWithdraw,
+    }
+
+    #[contracterror]
+    #[derive(Copy, Clone)]
+    #[repr(u32)]
+    enum MockError {
+        WithdrawUnavailable = 1,
+    }
+
+    #[contract]
+    pub struct MockBlendPool;
+
+    #[contractimpl]
+    impl MockBlendPool {
+        pub fn initialize(env: Env, underlying: Address) {
+            env.storage().instance().set(
+                &DataKey::Config,
+                &MockConfig {
+                    underlying,
+                    b_rate: BLEND_SCALAR_12,
+                },
+            );
+        }
+
+        pub fn set_b_rate(env: Env, b_rate: i128) {
+            let mut config: MockConfig = env.storage().instance().get(&DataKey::Config).unwrap();
+            config.b_rate = b_rate;
+            env.storage().instance().set(&DataKey::Config, &config);
+        }
+
+        pub fn set_reserve_index(env: Env, index: u32) {
+            env.storage().instance().set(&DataKey::ReserveIndex, &index);
+        }
+
+        pub fn set_reserve_list(env: Env, list: Vec<Address>) {
+            env.storage().instance().set(&DataKey::ReserveList, &list);
+        }
+
+        pub fn set_should_fail_withdraw(env: Env, fail: bool) {
+            env.storage().instance().set(&DataKey::FailWithdraw, &fail);
+        }
+
+        pub fn get_reserve_list(env: Env) -> Vec<Address> {
+            match env.storage().instance().get(&DataKey::ReserveList) {
+                Some(list) => list,
+                None => {
+                    let config: MockConfig =
+                        env.storage().instance().get(&DataKey::Config).unwrap();
+                    vec![&env, config.underlying]
+                }
+            }
+        }
+
+        pub fn get_reserve(env: Env, asset: Address) -> Reserve {
+            let config: MockConfig = env.storage().instance().get(&DataKey::Config).unwrap();
+            assert_eq!(asset, config.underlying);
+            reserve(&env, config)
+        }
+
+        pub fn get_positions(env: Env, address: Address) -> Positions {
+            positions(&env, reserve_index(&env), supply_balance(&env, &address))
+        }
+
+        pub fn submit(
+            env: Env,
+            from: Address,
+            spender: Address,
+            to: Address,
+            requests: Vec<Request>,
+        ) -> Positions {
+            spender.require_auth();
+            if from != spender {
+                from.require_auth();
+            }
+
+            let config: MockConfig = env.storage().instance().get(&DataKey::Config).unwrap();
+            let mut supply = supply_balance(&env, &from);
+            for request in requests {
+                assert_eq!(request.address, config.underlying);
+                if request.request_type == REQUEST_SUPPLY {
+                    env.invoke_contract::<()>(
+                        &config.underlying,
+                        &Symbol::new(&env, "transfer"),
+                        vec![
+                            &env,
+                            spender.clone().into_val(&env),
+                            env.current_contract_address().into_val(&env),
+                            request.amount.into_val(&env),
+                        ],
+                    );
+                    supply += b_tokens_from_assets(request.amount, config.b_rate).unwrap();
+                } else if request.request_type == REQUEST_WITHDRAW {
+                    if env
+                        .storage()
+                        .instance()
+                        .get(&DataKey::FailWithdraw)
+                        .unwrap_or(false)
+                    {
+                        panic_with_error!(&env, MockError::WithdrawUnavailable);
+                    }
+                    let requested_b = request
+                        .amount
+                        .checked_mul(BLEND_SCALAR_12)
+                        .and_then(|value| value.checked_add(config.b_rate - 1))
+                        .unwrap()
+                        / config.b_rate;
+                    let burned_b = requested_b.min(supply);
+                    let assets_out = if burned_b == requested_b {
+                        request.amount
+                    } else {
+                        assets_from_b_tokens(burned_b, config.b_rate).unwrap()
+                    };
+                    supply -= burned_b;
+                    authorize_pool_transfer(&env, &config.underlying, &to, assets_out);
+                    env.invoke_contract::<()>(
+                        &config.underlying,
+                        &Symbol::new(&env, "transfer"),
+                        vec![
+                            &env,
+                            env.current_contract_address().into_val(&env),
+                            to.clone().into_val(&env),
+                            assets_out.into_val(&env),
+                        ],
+                    );
+                } else {
+                    panic!("unsupported request type");
+                }
+            }
+            env.storage()
+                .persistent()
+                .set(&DataKey::Supply(from), &supply);
+            positions(&env, reserve_index(&env), supply)
+        }
+    }
+
+    fn reserve_index(env: &Env) -> u32 {
+        env.storage().instance().get(&DataKey::ReserveIndex).unwrap_or(0)
+    }
+
+    fn reserve(env: &Env, config: MockConfig) -> Reserve {
+        let index: u32 = reserve_index(env);
+        Reserve {
+            asset: config.underlying,
+            config: ReserveConfig {
+                c_factor: 0,
+                decimals: 7,
+                enabled: true,
+                index,
+                l_factor: 0,
+                max_util: 0,
+                r_base: 0,
+                r_one: 0,
+                r_three: 0,
+                r_two: 0,
+                reactivity: 0,
+                supply_cap: i128::MAX,
+                util: 0,
+            },
+            data: ReserveData {
+                b_rate: config.b_rate,
+                b_supply: 0,
+                backstop_credit: 0,
+                d_rate: BLEND_SCALAR_12,
+                d_supply: 0,
+                ir_mod: 0,
+                last_time: env.ledger().timestamp(),
+            },
+            scalar: 10_000_000,
+        }
+    }
+
+    fn positions(env: &Env, index: u32, supply: i128) -> Positions {
+        let mut supplies = Map::new(env);
+        if supply > 0 {
+            supplies.set(index, supply);
+        }
+        Positions {
+            collateral: Map::new(env),
+            liabilities: Map::new(env),
+            supply: supplies,
+        }
+    }
+
+    fn supply_balance(env: &Env, address: &Address) -> i128 {
+        env.storage()
+            .persistent()
+            .get(&DataKey::Supply(address.clone()))
+            .unwrap_or(0)
+    }
+
+    fn authorize_pool_transfer(env: &Env, underlying: &Address, to: &Address, amount: i128) {
+        let pool = env.current_contract_address();
+        env.authorize_as_current_contract(vec![
+            env,
+            InvokerContractAuthEntry::Contract(SubContractInvocation {
+                context: ContractContext {
+                    contract: underlying.clone(),
+                    fn_name: Symbol::new(env, "transfer"),
+                    args: vec![
+                        env,
+                        pool.into_val(env),
+                        to.clone().into_val(env),
+                        amount.into_val(env),
+                    ],
+                },
+                sub_invocations: vec![env],
+            }),
+        ]);
+    }
+}
+
 #[cfg(test)]
 extern crate std;
 

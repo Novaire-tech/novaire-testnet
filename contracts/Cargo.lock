@@ -1007,6 +1007,7 @@ checksum = "88904434abc2901f197fe8cc55f0445e7ded921dba5911dad2e2b39b48e663c4"
 name = "novaire-amm"
 version = "0.1.0"
 dependencies = [
+ "novaire-blend-adapter",
  "novaire-shared-types",
  "novaire-sy-wrapper",
  "proptest",
@@ -1061,6 +1062,7 @@ dependencies = [
 name = "novaire-tokenizer"
 version = "0.1.0"
 dependencies = [
+ "novaire-blend-adapter",
  "novaire-sy-wrapper",
  "soroban-sdk",
 ]
@@ -1069,6 +1071,7 @@ dependencies = [
 name = "novaire-yt-token"
 version = "0.1.0"
 dependencies = [
+ "novaire-blend-adapter",
  "novaire-sy-wrapper",
  "novaire-tokenizer",
  "soroban-sdk",

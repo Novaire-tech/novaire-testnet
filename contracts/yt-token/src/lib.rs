@@ -691,9 +691,12 @@ extern crate std;
 #[cfg(test)]
 mod test {
     use super::*;
+    use novaire_blend_adapter::testutils::{MockBlendPool, MockBlendPoolClient};
+    use novaire_blend_adapter::BLEND_SCALAR_12;
     use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
     use novaire_tokenizer::{Tokenizer, TokenizerClient};
     use soroban_sdk::testutils::{Address as _, Ledger};
+    use soroban_sdk::token;
 
     const NOW: u64 = 1_770_000_000;
     const MATURITY: u64 = NOW + 90 * 24 * 60 * 60;
@@ -705,10 +708,18 @@ mod test {
         env: Env,
         client: YtTokenClient<'static>,
         sy: SyWrapperClient<'static>,
+        pool: MockBlendPoolClient<'static>,
+        #[allow(dead_code)] // kept for symmetry with other test fixtures
         admin: Address,
         alice: Address,
         bob: Address,
     }
+
+    /// Total SY shares seeded in every fixture so `set_rate` below can land on
+    /// an exact target rate with no floor-division drift (chosen as a whole
+    /// multiple of WAD, so `target_rate * SEED_SUPPLY_UNITS / WAD` is exact
+    /// for every RATE_* constant used in these tests).
+    const SEED_SUPPLY_UNITS: i128 = 1;
 
     fn fixture(now: u64) -> Fixture {
         let env = Env::default();
@@ -719,11 +730,24 @@ mod test {
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
 
-        // A real SY wrapper provides the exchange rate the YT yield engine reads.
+        // A real SY wrapper, backed by a mock Blend pool, provides the
+        // exchange rate the YT yield engine reads. Its rate can no longer be
+        // set directly; tests move it by adjusting the pool's b_rate via
+        // `set_rate` below, after seeding a deposit so the rate isn't pinned
+        // to the supply=0 bootstrap default.
         let sy_id = env.register(SyWrapper, ());
         let sy = SyWrapperClient::new(&env, &sy_id);
-        let underlying = Address::generate(&env);
-        sy.initialize(&admin, &underlying);
+        let underlying = env
+            .register_stellar_asset_contract_v2(admin.clone())
+            .address();
+        let pool_id = env.register(MockBlendPool, ());
+        let pool = MockBlendPoolClient::new(&env, &pool_id);
+        pool.initialize(&underlying);
+        sy.initialize_blend(&admin, &underlying, &pool_id);
+
+        let seed_amount = SEED_SUPPLY_UNITS * WAD;
+        token::StellarAssetClient::new(&env, &underlying).mint(&admin, &seed_amount);
+        sy.deposit(&admin, &seed_amount);
 
         // A real tokenizer too: direct holder paths (transfer, burn) resolve
         // their settle rate through the tokenizer's observe_rate and
@@ -747,10 +771,27 @@ mod test {
             env,
             client,
             sy,
+            pool,
             admin,
             alice,
             bob,
         }
+    }
+
+    /// Moves the SY wrapper's pool-derived exchange rate to exactly
+    /// `target_rate` (WAD-scale), by adjusting the mock pool's b_rate. The
+    /// legacy admin rate setter is gone; every rate move must flow through
+    /// the pool, matching how a Blend-backed wrapper actually earns yield.
+    fn set_rate(f: &Fixture, target_rate: i128) {
+        let target_aum = target_rate * SEED_SUPPLY_UNITS;
+        let b_tokens = SEED_SUPPLY_UNITS * WAD;
+        let new_b_rate = target_aum * BLEND_SCALAR_12 / b_tokens;
+        f.pool.set_b_rate(&new_b_rate);
+        assert_eq!(
+            f.sy.exchange_rate(),
+            target_rate,
+            "test helper drifted off its exact target rate"
+        );
     }
 
     #[test]
@@ -774,7 +815,7 @@ mod test {
     #[test]
     fn mint_settles_fresh_holder_to_current_rate() {
         let f = fixture(NOW);
-        f.sy.set_exchange_rate(&f.admin, &RATE_1_05);
+        set_rate(&f, RATE_1_05);
         f.client.mint(&f.alice, &(100 * WAD));
 
         // Checkpoint starts at the rate when YT was first minted, so prior
@@ -787,10 +828,10 @@ mod test {
     fn claim_banks_yield_using_the_telescoping_formula() {
         let f = fixture(NOW);
         // Split at 1.05, not 1.00, to exercise the correct (r-c)/(c*r) form.
-        f.sy.set_exchange_rate(&f.admin, &RATE_1_05);
+        set_rate(&f, RATE_1_05);
         f.client.mint(&f.alice, &(100 * WAD));
 
-        f.sy.set_exchange_rate(&f.admin, &RATE_1_10);
+        set_rate(&f, RATE_1_10);
         // Pre-maturity, the tokenizer would settle at the live SY rate; pass it.
         // `settle` banks and reports the owed total without zeroing the ledger.
         let claimable = f.client.settle(&f.alice, &RATE_1_10);
@@ -812,9 +853,9 @@ mod test {
     #[test]
     fn consume_removes_only_the_requested_amount() {
         let f = fixture(NOW);
-        f.sy.set_exchange_rate(&f.admin, &RATE_1_05);
+        set_rate(&f, RATE_1_05);
         f.client.mint(&f.alice, &(100 * WAD));
-        f.sy.set_exchange_rate(&f.admin, &RATE_1_10);
+        set_rate(&f, RATE_1_10);
 
         let banked = f.client.settle(&f.alice, &RATE_1_10);
         assert!(banked > 0);
@@ -834,9 +875,9 @@ mod test {
     #[should_panic(expected = "Error(Contract, #11)")]
     fn consume_more_than_banked_is_rejected() {
         let f = fixture(NOW);
-        f.sy.set_exchange_rate(&f.admin, &RATE_1_05);
+        set_rate(&f, RATE_1_05);
         f.client.mint(&f.alice, &(100 * WAD));
-        f.sy.set_exchange_rate(&f.admin, &RATE_1_10);
+        set_rate(&f, RATE_1_10);
         let banked = f.client.settle(&f.alice, &RATE_1_10);
         f.client.consume(&f.alice, &(banked + 1));
     }
@@ -856,7 +897,7 @@ mod test {
         f.client.mint(&f.alice, &(100 * WAD)); // at 1.00
 
         // Rate rises, Alice accrues, then sends half to Bob without claiming.
-        f.sy.set_exchange_rate(&f.admin, &RATE_1_10);
+        set_rate(&f, RATE_1_10);
         f.client.transfer(&f.alice, &f.bob, &(50 * WAD));
 
         // Alice keeps the yield she earned on 100 over 1.00 -> 1.10. Bob starts
@@ -868,7 +909,7 @@ mod test {
         assert_eq!(bob_pending, 0, "Bob earns only from 1.10 forward");
 
         // Rate rises again; now both earn on their post-transfer balances.
-        f.sy.set_exchange_rate(&f.admin, &(RATE_1_10 + WAD / 10));
+        set_rate(&f, RATE_1_10 + WAD / 10);
         let r2 = RATE_1_10 + WAD / 10;
         let alice2 = f.client.preview_claim_yield(&f.alice);
         let bob2 = f.client.preview_claim_yield(&f.bob);

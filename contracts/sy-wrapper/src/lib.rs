@@ -29,7 +29,7 @@ const TTL_EXTEND_TO_LEDGERS: u32 = 120 * LEDGERS_PER_DAY;
 pub struct Config {
     pub admin: Address,
     pub underlying: Address,
-    pub pool: Option<Address>,
+    pub pool: Address,
     pub reserve_index: u32,
 }
 
@@ -44,7 +44,6 @@ pub struct AllowanceValue {
 #[contracttype]
 enum DataKey {
     Config,
-    ExchangeRate,
     TotalSupply,
     Balance(Address),
     /// Underlying principal a holder deposited, used for accrued-yield display.
@@ -60,12 +59,10 @@ pub enum Error {
     AlreadyInitialized = 1,
     NotInitialized = 2,
     InvalidAmount = 3,
-    InvalidExchangeRate = 4,
     InsufficientBalance = 5,
     MathOverflow = 6,
     InsufficientAllowance = 7,
     InvalidExpiration = 8,
-    ReadOnlyExchangeRate = 9,
     InvalidBlendReserve = 10,
     BlendWithdrawalFailed = 11,
     NotAuthorized = 12,
@@ -106,16 +103,6 @@ pub struct SyWrapper;
 
 #[contractimpl]
 impl SyWrapper {
-    pub fn initialize(env: Env, admin: Address, underlying: Address) -> Result<(), Error> {
-        Self::initialize_with_config(
-            &env,
-            admin,
-            underlying,
-            None,
-            0,
-        )
-    }
-
     /// Initializes a production wrapper whose custody and exchange rate are
     /// backed by a Blend v2 plain-supply position.
     pub fn initialize_blend(
@@ -149,7 +136,7 @@ impl SyWrapper {
             Config {
                 admin,
                 underlying,
-                pool: Some(pool),
+                pool,
                 reserve_index,
             },
         );
@@ -158,25 +145,6 @@ impl SyWrapper {
 
     pub fn config(env: Env) -> Result<Config, Error> {
         Self::read_config(&env)
-    }
-
-    pub fn set_exchange_rate(env: Env, admin: Address, exchange_rate: i128) -> Result<(), Error> {
-        let config = Self::read_config(&env)?;
-        admin.require_auth();
-        if admin != config.admin {
-            return Err(Error::NotAuthorized);
-        }
-        if config.pool.is_some() {
-            return Err(Error::ReadOnlyExchangeRate);
-        }
-        Self::require_exchange_rate(exchange_rate)?;
-        Self::bump_instance_ttl(&env);
-
-        env.storage()
-            .instance()
-            .set(&DataKey::ExchangeRate, &exchange_rate);
-
-        Ok(())
     }
 
     /// Recovers from a Blend reserve reindex.
@@ -205,13 +173,7 @@ impl SyWrapper {
         if admin != config.admin {
             return Err(Error::NotAuthorized);
         }
-        // Only a Blend-backed wrapper has a reserve index to migrate.
-        let pool = match &config.pool {
-            Some(pool) => pool.clone(),
-            None => return Err(Error::InvalidBlendReserve),
-        };
-
-        let pool_client = BlendPoolClient::new(&env, &pool);
+        let pool_client = BlendPoolClient::new(&env, &config.pool);
         let reserves = pool_client.get_reserve_list();
         let mut new_index = None;
         for (index, asset) in reserves.iter().enumerate() {
@@ -321,32 +283,8 @@ impl SyWrapper {
             .ok_or(Error::NotInitialized)
     }
 
-    fn initialize_with_config(
-        env: &Env,
-        admin: Address,
-        underlying: Address,
-        pool: Option<Address>,
-        reserve_index: u32,
-    ) -> Result<(), Error> {
-        if env.storage().instance().has(&DataKey::Config) {
-            return Err(Error::AlreadyInitialized);
-        }
-        admin.require_auth();
-        Self::write_initial_config(
-            env,
-            Config {
-                admin,
-                underlying,
-                pool,
-                reserve_index,
-            },
-        );
-        Ok(())
-    }
-
     fn write_initial_config(env: &Env, config: Config) {
         env.storage().instance().set(&DataKey::Config, &config);
-        env.storage().instance().set(&DataKey::ExchangeRate, &WAD);
         env.storage().instance().set(&DataKey::TotalSupply, &0_i128);
     }
 
@@ -362,14 +300,6 @@ impl SyWrapper {
         if amount <= 0 {
             panic_with_error!(env, Error::InvalidAmount);
         }
-    }
-
-    fn require_exchange_rate(exchange_rate: i128) -> Result<(), Error> {
-        if exchange_rate <= 0 {
-            return Err(Error::InvalidExchangeRate);
-        }
-
-        Ok(())
     }
 
     fn read_balance(env: &Env, id: &Address) -> i128 {
@@ -522,23 +452,15 @@ impl StandardizedYield for SyWrapper {
         // not the requested transfer amount. This prevents a new deposit from
         // lowering the rate by creating more SY than the credited position backs.
         let exchange_rate = <Self as StandardizedYield>::exchange_rate(env);
-        let aum_before = config
-            .pool
-            .as_ref()
-            .map(|_| blend_assets_under_management(env, &config));
+        let aum_before = blend_assets_under_management(env, &config);
 
         pull_underlying(env, &config.underlying, &from, amount);
-        if config.pool.is_some() {
-            blend_submit(env, &config, REQUEST_SUPPLY, amount, false);
-        }
-        let assets_credited = match aum_before {
-            Some(before) => sub_or_panic(
-                env,
-                blend_assets_under_management(env, &config),
-                before,
-            ),
-            None => amount,
-        };
+        blend_submit(env, &config, REQUEST_SUPPLY, amount, false);
+        let assets_credited = sub_or_panic(
+            env,
+            blend_assets_under_management(env, &config),
+            aum_before,
+        );
         let shares = mul_div_or_panic(env, assets_credited, WAD, exchange_rate);
         if shares <= 0 {
             panic_with_error!(env, Error::InvalidAmount);
@@ -585,32 +507,30 @@ impl StandardizedYield for SyWrapper {
         }
 
         let requested_underlying = mul_div_or_panic(env, sy_amount, exchange_rate, WAD);
-        let (shares_to_burn, underlying_out) = if config.pool.is_some() {
-            let before = underlying_balance(env, &config.underlying);
-            // The withdraw is tolerated (try_submit) so a transient Blend
-            // failure cannot leak Blend's raw panic and, more importantly, so
-            // this path can bail out BEFORE burning any shares: a failed
-            // withdraw must never consume the holder's SY. We still surface the
-            // failure explicitly instead of returning a silent zero, so callers
-            // and integrators see a typed error and can retry. Nothing has been
-            // mutated at this point, so the trap simply reverts and the holder's
-            // funds are untouched.
-            if !blend_submit(env, &config, REQUEST_WITHDRAW, requested_underlying, true) {
-                panic_with_error!(env, Error::BlendWithdrawalFailed);
-            }
-            let after = underlying_balance(env, &config.underlying);
-            let received = sub_or_panic(env, after, before);
-            if received <= 0 {
-                panic_with_error!(env, Error::BlendWithdrawalFailed);
-            }
-            let burn = if received >= requested_underlying {
-                sy_amount
-            } else {
-                mul_div_or_panic(env, received, WAD, exchange_rate)
-            };
-            (burn, received)
+        let before = underlying_balance(env, &config.underlying);
+        // The withdraw is tolerated (try_submit) so a transient Blend
+        // failure cannot leak Blend's raw panic and, more importantly, so
+        // this path can bail out BEFORE burning any shares: a failed
+        // withdraw must never consume the holder's SY. We still surface the
+        // failure explicitly instead of returning a silent zero, so callers
+        // and integrators see a typed error and can retry. Nothing has been
+        // mutated at this point, so the trap simply reverts and the holder's
+        // funds are untouched.
+        if !blend_submit(env, &config, REQUEST_WITHDRAW, requested_underlying, true) {
+            panic_with_error!(env, Error::BlendWithdrawalFailed);
+        }
+        let after = underlying_balance(env, &config.underlying);
+        let received = sub_or_panic(env, after, before);
+        if received <= 0 {
+            panic_with_error!(env, Error::BlendWithdrawalFailed);
+        }
+        let (shares_to_burn, underlying_out) = if received >= requested_underlying {
+            (sy_amount, received)
         } else {
-            (sy_amount, requested_underlying)
+            (
+                mul_div_or_panic(env, received, WAD, exchange_rate),
+                received,
+            )
         };
 
         let principal_out = if current_shares == 0 {
@@ -650,19 +570,12 @@ impl StandardizedYield for SyWrapper {
             Ok(config) => config,
             Err(error) => panic_with_error!(env, error),
         };
-        if config.pool.is_some() {
-            match derived_exchange_rate(
-                blend_assets_under_management(env, &config),
-                Self::read_total_supply(env),
-            ) {
-                Some(value) => value,
-                None => panic_with_error!(env, Error::MathOverflow),
-            }
-        } else {
-            env.storage()
-                .instance()
-                .get(&DataKey::ExchangeRate)
-                .unwrap_or(WAD)
+        match derived_exchange_rate(
+            blend_assets_under_management(env, &config),
+            Self::read_total_supply(env),
+        ) {
+            Some(value) => value,
+            None => panic_with_error!(env, Error::MathOverflow),
         }
     }
 
@@ -744,11 +657,7 @@ fn underlying_balance(env: &Env, underlying: &Address) -> i128 {
 }
 
 fn blend_assets_under_management(env: &Env, config: &Config) -> i128 {
-    let pool = match &config.pool {
-        Some(pool) => pool,
-        None => return 0,
-    };
-    let pool_client = BlendPoolClient::new(env, pool);
+    let pool_client = BlendPoolClient::new(env, &config.pool);
     let positions = pool_client.get_positions(&env.current_contract_address());
     let b_tokens = positions.supply.get(config.reserve_index).unwrap_or(0);
     let reserve = pool_client.get_reserve(&config.underlying);
@@ -777,10 +686,7 @@ fn blend_submit(
     amount: i128,
     tolerate_failure: bool,
 ) -> bool {
-    let pool = match &config.pool {
-        Some(pool) => pool.clone(),
-        None => return true,
-    };
+    let pool = config.pool.clone();
     let me = env.current_contract_address();
     let requests = vec![
         env,
@@ -877,32 +783,46 @@ fn gcd_i128(mut lhs: i128, mut rhs: i128) -> i128 {
 #[cfg(test)]
 extern crate std;
 
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
+    use novaire_blend_adapter::testutils::{MockBlendPool, MockBlendPoolClient};
+    use novaire_blend_adapter::{assets_from_b_tokens, BLEND_SCALAR_12};
+    use soroban_sdk::testutils::{Address as _, Ledger as _};
+
+    // --- Fixture -------------------------------------------------------------
 
     struct Fixture {
         env: Env,
         client: SyWrapperClient<'static>,
+        pool_client: MockBlendPoolClient<'static>,
         admin: Address,
         underlying: Address,
         alice: Address,
         bob: Address,
     }
 
-    const MINT: i128 = 1_000 * WAD;
+    const UNIT: i128 = 10_000_000; // 7-decimal underlying unit
+    const MINT: i128 = 1_000 * UNIT;
 
     fn fixture() -> Fixture {
         let env = Env::default();
         env.mock_all_auths();
+        env.ledger().set_timestamp(1);
 
         let admin = Address::generate(&env);
         let underlying = env
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
+        let pool = env.register(MockBlendPool, ());
+        let pool_client = MockBlendPoolClient::new(&env, &pool);
+        pool_client.initialize(&underlying);
+
         let contract_id = env.register(SyWrapper, ());
         let client = SyWrapperClient::new(&env, &contract_id);
+        client.initialize_blend(&admin, &underlying, &pool);
+
         let alice = Address::generate(&env);
         let bob = Address::generate(&env);
 
@@ -911,6 +831,7 @@ mod test {
         Fixture {
             env,
             client,
+            pool_client,
             admin,
             underlying,
             alice,
@@ -918,10 +839,49 @@ mod test {
         }
     }
 
-    fn initialize(fixture: &Fixture) {
-        fixture
-            .client
-            .initialize(&fixture.admin, &fixture.underlying);
+    /// Bumps the mock pool's b_rate so the wrapper's derived exchange rate
+    /// grows by `numerator/denominator`, and backs the growth with real
+    /// underlying liquidity in the pool so a subsequent redeem can settle it.
+    /// This is the only way to move the rate now that there is no admin
+    /// setter — every rate change must flow through the Blend pool.
+    fn grow_rate(fixture: &Fixture, numerator: i128, denominator: i128) {
+        let current = fixture.client.exchange_rate();
+        let target = current * numerator / denominator;
+        // Solve for the b_rate that makes derived_exchange_rate hit `target`
+        // given the wrapper's current bToken supply, then mint enough
+        // underlying into the pool to cover a full redemption at that rate.
+        let aum_before =
+            assets_from_b_tokens(
+                fixture
+                    .pool_client
+                    .get_positions(&fixture.client.address)
+                    .supply
+                    .get(0)
+                    .unwrap_or(0),
+                fixture.pool_client.get_reserve(&fixture.underlying).data.b_rate,
+            )
+            .unwrap();
+        let total_shares = fixture.client.total_supply();
+        let target_aum = if total_shares == 0 {
+            aum_before
+        } else {
+            target * total_shares / WAD
+        };
+        let b_tokens = fixture
+            .pool_client
+            .get_positions(&fixture.client.address)
+            .supply
+            .get(0)
+            .unwrap_or(0);
+        if b_tokens > 0 {
+            let new_b_rate = target_aum * BLEND_SCALAR_12 / b_tokens;
+            fixture.pool_client.set_b_rate(&new_b_rate);
+        }
+        let extra = target_aum - aum_before;
+        if extra > 0 {
+            token::StellarAssetClient::new(&fixture.env, &fixture.underlying)
+                .mint(&fixture.client.address, &extra);
+        }
     }
 
     fn underlying_balance(fixture: &Fixture, holder: &Address) -> i128 {
@@ -929,15 +889,14 @@ mod test {
     }
 
     #[test]
-    fn initialize_sets_initial_exchange_rate() {
+    fn initialize_blend_requires_a_pool_and_sets_the_initial_rate() {
         let fixture = fixture();
-        initialize(&fixture);
         assert_eq!(
             fixture.client.config(),
             Config {
                 admin: fixture.admin.clone(),
                 underlying: fixture.underlying.clone(),
-                pool: None,
+                pool: fixture.pool_client.address.clone(),
                 reserve_index: 0,
             }
         );
@@ -947,50 +906,41 @@ mod test {
     }
 
     #[test]
-    fn deposit_pulls_underlying_and_mints_shares() {
+    fn deposit_pulls_underlying_and_mints_shares_via_pool() {
         let fixture = fixture();
-        initialize(&fixture);
 
-        let minted = fixture.client.deposit(&fixture.alice, &(100 * WAD));
+        let minted = fixture.client.deposit(&fixture.alice, &(100 * UNIT));
 
-        assert_eq!(minted, 100 * WAD);
-        assert_eq!(fixture.client.balance(&fixture.alice), 100 * WAD);
-        assert_eq!(fixture.client.total_supply(), 100 * WAD);
-        // The vault now custodies the underlying; alice paid it in.
+        assert_eq!(minted, 100 * UNIT);
+        assert_eq!(fixture.client.balance(&fixture.alice), 100 * UNIT);
+        assert_eq!(fixture.client.total_supply(), 100 * UNIT);
+        // The pool now custodies the underlying; alice paid it in.
         assert_eq!(
-            underlying_balance(&fixture, &fixture.client.address),
-            100 * WAD
+            underlying_balance(&fixture, &fixture.pool_client.address),
+            100 * UNIT
         );
-        assert_eq!(
-            underlying_balance(&fixture, &fixture.alice),
-            MINT - 100 * WAD
-        );
+        assert_eq!(underlying_balance(&fixture, &fixture.alice), MINT - 100 * UNIT);
     }
 
     #[test]
     fn sy_transfers_move_shares() {
         let fixture = fixture();
-        initialize(&fixture);
-        fixture.client.deposit(&fixture.alice, &(100 * WAD));
+        fixture.client.deposit(&fixture.alice, &(100 * UNIT));
 
         fixture
             .client
-            .transfer(&fixture.alice, &fixture.bob, &(40 * WAD));
-        assert_eq!(fixture.client.balance(&fixture.alice), 60 * WAD);
-        assert_eq!(fixture.client.balance(&fixture.bob), 40 * WAD);
+            .transfer(&fixture.alice, &fixture.bob, &(40 * UNIT));
+        assert_eq!(fixture.client.balance(&fixture.alice), 60 * UNIT);
+        assert_eq!(fixture.client.balance(&fixture.bob), 40 * UNIT);
     }
 
     #[test]
     fn allowance_entry_ttl_covers_requested_expiration() {
         use soroban_sdk::testutils::storage::Temporary as _;
-        use soroban_sdk::testutils::Ledger as _;
 
         let fixture = fixture();
-        initialize(&fixture);
-        fixture.client.deposit(&fixture.alice, &(100 * WAD));
+        fixture.client.deposit(&fixture.alice, &(100 * UNIT));
 
-        // Model mainnet-like conditions: the network minimum temporary-entry
-        // TTL is far shorter than the requested allowance lifetime.
         const START_SEQ: u32 = 1_000;
         const MIN_TEMP_TTL: u32 = 1_600;
         const EXPIRATION: u32 = START_SEQ + 500_000;
@@ -999,12 +949,8 @@ mod test {
 
         fixture
             .client
-            .approve(&fixture.alice, &fixture.bob, &(40 * WAD), &EXPIRATION);
+            .approve(&fixture.alice, &fixture.bob, &(40 * UNIT), &EXPIRATION);
 
-        // The test host never archives entries on a sequence jump, so reading
-        // the allowance back after a jump would pass even without the fix.
-        // Assert the entry's own TTL instead: it must cover the requested
-        // expiration ledger, not just the minimum it gets at creation.
         let key = DataKey::Allowance(fixture.alice.clone(), fixture.bob.clone());
         let ttl = fixture.env.as_contract(&fixture.client.address, || {
             fixture.env.storage().temporary().get_ttl(&key)
@@ -1017,25 +963,21 @@ mod test {
             EXPIRATION
         );
 
-        // Jump well past the minimum temporary TTL but before expiration; the
-        // allowance must still be readable and spendable.
         const JUMPED: u32 = START_SEQ + MIN_TEMP_TTL + 100_000;
         fixture.env.ledger().set_sequence_number(JUMPED);
         assert_eq!(
             fixture.client.allowance(&fixture.alice, &fixture.bob),
-            40 * WAD
+            40 * UNIT
         );
         fixture
             .client
-            .transfer_from(&fixture.bob, &fixture.alice, &fixture.bob, &(30 * WAD));
+            .transfer_from(&fixture.bob, &fixture.alice, &fixture.bob, &(30 * UNIT));
         assert_eq!(
             fixture.client.allowance(&fixture.alice, &fixture.bob),
-            10 * WAD
+            10 * UNIT
         );
-        assert_eq!(fixture.client.balance(&fixture.bob), 30 * WAD);
+        assert_eq!(fixture.client.balance(&fixture.bob), 30 * UNIT);
 
-        // The reduced allowance written back by transfer_from must also keep
-        // a TTL covering the stored expiration ledger.
         let ttl = fixture.env.as_contract(&fixture.client.address, || {
             fixture.env.storage().temporary().get_ttl(&key)
         });
@@ -1051,59 +993,44 @@ mod test {
     #[test]
     fn transfer_moves_principal_pro_rata_so_yield_stays_correct() {
         let fixture = fixture();
-        initialize(&fixture);
-        fixture.client.deposit(&fixture.alice, &(100 * WAD));
+        fixture.client.deposit(&fixture.alice, &(100 * UNIT));
 
-        // Rate grows 10%, so Alice has 10 of yield on 100 shares. She sends 40
-        // shares to Bob. Principal must follow pro-rata (40 of the 100), so
-        // neither party's accrued_yield is corrupted by the transfer.
+        // Pool-derived rate grows 10%, so Alice has 10 of yield on 100 shares.
+        // She sends 40 shares to Bob. Principal must follow pro-rata (40 of
+        // the 100), so neither party's accrued_yield is corrupted.
+        grow_rate(&fixture, 11, 10);
         fixture
             .client
-            .set_exchange_rate(&fixture.admin, &1_100_000_000_000_000_000);
-        fixture
-            .client
-            .transfer(&fixture.alice, &fixture.bob, &(40 * WAD));
+            .transfer(&fixture.alice, &fixture.bob, &(40 * UNIT));
 
-        // 60 shares * 1.10 - 60 principal = 6 yield; 40 * 1.10 - 40 = 4 yield.
-        assert_eq!(fixture.client.accrued_yield(&fixture.alice), 6 * WAD);
-        assert_eq!(fixture.client.accrued_yield(&fixture.bob), 4 * WAD);
+        assert_eq!(fixture.client.accrued_yield(&fixture.alice), 6 * UNIT);
+        assert_eq!(fixture.client.accrued_yield(&fixture.bob), 4 * UNIT);
     }
 
     #[test]
-    fn accrued_yield_tracks_exchange_rate_growth() {
+    fn accrued_yield_tracks_pool_derived_rate_growth() {
         let fixture = fixture();
-        initialize(&fixture);
-        fixture.client.deposit(&fixture.alice, &(100 * WAD));
-        fixture
-            .client
-            .set_exchange_rate(&fixture.admin, &1_050_000_000_000_000_000);
+        fixture.client.deposit(&fixture.alice, &(100 * UNIT));
+        grow_rate(&fixture, 21, 20); // +5%
 
-        assert_eq!(fixture.client.accrued_yield(&fixture.alice), 5 * WAD);
+        assert_eq!(fixture.client.accrued_yield(&fixture.alice), 5 * UNIT);
     }
 
     #[test]
     fn redeem_returns_underlying_and_reduces_principal() {
         let fixture = fixture();
-        initialize(&fixture);
-        fixture.client.deposit(&fixture.alice, &(100 * WAD));
-        fixture
-            .client
-            .set_exchange_rate(&fixture.admin, &1_100_000_000_000_000_000);
+        fixture.client.deposit(&fixture.alice, &(100 * UNIT));
+        grow_rate(&fixture, 11, 10); // +10%
 
-        let underlying_out = fixture.client.redeem(&fixture.alice, &(40 * WAD));
+        let underlying_out = fixture.client.redeem(&fixture.alice, &(40 * UNIT));
 
-        assert_eq!(underlying_out, 44 * WAD);
-        assert_eq!(fixture.client.balance(&fixture.alice), 60 * WAD);
-        assert_eq!(fixture.client.total_supply(), 60 * WAD);
-        assert_eq!(fixture.client.accrued_yield(&fixture.alice), 6 * WAD);
-        // Alice received the underlying; the vault paid it out.
+        assert_eq!(underlying_out, 44 * UNIT);
+        assert_eq!(fixture.client.balance(&fixture.alice), 60 * UNIT);
+        assert_eq!(fixture.client.total_supply(), 60 * UNIT);
+        assert_eq!(fixture.client.accrued_yield(&fixture.alice), 6 * UNIT);
         assert_eq!(
             underlying_balance(&fixture, &fixture.alice),
-            MINT - 100 * WAD + 44 * WAD
-        );
-        assert_eq!(
-            underlying_balance(&fixture, &fixture.client.address),
-            56 * WAD
+            MINT - 100 * UNIT + 44 * UNIT
         );
     }
 
@@ -1111,63 +1038,87 @@ mod test {
     #[test]
     #[should_panic(expected = "Error(Contract, #2)")]
     fn deposit_before_initialize_fails() {
-        let fixture = fixture();
-        fixture.client.deposit(&fixture.alice, &(100 * WAD));
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(SyWrapper, ());
+        let client = SyWrapperClient::new(&env, &contract_id);
+        let alice = Address::generate(&env);
+        client.deposit(&alice, &(100 * UNIT));
     }
 
     #[test]
     #[should_panic(expected = "Error(Contract, #2)")]
     fn redeem_before_initialize_fails() {
-        let fixture = fixture();
-        fixture.client.redeem(&fixture.alice, &(10 * WAD));
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(SyWrapper, ());
+        let client = SyWrapperClient::new(&env, &contract_id);
+        let alice = Address::generate(&env);
+        client.redeem(&alice, &(10 * UNIT));
     }
 
     #[test]
     #[should_panic(expected = "Error(Contract, #2)")]
     fn exchange_rate_before_initialize_fails() {
-        let fixture = fixture();
-        fixture.client.exchange_rate();
+        let env = Env::default();
+        let contract_id = env.register(SyWrapper, ());
+        let client = SyWrapperClient::new(&env, &contract_id);
+        client.exchange_rate();
     }
 
     #[test]
     #[should_panic(expected = "Error(Contract, #2)")]
     fn accrued_yield_before_initialize_fails() {
-        let fixture = fixture();
-        fixture.client.accrued_yield(&fixture.alice);
+        let env = Env::default();
+        let contract_id = env.register(SyWrapper, ());
+        let client = SyWrapperClient::new(&env, &contract_id);
+        let alice = Address::generate(&env);
+        client.accrued_yield(&alice);
     }
 
-    // M3: share math must reject i128 overflow. A tiny exchange rate inflates
-    // shares past i128 on deposit; a huge rate overflows the underlying-out
-    // product on redeem.
+    // M3: share math must reject i128 overflow.
     #[test]
     #[should_panic(expected = "Error(Contract, #6)")]
     fn deposit_share_math_overflow_is_rejected() {
         let fixture = fixture();
-        initialize(&fixture);
-        fixture.client.set_exchange_rate(&fixture.admin, &1);
-        fixture.client.deposit(&fixture.alice, &(1_000 * WAD));
+        // Seed a position so the rate is no longer the supply=0 default,
+        // then crash the pool's b_rate towards zero: the derived exchange
+        // rate collapses towards zero, so a modest further deposit inflates
+        // shares past i128.
+        fixture.client.deposit(&fixture.alice, &(100 * UNIT));
+        fixture.pool_client.set_b_rate(&1);
+        fixture.client.deposit(&fixture.alice, &(500 * UNIT));
     }
 
     #[test]
     #[should_panic(expected = "Error(Contract, #6)")]
     fn redeem_underlying_math_overflow_is_rejected() {
         let fixture = fixture();
-        initialize(&fixture);
-        fixture.client.deposit(&fixture.alice, &(1_000 * WAD));
-        fixture.client.set_exchange_rate(&fixture.admin, &i128::MAX);
-        fixture.client.redeem(&fixture.alice, &(1_000 * WAD));
+        fixture.client.deposit(&fixture.alice, &(1_000 * UNIT));
+        fixture.pool_client.set_b_rate(&(i128::MAX / 2));
+        fixture.client.redeem(&fixture.alice, &(1_000 * UNIT));
     }
 
-    // M4: a wrong-caller rejection on set_exchange_rate must surface as
-    // NotAuthorized (#12), not the misleading NotInitialized (#2) — the
-    // wrapper *is* initialized, the caller just isn't its admin.
+    // The legacy admin rate setter no longer exists on the contract at all:
+    // `SyWrapperClient` (and `SyWrapper` itself) has no `set_exchange_rate` or
+    // no-pool `initialize` method to call — this test module wouldn't compile
+    // if either did, since the deleted call sites above were the only thing
+    // exercising them. `exchange_rate()` derives solely from the configured
+    // Blend pool (see `redeem_returns_underlying_and_reduces_principal` and
+    // `accrued_yield_tracks_pool_derived_rate_growth`, which only ever move
+    // the rate via `grow_rate`, i.e. through the mock pool's `b_rate`).
+
+    // Admin's only reachable lever near the rate is `migrate_reserve_index`,
+    // and that only re-syncs which reserve slot is read — it cannot change
+    // the value the pool reports for that slot. Covered end-to-end (including
+    // the asset cross-check that prevents pointing at a different asset) in
+    // integration_tests/tests/blend_wrapper.rs.
     #[test]
-    #[should_panic(expected = "Error(Contract, #12)")]
-    fn set_exchange_rate_rejects_non_admin_caller() {
+    fn migrate_reserve_index_rejects_non_admin() {
         let fixture = fixture();
-        initialize(&fixture);
-        fixture
-            .client
-            .set_exchange_rate(&fixture.bob, &1_100_000_000_000_000_000);
+        assert!(matches!(
+            fixture.client.try_migrate_reserve_index(&fixture.bob),
+            Err(Ok(Error::NotAuthorized))
+        ));
     }
 }

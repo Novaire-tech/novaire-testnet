@@ -12,7 +12,7 @@ doctest = false
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-novaire-blend-adapter = { path = "../blend-adapter" }
+novaire-blend-adapter = { path = "../blend-adapter", features = ["testutils"] }
 novaire-shared-types = { path = "../shared/types" }
 novaire-sy-wrapper = { path = "../sy-wrapper" }
 novaire-pt-token = { path = "../pt-token" }

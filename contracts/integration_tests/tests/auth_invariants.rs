@@ -15,6 +15,7 @@
 //! cannot regress.
 
 use novaire_amm::{AmmMarket, AmmMarketClient};
+use novaire_blend_adapter::testutils::{MockBlendPool, MockBlendPoolClient};
 use novaire_pt_token::PtToken;
 use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
 use novaire_tokenizer::{Tokenizer, TokenizerClient};
@@ -52,7 +53,9 @@ fn deploy(env: Env) -> Market {
     let tokenizer = env.register(Tokenizer, ());
     let amm = env.register(AmmMarket, ());
 
-    SyWrapperClient::new(&env, &sy).initialize(&admin, &underlying);
+    let pool = env.register(MockBlendPool, ());
+    MockBlendPoolClient::new(&env, &pool).initialize(&underlying);
+    SyWrapperClient::new(&env, &sy).initialize_blend(&admin, &underlying, &pool);
     novaire_pt_token::PtTokenClient::new(&env, &pt).initialize(&admin, &tokenizer, &sy, &MATURITY);
     novaire_yt_token::YtTokenClient::new(&env, &yt).initialize(&admin, &tokenizer, &sy, &MATURITY);
     TokenizerClient::new(&env, &tokenizer).initialize(&admin, &sy, &pt, &yt, &MATURITY);

@@ -5,6 +5,8 @@
 //! SY wrapper, tokenizer, PT/YT, and AMM together.
 
 use novaire_amm::{AmmMarket, AmmMarketClient};
+use novaire_blend_adapter::testutils::{MockBlendPool, MockBlendPoolClient};
+use novaire_blend_adapter::BLEND_SCALAR_12;
 use novaire_pt_token::{PtToken, PtTokenClient};
 use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
 use novaire_tokenizer::{Tokenizer, TokenizerClient};
@@ -26,6 +28,7 @@ struct Market {
     admin: Address,
     user: Address,
     sy: Address,
+    pool: Address,
     pt: Address,
     yt: Address,
     tokenizer: Address,
@@ -58,7 +61,9 @@ fn deploy(env: &Env) -> Market {
     let tokenizer = env.register(Tokenizer, ());
     let amm = env.register(AmmMarket, ());
 
-    SyWrapperClient::new(env, &sy).initialize(&admin, &underlying);
+    let pool = env.register(MockBlendPool, ());
+    MockBlendPoolClient::new(env, &pool).initialize(&underlying);
+    SyWrapperClient::new(env, &sy).initialize_blend(&admin, &underlying, &pool);
     novaire_pt_token::PtTokenClient::new(env, &pt).initialize(&admin, &tokenizer, &sy, &MATURITY);
     novaire_yt_token::YtTokenClient::new(env, &yt).initialize(&admin, &tokenizer, &sy, &MATURITY);
     TokenizerClient::new(env, &tokenizer).initialize(&admin, &sy, &pt, &yt, &MATURITY);
@@ -79,11 +84,30 @@ fn deploy(env: &Env) -> Market {
         admin,
         user,
         sy,
+        pool,
         pt,
         yt,
         tokenizer,
         amm,
     }
+}
+
+/// Moves the SY wrapper's pool-derived exchange rate as close to
+/// `target_rate` (WAD-scale) as the pool's integer math allows, and returns
+/// the rate actually landed on. This is the only way to move it now that
+/// there is no admin setter.
+///
+/// Both the pool (`b_rate`, 12-decimal) and the wrapper's own
+/// `aum * WAD / sy_supply` derivation floor-divide, so the achievable rate
+/// is quantized — coarser the smaller `sy_supply` is. Callers must read back
+/// the returned rate rather than assume they landed exactly on
+/// `target_rate`, unlike with the removed admin setter.
+fn set_rate(env: &Env, pool: &Address, sy: &Address, sy_supply: i128, target_rate: i128) -> i128 {
+    let aum_target = target_rate * sy_supply / WAD;
+    let b_tokens = sy_supply;
+    let new_b_rate = aum_target * BLEND_SCALAR_12 / b_tokens;
+    MockBlendPoolClient::new(env, pool).set_b_rate(&new_b_rate);
+    SyWrapperClient::new(env, sy).exchange_rate()
 }
 
 fn deploy_settlement_amm(env: &Env) -> SettlementMarket {
@@ -283,7 +307,7 @@ fn flash_route_over_mint_dust_stays_a_matched_pair_and_never_panics() {
         amm.add_liquidity(&m.user, &800_000_000_i128, &800_000_000_i128, &0);
 
         let rate: i128 = WAD + WAD * rate_bump / 1000;
-        sy.set_exchange_rate(&m.admin, &rate);
+        set_rate(&env, &m.pool, &m.sy, 2_000_000_000_i128, rate);
 
         let yt_before = yt.balance(&m.user);
         let sy_in = 1_000_000_i128;
@@ -313,6 +337,10 @@ fn flash_route_over_mint_dust_stays_a_matched_pair_and_never_panics() {
 
 #[test]
 fn yt_flash_route_accepts_one_share_recombine_dust_window() {
+    // Requested deltas; the pool-derived rate quantizes these (see
+    // `set_rate`), so `assert_yt_flash_route_accepts_recombine_dust` searches
+    // outward from each until it lands on an achieved rate that actually
+    // hits the one-share dust window, rather than assuming an exact delta.
     for rate_delta in [1_i128, 100_000_000_i128, 1_000_000_000_i128] {
         assert_yt_flash_route_accepts_recombine_dust(rate_delta);
     }
@@ -348,15 +376,42 @@ fn assert_yt_flash_route_accepts_recombine_dust(rate_delta: i128) {
         rate_delta,
         yt_out
     );
-    let rate = WAD + rate_delta;
-    let recombined_sy = yt_out * WAD / rate;
-    let recombine_dust = yt_out - recombined_sy;
-    assert_eq!(
-        recombine_dust, 1,
-        "test must exercise the dust window, got {}",
-        recombine_dust
-    );
-    sy.set_exchange_rate(&m.admin, &rate);
+
+    // The requested delta may not be exactly reachable through the pool's
+    // quantized rate (see `set_rate`); search nearby deltas, growing
+    // outward, for one whose *achieved* rate lands on the one-share dust
+    // window (recombine_dust == 1). A real Blend-backed wrapper is subject
+    // to the same quantization, so this reflects a realistic reachable rate,
+    // not an idealized one.
+    let sy_supply = 2_000_000_000_i128;
+    // The pool-derived rate can only land on multiples of WAD / sy_supply
+    // (see `set_rate`); search that grid, not raw stroop offsets, or a small
+    // `rate_delta` like 1 would never be reachable.
+    let grid_pitch = WAD / sy_supply;
+    let mut achieved_rate = None;
+    'search: for step in 0..1_000 {
+        for candidate_delta in [
+            rate_delta + step * grid_pitch,
+            rate_delta - step * grid_pitch,
+        ] {
+            if candidate_delta <= 0 || candidate_delta > one_share_dust_delta_max {
+                continue;
+            }
+            let candidate_rate = WAD + candidate_delta;
+            let rate = set_rate(&env, &m.pool, &m.sy, sy_supply, candidate_rate);
+            let recombined_sy = yt_out * WAD / rate;
+            if yt_out - recombined_sy == 1 {
+                achieved_rate = Some(rate);
+                break 'search;
+            }
+        }
+    }
+    let _rate = achieved_rate.unwrap_or_else(|| {
+        panic!(
+            "no rate near delta {} landed on the one-share recombine-dust window for yt_out {}",
+            rate_delta, yt_out
+        )
+    });
 
     assert_eq!(pt.total_supply(), seed_pt_supply + yt_out);
     assert_eq!(yt.total_supply(), seed_yt_supply + yt_out);

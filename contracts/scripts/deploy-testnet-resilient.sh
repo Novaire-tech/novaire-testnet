@@ -33,13 +33,11 @@ STATE_FILE="${STATE_FILE:-$DEPLOYMENTS_DIR/$NETWORK.state.env}"
 MANIFEST_OUT="${MANIFEST_OUT:-$DEPLOYMENTS_DIR/$NETWORK.toml}"
 FRONTEND_JSON_OUT="${FRONTEND_JSON_OUT:-$REPO/apps/web/src/config/deployments.$NETWORK.json}"
 ENV_OUT="${ENV_OUT:-$REPO/apps/web/.env.local}"
-CIRCLE_TESTNET_USDC_ISSUER="${CIRCLE_TESTNET_USDC_ISSUER:-GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5}"
-DEFAULT_UNDERLYING_ASSET="USDC:$CIRCLE_TESTNET_USDC_ISSUER"
-UNDERLYING_ASSET="${UNDERLYING_ASSET:-$DEFAULT_UNDERLYING_ASSET}"
-YIELD_SOURCE="${YIELD_SOURCE:-mock}"
 BLEND_POOL="${BLEND_POOL:-CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF}"
 BLEND_USDC="${BLEND_USDC:-CAQCFVLOBK5GIULPNZRGATJJMIZL5BSP7X5YJVMGCPTUEPFM4AVSRCJU}"
 BLEND_USDC_ASSET="${BLEND_USDC_ASSET:-USDC:GATALTGTWIOT6BUDBCZM3Q4OQ4BO2COLOAZ7IYSKPLC2PMSOPPGF5V56}"
+MARKET_ID="${MARKET_ID:-blend-usdc-q3}"
+YIELD_SOURCE_NAME="${YIELD_SOURCE_NAME:-Blend v2 USDC pool}"
 
 SCALAR_ROOT="${SCALAR_ROOT:-2000000000000000000}"
 INITIAL_ANCHOR="${INITIAL_ANCHOR:-1050000000000000000}"
@@ -79,10 +77,8 @@ save_state() {
     printf 'INITIAL_ANCHOR=%s\n' "$(quote_env "$INITIAL_ANCHOR")"
     printf 'FEE_BPS=%s\n' "$(quote_env "$FEE_BPS")"
     printf 'TWAP_WINDOW=%s\n' "$(quote_env "$TWAP_WINDOW")"
-    printf 'YIELD_SOURCE=%s\n' "$(quote_env "$YIELD_SOURCE")"
     printf 'BLEND_POOL=%s\n' "$(quote_env "$BLEND_POOL")"
     printf 'BLEND_USDC_ASSET=%s\n' "$(quote_env "$BLEND_USDC_ASSET")"
-    printf 'UNDERLYING_ASSET=%s\n' "$(quote_env "${UNDERLYING_ASSET:-}")"
     printf 'UNDERLYING_ID=%s\n' "$(quote_env "${UNDERLYING_ID:-}")"
     printf 'SY=%s\n' "$(quote_env "${SY:-}")"
     printf 'PT=%s\n' "$(quote_env "${PT:-}")"
@@ -165,7 +161,7 @@ NEXT_PUBLIC_NETWORK_PASSPHRASE="$NETWORK_PASSPHRASE"
 NEXT_PUBLIC_SIMULATION_SOURCE_ADDRESS="$DEPLOYER_ADDRESS"
 NEXT_PUBLIC_MARKET_ID="$MARKET_ID"
 NEXT_PUBLIC_TOKEN_DECIMALS="7"
-NEXT_PUBLIC_YIELD_SOURCE_KIND="$YIELD_SOURCE"
+NEXT_PUBLIC_YIELD_SOURCE_KIND="blend"
 NEXT_PUBLIC_YIELD_SOURCE_NAME="$YIELD_SOURCE_NAME"
 EOF
 }
@@ -200,9 +196,9 @@ deployer_public_key = "$DEPLOYER_ADDRESS"
 deployed_at = "$DEPLOY_FINISHED_AT"
 maturity = $MATURITY
 token_decimals = 7
-yield_source = "$YIELD_SOURCE"
+yield_source = "blend"
 blend_pool = "$BLEND_POOL"
-underlying_asset = "$([[ "$YIELD_SOURCE" == "blend" ]] && printf '%s' "$BLEND_USDC_ASSET" || printf '%s' "$UNDERLYING_ASSET")"
+underlying_asset = "$BLEND_USDC_ASSET"
 
 [curve]
 scalar_root = "$SCALAR_ROOT"
@@ -257,37 +253,12 @@ generate_bindings() {
   done
 }
 
-deploy_asset() {
-  local asset="$1" out
-  if out="$(stellar contract asset deploy \
-    --asset "$asset" \
-    --source "$IDENTITY" \
-    --network "$NETWORK" 2>/dev/null)"; then
-    printf '%s' "$out"
-    return
-  fi
-  stellar contract id asset --asset "$asset" --network "$NETWORK"
-}
-
 require_cmd git
 require_cmd cargo
 require_cmd stellar
 
 if [[ "${SKIP_WASM_FLOAT_CHECK:-0}" != "1" ]]; then
   require_cmd wasm-objdump
-fi
-
-case "$YIELD_SOURCE" in
-  mock|circle|blend) ;;
-  *) die "YIELD_SOURCE must be mock, circle, or blend, got '$YIELD_SOURCE'" ;;
-esac
-
-if [[ "$YIELD_SOURCE" == "blend" ]]; then
-  MARKET_ID="${MARKET_ID:-blend-usdc-q3}"
-  YIELD_SOURCE_NAME="${YIELD_SOURCE_NAME:-Blend v2 USDC pool}"
-else
-  MARKET_ID="${MARKET_ID:-circle-usdc-q3}"
-  YIELD_SOURCE_NAME="${YIELD_SOURCE_NAME:-$([[ "$YIELD_SOURCE" == "circle" ]] && printf 'Circle testnet USDC' || printf 'Simulated testnet rate')}"
 fi
 
 dirty="$(tracked_dirty)"
@@ -331,15 +302,10 @@ if [[ -n "${UNDERLYING:-}" ]]; then
   log "Using provided underlying: $UNDERLYING_ID"
 elif [[ -n "${UNDERLYING_ID:-}" ]]; then
   log "Reusing underlying from state: $UNDERLYING_ID"
-elif [[ "$YIELD_SOURCE" == "blend" ]]; then
+else
   UNDERLYING_ID="$BLEND_USDC"
   save_state
   log "Using Blend reserve asset as underlying: $UNDERLYING_ID"
-else
-  log "Resolving underlying Stellar Asset Contract for $UNDERLYING_ASSET"
-  UNDERLYING_ID="$(deploy_asset "$UNDERLYING_ASSET")"
-  save_state
-  log "Underlying (USDC): $UNDERLYING_ID"
 fi
 
 deploy_wasm_once SY novaire_sy_wrapper
@@ -349,11 +315,7 @@ deploy_wasm_once TK novaire_tokenizer
 deploy_wasm_once AMM novaire_amm
 
 log "Initializing SY wrapper"
-if [[ "$YIELD_SOURCE" == "blend" ]]; then
-  invoke_once INIT_SY "$SY" initialize_blend --admin "$DEPLOYER_ADDRESS" --underlying "$UNDERLYING_ID" --pool "$BLEND_POOL"
-else
-  invoke_once INIT_SY "$SY" initialize --admin "$DEPLOYER_ADDRESS" --underlying "$UNDERLYING_ID"
-fi
+invoke_once INIT_SY "$SY" initialize_blend --admin "$DEPLOYER_ADDRESS" --underlying "$UNDERLYING_ID" --pool "$BLEND_POOL"
 
 log "Initializing PT token"
 invoke_once INIT_PT "$PT" initialize --admin "$DEPLOYER_ADDRESS" --tokenizer "$TK" --sy_token "$SY" --maturity "$MATURITY"
