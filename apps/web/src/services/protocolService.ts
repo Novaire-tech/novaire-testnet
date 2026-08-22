@@ -99,8 +99,8 @@ export class ProtocolService {
       let impliedYieldApy = 0;
       let executableApy = 0;
 
-      // amm.spot_apy() reports the executable APY directly (WAD-scaled), replacing the
-      // old price-to-APY derivation via calculateMarketImpliedApy off a raw PT price.
+      // amm.spot_apy() reports the executable APY directly, in basis points (bps, 1e4),
+      // replacing the old price-to-APY derivation via calculateMarketImpliedApy off a raw PT price.
       const rawSpotApy = spotApyRes.status === 'fulfilled' ? Number(this.unwrapResult(spotApyRes.value.result)) : 0;
 
       // amm.twap_apy() has no documented "stale/reverts" behavior like the old
@@ -118,10 +118,10 @@ export class ProtocolService {
       }
 
       if (!isNaN(rawSpotApy) && rawSpotApy > 0) {
-        executableApy = rawSpotApy / 1e16; // WAD (1e18) rate -> percent
+        executableApy = rawSpotApy / 100; // bps (1e4) -> percent
       }
       if (!twapStale && !isNaN(rawTwapApy) && rawTwapApy > 0) {
-        impliedYieldApy = rawTwapApy / 1e16;
+        impliedYieldApy = rawTwapApy / 100; // bps (1e4) -> percent
       } else {
         impliedYieldApy = 0;
       }

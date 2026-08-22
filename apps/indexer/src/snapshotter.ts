@@ -102,7 +102,7 @@ async function getProtocolState(deployments: Record<string, string>): Promise<Pr
       const rawTwapApy = Number(unwrapResult(twapApyRes.value.result));
       if (!isNaN(rawTwapApy)) {
         apyUnavailable = false;
-        if (rawTwapApy > 0) impliedYieldApy = rawTwapApy / 1e16;
+        if (rawTwapApy > 0) impliedYieldApy = rawTwapApy / 100; // bps (1e4) -> percent
       }
     }
 

@@ -21,13 +21,14 @@ vi.mock('../../../../packages/bindings/sy_wrapper/src/index', () => ({
   },
 }));
 
-let twapImpl: () => Promise<{ result: { unwrap: () => bigint } }> = () => Promise.resolve({ result: { unwrap: () => 9000000000000000n } });
+// amm.spot_apy() / amm.twap_apy() return basis points (bps, 1e4), e.g. 1490n = 14.90%.
+let twapImpl: () => Promise<{ result: { unwrap: () => bigint } }> = () => Promise.resolve({ result: { unwrap: () => 1974n } });
 vi.mock('../../../../packages/bindings/amm/src/index', () => ({
   Client: function () {
     return {
       reserve_pt: () => Promise.resolve({ result: { unwrap: () => 1000000000n } }),
       reserve_sy: () => Promise.resolve({ result: { unwrap: () => 2000000000n } }),
-      spot_apy: () => Promise.resolve({ result: { unwrap: () => 9000000000000000n } }),
+      spot_apy: () => Promise.resolve({ result: { unwrap: () => 1490n } }),
       twap_apy: () => twapImpl(),
       quote_pt_for_sy: () => Promise.resolve({ result: { unwrap: () => 9000000n } }),
     };
@@ -91,7 +92,7 @@ describe('ProtocolService.getProtocolState — price oracle safety', () => {
 describe('ProtocolService.getProtocolState — TWAP freshness safety', () => {
   beforeEach(() => {
     oracleImpl = () => Promise.resolve({ priceUsd: 0.42 });
-    twapImpl = () => Promise.resolve({ result: { unwrap: () => 9000000000000000n } });
+    twapImpl = () => Promise.resolve({ result: { unwrap: () => 1974n } });
   });
 
   it('never derives an implied APY when amm.twap_apy() reverts (stale TWAP)', async () => {
@@ -104,5 +105,40 @@ describe('ProtocolService.getProtocolState — TWAP freshness safety', () => {
   it('derives an implied APY when the TWAP checkpoint is fresh', async () => {
     const state = await ProtocolService.getProtocolState();
     expect(state.twapStale).toBe(false);
+  });
+});
+
+describe('ProtocolService.getProtocolState — AMM APY unit conversion (bps -> percent)', () => {
+  beforeEach(() => {
+    oracleImpl = () => Promise.resolve({ priceUsd: 0.42 });
+  });
+
+  it('converts spot_apy from bps to a percent (1490 bps -> 14.90%)', async () => {
+    const state = await ProtocolService.getProtocolState();
+    expect(state.executableApy).toBeCloseTo(14.9, 6);
+  });
+
+  it('converts twap_apy from bps to a percent (1974 bps -> 19.74%)', async () => {
+    twapImpl = () => Promise.resolve({ result: { unwrap: () => 1974n } });
+    const state = await ProtocolService.getProtocolState();
+    expect(state.impliedYieldApy).toBeCloseTo(19.74, 6);
+  });
+
+  it('0 bps -> 0%', async () => {
+    twapImpl = () => Promise.resolve({ result: { unwrap: () => 0n } });
+    const state = await ProtocolService.getProtocolState();
+    expect(state.impliedYieldApy).toBe(0);
+  });
+
+  it('100 bps -> 1.00%', async () => {
+    twapImpl = () => Promise.resolve({ result: { unwrap: () => 100n } });
+    const state = await ProtocolService.getProtocolState();
+    expect(state.impliedYieldApy).toBeCloseTo(1.0, 6);
+  });
+
+  it('10000 bps -> 100.00%', async () => {
+    twapImpl = () => Promise.resolve({ result: { unwrap: () => 10000n } });
+    const state = await ProtocolService.getProtocolState();
+    expect(state.impliedYieldApy).toBeCloseTo(100.0, 6);
   });
 });

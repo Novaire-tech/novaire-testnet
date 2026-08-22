@@ -136,7 +136,7 @@ export function useTrade() {
       let twapStale = true;
       try {
         const twapTx = await ammClient.twap_apy();
-        twap = Number(unwrapResult(twapTx.result) || 0n) / 1e16; // WAD rate -> percent
+        twap = Number(unwrapResult(twapTx.result) || 0n) / 100; // bps (1e4) -> percent
         twapStale = false;
       } catch {
         console.warn('TWAP APY is stale or unavailable (amm.twap_apy failed)');
