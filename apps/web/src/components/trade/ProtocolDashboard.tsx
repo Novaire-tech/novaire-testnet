@@ -41,13 +41,13 @@ export function ProtocolDashboard() {
           </div>
 
           <div className="flex justify-between items-center p-3 rounded-xl bg-white/[0.03] border border-white/10">
-            <span className="text-sm text-[#F5F5F2]/60">Fixed APY</span>
+            <span className="text-sm text-[#F5F5F2]/60">Current Fixed APY</span>
             <span className="text-xl font-serif text-[#BEB7A7]">{marketData.fixedApy.toFixed(2)}%</span>
           </div>
 
           <div className="flex justify-between items-center p-3 rounded-xl bg-white/[0.03] border border-white/10">
-            <span className="text-sm text-[#F5F5F2]/60">TWAP</span>
-            <span className="text-xl font-serif text-white">{marketData.twapStale ? 'Stale' : `${marketData.twap.toFixed(4)} XLM`}</span>
+            <span className="text-sm text-[#F5F5F2]/60">Fixed APY (TWAP)</span>
+            <span className="text-xl font-serif text-white">{marketData.twapStale ? 'Stale' : `${marketData.twap.toFixed(2)}%`}</span>
           </div>
 
           <div className="border-t border-white/10 my-2"></div>

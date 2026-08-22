@@ -35,7 +35,7 @@ export function MarketStatisticsPanel() {
     { label: 'Current YT Price', value: `$${ytPriceUsd.toFixed(3)}`, subtext: `${(1.0 - (protocolState?.ptPriceUnderlying || 1.0)).toFixed(3)} XLM` },
     { label: 'PT Discount', value: `${ptDiscount.toFixed(2)}%`, highlight: true },
     { label: 'Underlying APY', value: underlyingApyLabel, subtext: 'Actual Blend-backed yield, from SY exchange-rate growth' },
-    { label: 'Implied APY', value: `${(protocolState?.impliedYieldApy || 0).toFixed(2)}%`, subtext: 'Market-implied yield from PT price (TWAP)' },
+    { label: 'Fixed APY (TWAP)', value: `${(protocolState?.impliedYieldApy || 0).toFixed(2)}%`, subtext: 'AMM twap_apy() — market-implied PT yield, not Blend yield' },
     { label: 'Executable APY', value: `${(protocolState?.executableApy || 0).toFixed(2)}%`, subtext: 'Implied yield from current spot PT price' },
     { label: 'Vault Fixed APY', value: `${activeVault?.fixedApy || 0}%`, subtext: 'Locked-in rate for the active vault' },
     { label: 'Market TVL', value: `$${(protocolState?.tvlUsd || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, subtext: `${(protocolState?.tvlXlm || 0).toLocaleString()} XLM` },

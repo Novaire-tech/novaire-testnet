@@ -42,7 +42,6 @@ vi.mock('../config/contracts', () => ({
 vi.mock('./yieldService', () => ({
   YieldService: {
     getActiveMaturityTimestampMs: vi.fn().mockResolvedValue(Date.now() + 30 * 24 * 60 * 60 * 1000),
-    getEpochStartIndex: vi.fn().mockResolvedValue(1),
   },
 }));
 

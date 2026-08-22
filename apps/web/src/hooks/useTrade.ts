@@ -16,7 +16,7 @@ export interface MarketData {
   ptReserve: number;
   ytReserve: number;
   underlyingReserve: number;
-  /** Executable APY — spot-PT-price implied annualized yield (calculateMarketImpliedApy). */
+  /** Current Fixed APY — AMM's canonical spot implied PT yield (amm.spot_apy()). Not derived locally. */
   fixedApy: number;
   /** Raw YT/PT price ratio, expressed as a percentage. NOT an APY — not annualized, not maturity-aware. */
   ytPtRatio: number;
@@ -142,6 +142,18 @@ export function useTrade() {
         console.warn('TWAP APY is stale or unavailable (amm.twap_apy failed)');
       }
 
+      // Current Fixed APY comes from the AMM's canonical spot implied rate, not a
+      // locally recomputed PT-price/maturity formula. Blend is the yield source
+      // (via the SY exchange rate above); the AMM only prices PT/SY and exposes the
+      // market-implied fixed rate that pricing implies.
+      let fixedApy = 0;
+      try {
+        const spotApyTx = await ammClient.spot_apy();
+        fixedApy = Number(unwrapResult(spotApyTx.result) || 0n) / 100; // bps (1e4) -> percent
+      } catch (e) {
+        console.warn('Failed to fetch AMM spot APY', e);
+      }
+
       let ptRes = 0, ytRes = 0, undRes = 0;
       try {
         const [reservePtTx, reserveSyTx] = await Promise.all([
@@ -156,14 +168,6 @@ export function useTrade() {
         console.warn('Failed to fetch AMM reserves', e);
       }
 
-      // Compute yields
-      const { YieldService } = await import('../services/yieldService');
-      const [maturityTimestampMs, ptFaceValueInUnderlying] = await Promise.all([
-        YieldService.getActiveMaturityTimestampMs(),
-        YieldService.getEpochStartIndex()
-      ]);
-      const { calculateMarketImpliedApy } = await import('../utils/apy');
-      const fixedApy = calculateMarketImpliedApy(ptPrice, ptFaceValueInUnderlying, maturityTimestampMs);
       const ytPtRatio = ptPrice > 0 ? (ytPrice / ptPrice) * 100 : 0;
 
       setMarketData({

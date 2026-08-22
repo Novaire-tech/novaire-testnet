@@ -42,12 +42,6 @@ export class YieldService {
     return maturityMs;
   }
 
-  static async getEpochStartIndex(): Promise<number> {
-    // Tokenizer.split() produces equal-face PT+YT from SY 1:1 — there is no separate
-    // "epoch start index" concept in the new contracts, so face value is always par (1.0).
-    return 1.0;
-  }
-
   static async getVaults(): Promise<Vault[]> {
     let tvlUsd = 0;
     let impliedApy = 0;
