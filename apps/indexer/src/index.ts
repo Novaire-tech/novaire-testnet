@@ -94,10 +94,13 @@ async function start() {
               }
             }
           }
-          await tx.syncState.update({ where: { id: 'singleton' }, data: { lastLedger: currentLedger } });
+          await tx.syncState.update({ where: { id: 'singleton' }, data: { lastLedger: currentLedger + 1 } });
         });
 
-        cursor = currentLedger;
+        // currentLedger's events were just fully fetched (getEvents' startLedger is
+        // inclusive) — advance past it so the next poll doesn't re-fetch and
+        // re-process the same ledger's events every cycle.
+        cursor = currentLedger + 1;
       }
     } catch (e) {
       console.error('Error polling events:', e);
