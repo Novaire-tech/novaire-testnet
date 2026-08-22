@@ -158,7 +158,10 @@ export const LogoMarquee = memo(function LogoMarquee({
       )}
     >
       <InfiniteSlider gap={72} reverse duration={95} durationOnHover={40}>
-        {[...logos, ...logos].map((logo, i) => (
+        {/* Repeated 8x (not just 2x) so the set always overflows the viewport — with only
+            three short items, a light duplication left the translated half-width shorter
+            than the container, exposing bare background at the loop seam. */}
+        {Array.from({ length: 8 }, () => logos).flat().map((logo, i) => (
           <div key={`${logo.alt}-${i}`} className="group/logo flex items-center justify-center">
             <LogoImage logo={logo} />
           </div>

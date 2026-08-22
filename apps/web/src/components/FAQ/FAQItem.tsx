@@ -1,16 +1,16 @@
 'use client';
 
-import { useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 
 interface FAQItemProps {
   index: string;
   question: string;
   answer: string;
+  isOpen: boolean;
+  onToggle: () => void;
 }
 
-export function FAQItem({ index, question, answer }: FAQItemProps) {
-  const [isOpen, setIsOpen] = useState(false);
+export function FAQItem({ index, question, answer, isOpen, onToggle }: FAQItemProps) {
   const prefersReducedMotion = useReducedMotion();
 
   return (
@@ -23,7 +23,7 @@ export function FAQItem({ index, question, answer }: FAQItemProps) {
     >
       <button
         type="button"
-        onClick={() => setIsOpen((prev) => !prev)}
+        onClick={onToggle}
         aria-expanded={isOpen}
         className="group flex w-full items-center justify-between gap-4 px-6 py-3.5 text-left"
       >

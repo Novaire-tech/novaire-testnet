@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
 import { FAQItem } from './FAQItem';
 
@@ -33,6 +34,11 @@ const FOURTH_ITEM = {
 
 export function FAQ() {
   const prefersReducedMotion = useReducedMotion();
+  const [openIndex, setOpenIndex] = useState<string | null>(null);
+
+  const handleToggle = (index: string) => {
+    setOpenIndex((prev) => (prev === index ? null : index));
+  };
 
   const riseUp = (delay = 0) => ({
     initial: { opacity: 0, y: 24 },
@@ -58,10 +64,10 @@ export function FAQ() {
         </motion.div>
 
         {/* Image left, FAQs right */}
-        <div className="mt-16 flex flex-col gap-8 md:mt-20 lg:flex-row lg:items-stretch lg:gap-14">
+        <div className="mt-16 grid grid-cols-1 items-start gap-8 md:mt-20 lg:grid-cols-[430px_minmax(0,1fr)] lg:gap-14">
           <motion.div
             {...riseUp(0.1)}
-            className="relative aspect-[4/3] w-full max-w-[470px] overflow-hidden rounded-[28px] border border-[rgba(17,42,70,0.1)] lg:aspect-auto lg:h-auto lg:w-[430px] lg:max-w-none lg:flex-shrink-0 lg:self-stretch"
+            className="relative aspect-[4/3] w-full max-w-[470px] self-start overflow-hidden rounded-[28px] border border-[rgba(17,42,70,0.1)] lg:aspect-[430/267] lg:w-[430px] lg:max-w-none"
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -71,11 +77,23 @@ export function FAQ() {
             />
           </motion.div>
 
-          <motion.div {...riseUp(0.2)} className="flex flex-1 flex-col justify-between gap-4 lg:w-full lg:max-w-none">
+          <motion.div
+            {...riseUp(0.2)}
+            className="flex flex-col gap-4 self-start"
+          >
             {FIRST_ROW.map((item) => (
-              <FAQItem key={item.index} {...item} />
+              <FAQItem
+                key={item.index}
+                {...item}
+                isOpen={openIndex === item.index}
+                onToggle={() => handleToggle(item.index)}
+              />
             ))}
-            <FAQItem {...FOURTH_ITEM} />
+            <FAQItem
+              {...FOURTH_ITEM}
+              isOpen={openIndex === FOURTH_ITEM.index}
+              onToggle={() => handleToggle(FOURTH_ITEM.index)}
+            />
           </motion.div>
         </div>
       </div>
