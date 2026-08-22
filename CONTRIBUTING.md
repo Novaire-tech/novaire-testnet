@@ -106,8 +106,7 @@ Novaire/
 │   ├── verify_testnet/                # chain.ts, expected.ts, README.md
 │   ├── utils.ts / utils.test.ts       # Shared script helpers + vitest suite
 │   ├── deployments.testnet.json       # Live Testnet contract addresses
-│   ├── deployments.mainnet.json       # Historical/reference record only — not a live deployment
-│   └── deprecated/                    # Legacy/demo scripts (e.g. inject_yield.ts) — do not reuse in new work
+│   └── deployments.mainnet.json       # Historical/reference record only — not a live deployment
 ├── docs/
 │   ├── PROTOCOL_INVARIANTS.md          # Source-of-truth invariant list, with code citations
 │   ├── protocol/CONTRACTS.md           # Per-contract specification
@@ -165,8 +164,6 @@ Create `.env` at the repo root from `.env.example` (`cp .env.example .env`). Onl
 | `NETWORK` | `scripts/deploy.ts`, `scripts/bootstrap_liquidity.ts` | `testnet` (default) or `mainnet`. Selects RPC/passphrase and the `deployments.<network>.json` file. |
 | `RPC_URL` | `scripts/deploy.ts`, `bootstrap_liquidity.ts`, `apps/indexer` | Soroban RPC endpoint (defaults per `NETWORK`). |
 | `NETWORK_PASSPHRASE` | `scripts/deploy.ts`, `bootstrap_liquidity.ts` | Overrides the passphrase (defaults per `NETWORK`). |
-| `ADMIN_SECRET` | legacy only: `scripts/initialize.ts`, `scripts/audit_mint.ts`, `scripts/check_keys.js` | Secret key for legacy scripts. **`npm run deploy` / `npm run bootstrap` do not read it** — they manage `scripts/testnet_keys.json` (auto-generated random keypairs, git-ignored). |
-| `KEEPER_SECRET` | `scripts/keeper.js` (rollover executor), legacy `scripts/initialize.ts` | Secret key of the rollover-executor account; `scripts/keeper.js` also requires `ROLLOVER_CONTRACT_ID`. Not required by `deploy`/`bootstrap`. |
 | `BOOTSTRAP_AMOUNT` | `scripts/bootstrap_liquidity.ts` | Amount used to seed initial liquidity (~12 XLM default). |
 | `SKIP_BOOTSTRAP` | `scripts/deploy.ts` | If set to `true`, skips the automatic liquidity bootstrap step after deploy. |
 | `NEXT_PUBLIC_RPC_URL` | Frontend (`apps/web`) | Soroban RPC the browser client talks to. |
@@ -229,7 +226,6 @@ The backend is two pieces:
    - `GET /api/prices`
    - `GET /api/markets`
    - `GET /api/history`, `POST /api/history/snapshot`, `POST /api/history/sync`
-   - `POST /api/keeper/register`
    - `POST /api/waitlist`
 
 2. **Standalone indexer** — polls RPC for events on the contracts in `scripts/deployments.testnet.json` and writes into the same Prisma database:
@@ -597,7 +593,7 @@ Report security issues **privately** — never as a public GitHub issue. See [SE
 ### Secrets policy
 
 - `.env*` (except `.env.example`) and `*_keys.json` are git-ignored. **Never** force-add them.
-- **Never commit** `ADMIN_SECRET`, `KEEPER_SECRET`, `testnet_keys.json`, or any real funded-wallet mnemonic or private key.
+- **Never commit** `testnet_keys.json` or any real funded-wallet mnemonic or private key.
 - Rotate anything that ever slipped — including RPC service tokens and any key that was committed even once.
 - Read secrets from the environment at run time, not from checked-in files. The root deploy scripts use `tsx --env-file=.env` which is fine for dev, not for CI.
 - Never surface secrets in stack traces, errors, HAR exports, or the UI.

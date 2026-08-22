@@ -89,7 +89,7 @@ Full recovery notes per workflow are in
 ## Secrets and safety
 
 - No workflow prints secret values to logs; `DATABASE_URL` falls back to a dummy local Postgres URL in `ci.yml` when unset so builds don't require a real secret.
-- `DEPLOYER_SECRET`/`KEEPER_SECRET` are never referenced by any `pull_request`-triggered workflow — only `workflow_dispatch`/release jobs may use them, and only behind a protected GitHub Environment.
+- `DEPLOYER_SECRET` is never referenced by any `pull_request`-triggered workflow — only `workflow_dispatch`/release jobs may use it, and only behind a protected GitHub Environment.
 - Required secrets and their scope are documented in [`.github/workflows/README.md#required-github-secrets`](.github/workflows/README.md).
 
 ## Required status checks before merge

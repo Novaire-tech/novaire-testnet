@@ -127,16 +127,14 @@ Novaire/
 ├── scripts/                       # Deployment / bootstrap / verification TS scripts
 │   ├── deploy-testnet-resilient.sh  # Main deployment script (builds, deploys, wires, binds)
 │   ├── deployments.testnet.json   # Current testnet deployment record
-│   ├── deployments.mainnet.json   # Historical/reference only — NOT a verified deployment
-│   └── deprecated/                # Retired scripts (e.g. inject_yield.ts)
+│   └── deployments.mainnet.json   # Historical/reference only — NOT a verified deployment
 ├── prisma/                        # Postgres schema (schema-only at runtime today)
 ├── docs/                          # Protocol/architecture deep docs + CONTRACTS.md
 ├── .github/workflows/             # CI/CD — see .github/workflows/README.md and CI.md
 ├── archive/                       # One-off debug/trace scripts from testnet development
 ├── .env.example
 ├── ARCHITECTURE.md  SECURITY.md  SECURITY_AUDIT.md  CHANGELOG.md  CI.md
-├── CONTRIBUTING.md  DEBUGGING.md  deployment-summary.md  RELEASE_NOTES.md
-└── registered_users.json          # Flat file appended to by POST /api/keeper/register
+└── CONTRIBUTING.md  DEBUGGING.md  deployment-summary.md  RELEASE_NOTES.md
 ```
 
 > `archive/` and other one-off debug/trace scripts (both `scripts/*` extras and `archive/`) are ad hoc developer tooling used while building against testnet, not a supported public interface — treat anything not referenced in this README or `package.json` as unmaintained/experimental.
@@ -152,8 +150,6 @@ Novaire/
 | **Rust + Cargo** | Required to build the Soroban contracts in `contracts/` |
 | **Soroban WASM target** | `rustup target add wasm32-unknown-unknown` |
 | **Stellar CLI** (`stellar`) | Required by `scripts/deploy-testnet-resilient.sh` (contract build/upload/deploy/invoke/bindings). Install per the [Stellar CLI docs](https://developers.stellar.org/docs/tools/developer-tools/cli). |
-
-> `scripts/initialize.ts` invokes the legacy `soroban` CLI (not `stellar`) and reads a `deployments.json` file that does not exist in this repo. It is stale relative to `deploy.ts` and `bootstrap_liquidity.ts` — prefer those two scripts.
 
 ---
 
@@ -182,7 +178,6 @@ Only variables actually read by the codebase are listed. `.env.example` at the r
 | `BLEND_POOL` | `scripts/deploy.ts`, `scripts/deploy_xlm_epoch.ts` | Only for mainnet | Blend Capital pool address wired into the epoch's SY Wrapper. Defaults to the live Testnet pool `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF`; must be set explicitly for mainnet. |
 | `BOOTSTRAP_AMOUNT` | `scripts/deploy-testnet-resilient.sh` | No | Amount used to seed initial AMM/SY liquidity (default `120000000`, ~12 XLM). |
 | `SKIP_BOOTSTRAP` | `scripts/deploy-testnet-resilient.sh` | No | If set to `true`, skips the automatic liquidity bootstrap step after deploy. |
-| `ADMIN_SECRET` | legacy only: `scripts/initialize.ts`, `scripts/audit_mint.ts`, `scripts/check_keys.js` | No | **`npm run deploy` does NOT read these** — it manages `scripts/testnet_keys.json` (auto-generated random admin/issuer keypairs, git-ignored). Only legacy scripts require `ADMIN_SECRET`. |
 | `NEXT_PUBLIC_RPC_URL` | Frontend (`apps/web`) | No | Soroban RPC endpoint the browser client talks to. Defaults per [Environment notes](#running-the-frontend-locally). |
 | `NEXT_PUBLIC_NETWORK` | Frontend (`apps/web`) | No | `TESTNET` (default) or `MAINNET`; selects the deployment set in `apps/web/src/config/`. |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Frontend (`apps/web`) | No | Passphrase used by client-side transaction building. |
@@ -248,7 +243,7 @@ npx ts-node src/index.ts   # requires DATABASE_URL (Postgres); processor is stub
    npm run deploy
    ```
    This builds optimized WASM for all 5 deployable contracts (`sy-wrapper`, `pt-token`, `yt-token`, `tokenizer`, `amm` — `blend-adapter` is a library crate, compiled in, not deployed separately), deploys and initializes them, cross-wires them by address, generates TS bindings for each, and writes `deployments/$NETWORK.toml` (the committed public manifest — see `deployments/README.md`), `apps/web/src/config/deployments.$NETWORK.json` (the frontend address map), and `apps/web/.env.local`. The script is resumable: it refuses a dirty tracked source tree and persists progress so a failed run can pick back up.
-   - Account management: the script does **not** read `ADMIN_SECRET`/`KEEPER_SECRET`. It reads (or auto-generates with random keypairs) `scripts/testnet_keys.json` (git-ignored) and funds the accounts via [Friendbot](https://friendbot.stellar.org) automatically.
+   - Account management: the script reads (or auto-generates with random keypairs) `scripts/testnet_keys.json` (git-ignored) and funds the accounts via [Friendbot](https://friendbot.stellar.org) automatically.
 5. After deploying, verify the new deployment:
    ```bash
    npm run verify:testnet
@@ -327,7 +322,6 @@ The "backend" is two pieces:
 1. **Next.js API routes** (`apps/web/src/app/api/*`), served automatically by `npm run dev` / `npm start`. These use a **file-based history store** (`history-store.json`, git-ignored, scoped by network + SY wrapper) and flat files — they do **not** use a database:
    - `GET /api/prices`, `GET /api/markets` — CoinDCX market-data proxies (see [API Documentation](#api-documentation)).
    - `GET /api/history`, `POST /api/history/snapshot`, `GET /api/history/sync` — protocol-history read/write/sync backed by `HistoryStore` (`apps/web/src/lib/historyStore.ts`), which replaces the previously-planned Prisma-backed history pipeline for the dev/testnet environment.
-   - `POST /api/keeper/register` — appends a wallet address to `registered_users.json` (legacy name; no keeper/automation logic).
    - `POST /api/waitlist` — simulated signup (placeholder until a real integration is added).
 
 2. **Standalone indexer** (`apps/indexer/`), which polls the Soroban RPC endpoint for events on the contracts in `scripts/deployments.testnet.json`:
@@ -352,7 +346,6 @@ All routes are Next.js Route Handlers under `apps/web/src/app/api/`. There is no
 | `/api/history` | GET | Returns stored protocol history from the file-based `HistoryStore`, scoped by (network, SY wrapper), capped at 5000 entries. |
 | `/api/history/snapshot` | POST | Records a history snapshot combining client-supplied wallet balances with latest protocol prices (called by `analyticsHistoryService`). |
 | `/api/history/sync` | GET | Server-side sync: checks Soroban events on AMM/SY Wrapper via `getEvents` and records protocol-price snapshots when new events exist; maintains a per-scope ledger cursor. Returns `{ success, syncedTo, skipped? }`. |
-| `/api/keeper/register` | POST | Appends `{ user }` to `registered_users.json` (legacy "keeper" naming; no keeper logic). |
 | `/api/waitlist` | POST | Records a waitlist signup (`{ email }`) — **simulated** (no real persistence/integration yet; code contains a `TODO` for Resend/Airtable/Supabase). |
 
 ---
@@ -410,10 +403,9 @@ CI (`.github/workflows/ci.yml`) runs the same quality gates: Rust fmt/clippy/tes
 - **Decentralization model.** Single-key admin control over mint authority, withdrawals, epoch creation, and loss accounting was removed (`9356ca73`). Settlement and loss marking are permissionless; all exit paths (withdraw/redeem/claim/remove_liquidity) are pause-exempt. Remaining centralization risk: the admin picks the Blend pool address and market parameters when deploying (immutable once deployed), and a protocol admin still exists for admin functions.
 - **Blend dependency.** SY Wrapper deposits/withdrawals unconditionally call into the configured Blend pool; there is no circuit breaker if Blend is unresponsive, and no on-chain check can distinguish a genuine Blend pool from a convincing fake (deployment-time verification required — see SECURITY.md).
 - **Oracle/TWAP.** The AMM uses TWAP pricing to resist flash-loan/oracle-manipulation style attacks; refresh-rate clamping (+10% ratchet) and permissionless `mark_loss` bound the SY exchange rate. None of this has been independently verified by a third-party audit.
-- **Secrets and key files.** `npm run deploy` auto-generates `scripts/testnet_keys.json` / `mainnet_keys.json` (git-ignored via `*_keys.json`) — treat them as secrets. Legacy scripts read `ADMIN_SECRET`/`KEEPER_SECRET` from `.env`. Never commit `.env`, keys files, or reuse a funded Mainnet key for testnet development.
-- **Flat-file / demo-grade state.** `history-store.json`, `registered_users.json`, and the simulated `/api/waitlist` are plain files with no access control — appropriate for local/testnet development only, not multi-user production deployment. The Prisma Postgres schema is not populated at runtime today.
+- **Secrets and key files.** `npm run deploy` auto-generates `scripts/testnet_keys.json` / `mainnet_keys.json` (git-ignored via `*_keys.json`) — treat them as secrets. Never commit `.env`, keys files, or reuse a funded Mainnet key for testnet development.
+- **Flat-file / demo-grade state.** `history-store.json` and the simulated `/api/waitlist` are plain files with no access control — appropriate for local/testnet development only, not multi-user production deployment. The Prisma Postgres schema is not populated at runtime today.
 - **Indexer is a stub.** No on-chain event reconstruction exists (`apps/indexer/src/processor.ts`); the DB is non-authoritative and the frontend reads everything live from the chain.
-- **Legacy/inconsistent scripts.** `scripts/initialize.ts` targets the deprecated `soroban` CLI; `scripts/keeper.js` is a legacy rollover-executor script (rollover contract no longer exists). See also the deploy-script caveats in [Deploying to Stellar Testnet](#deploying-to-stellar-testnet).
 - **`ExchangeRateBelowOne` is an intentional trade-protection invariant**, not a persistent-DoS bug — an oversized trade reverts atomically before any bad rate is persisted. A reported concern that this could brick a market was investigated against current source and the deployed testnet WASM and could not be reproduced; see [`SECURITY.md`](./SECURITY.md#security-note-exchangeratebelowone) for the full disposition.
 
 ---
@@ -446,9 +438,6 @@ Run `rustup target add wasm32-unknown-unknown`.
 
 **Friendbot funding errors during `deploy`**
 The deploy script calls `https://friendbot.stellar.org` to fund the admin/issuer accounts from `scripts/testnet_keys.json`. A `400` response is treated as "already funded" and ignored; other failures are logged as warnings and the script proceeds assuming the account already has funds. If deployment then fails with an underfunded-account error, fund the account manually via [Friendbot](https://friendbot.stellar.org) and retry.
-
-**`ADMIN_SECRET and KEEPER_SECRET environment variables are required`**
-This error comes only from the **legacy** `scripts/initialize.ts` (deprecated `soroban` CLI) — prefer `npm run deploy`, which auto-generates `scripts/testnet_keys.json`. The `scripts/keeper.js` script is legacy (rollover contract no longer exists).
 
 **Deploy script hangs or retries repeatedly**
 The deploy script retries failed Stellar CLI invocations up to 5 times with exponential backoff — expected under RPC rate limiting or network congestion; let it finish or reduce concurrent activity against the RPC endpoint.

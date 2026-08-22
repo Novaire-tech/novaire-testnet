@@ -14,7 +14,7 @@
 
 ## 1. Executive Summary
 
-Novaire is a Pendle-style **yield-tokenization protocol on Soroban (Stellar)**: users deposit an underlying asset, receive Principal Tokens (PT) and Yield Tokens (YT) 1:1 against deposited shares, trade PT/YT on a purpose-built AMM, and redeem/claim at or before maturity. Unlike many prototype yield-tokenization projects, the yield source here is **not mocked** — the `sy_wrapper` contract makes real cross-contract calls into a live Blend Capital lending pool (Soroban's largest lending protocol) and derives its exchange rate from Blend's actual `b_rate`. A separate script (`scripts/deprecated/inject_yield.ts`) exists purely as a deprecated testnet demo fallback and is explicitly documented as superseded.
+Novaire is a Pendle-style **yield-tokenization protocol on Soroban (Stellar)**: users deposit an underlying asset, receive Principal Tokens (PT) and Yield Tokens (YT) 1:1 against deposited shares, trade PT/YT on a purpose-built AMM, and redeem/claim at or before maturity. Unlike many prototype yield-tokenization projects, the yield source here is **not mocked** — the `sy_wrapper` contract makes real cross-contract calls into a live Blend Capital lending pool (Soroban's largest lending protocol) and derives its exchange rate from Blend's actual `b_rate`.
 
 The protocol consists of **10 Soroban contracts** (factory, tokenizer, pt_token, yt_token, sy_wrapper, vault, marketplace, maturity_engine, rollover, intent_engine), a Next.js frontend (`apps/web`) that reads contract state directly (bypassing the DB), a **currently non-functional indexer** (`apps/indexer` — its event processor is fully stubbed), and a Prisma/Postgres schema that exists but is not populated by anything meaningful today.
 
@@ -64,7 +64,7 @@ Repo root
 - `apps/web/` — the only user-facing surface; reads contract state directly via Soroban RPC simulation (`portfolioService.ts` explicitly bypasses "broken Indexer/DB").
 - `apps/indexer/` — intended to reconstruct off-chain queryable state from on-chain events; **currently a no-op except for advancing a ledger sync cursor** (`apps/indexer/src/processor.ts` — every event-type case body is empty).
 - `prisma/` — schema exists for a fully-featured indexed backend, but nothing writes to most of its tables today.
-- `scripts/` — deployment, bootstrap liquidity, a rollover-executing keeper (`scripts/keeper.js`), and a deprecated yield-injection demo (`scripts/deprecated/inject_yield.ts`).
+- `scripts/` — deployment, bootstrap liquidity, and verification tooling.
 
 ---
 
@@ -254,15 +254,13 @@ Rollover ──▶ PtToken, underlying token
 
 ## 5. Yield Architecture
 
-**Classification: IMPLEMENTED (real external protocol integration), with a distinct DEMO-ONLY fallback.**
+**Classification: IMPLEMENTED (real external protocol integration).**
 
 - `sy_wrapper` (`contracts/sy_wrapper/src/lib.rs`) defines its own `BlendPoolClient` mirroring the real Blend v2 Pool interface (comments state the layout was confirmed against `blend-capital/blend-contracts-v2` source), and makes genuine cross-contract calls: `pool_client.submit(...)` (Supply on deposit, Withdraw on withdraw), `pool_client.get_positions(this)`, `pool_client.get_reserve(...)`.
 - `scripts/deploy.ts` and `scripts/deploy_xlm_epoch.ts` hardcode a real Blend testnet pool ID as the default `blend_pool` parameter.
 - Mock Blend pool implementations (`mock_blend_pool.rs`, and `#[cfg(test)]`-gated mocks in `sy_wrapper`) exist **only in test code**, not in the production path.
 - **Exchange rate/yield update**: automatic on every interaction (`refresh_rate()` is called internally by `deposit`), additionally permissionlessly callable by anyone at any time, and wrapped by an admin-gated `harvest_yield()` convenience/eventing function. **No keeper is required for correctness** — this is (d) automatic-on-interaction as primary mechanism, with (a) permissionless refresh as backstop, and (b) admin-only only for a cosmetic harvest/event wrapper.
 - Rate can only increase within `refresh_rate` (capped at +10%/call to prevent donation-DoS), and can only be forced down via the permissionless `mark_loss()`, which is floor-bound at the actually-measured Blend balance (cannot be abused to under-report).
-- **`scripts/deprecated/inject_yield.ts` is explicitly a DEMO-ONLY / TEST-ONLY mechanism**, distinct from and superseded by the real accrual path. Its own header states: *"Real yield now accrues from Blend's actual b_rate... this script fakes yield by transferring underlying directly into the SY Wrapper's idle balance... kept only for testnet demos."*
-- `scripts/keeper.js` is **not** a yield-injection keeper — it is a rollover-execution bot polling registered users and calling `execute_rollover`.
 
 ---
 
@@ -344,7 +342,7 @@ All formulas cited to `contracts/sy_wrapper/src/lib.rs` and `contracts/tokenizer
 - `execute_rollover(user)` — **hybrid authorization**: keeper-gated (`Keeper.require_auth()`) within a grace period (default 1 day post-maturity, `GracePeriodLedgers`), then **permissionless** after the grace period lapses (liveness fallback so a dead/malicious keeper cannot permanently trap rollover-registered users).
 - Proceeds are always paid to the position owner, never redirectable to the keeper — keeper compromise is a griefing/timing risk (delay), not a theft risk.
 - `exit_rollover(user)` lets a user cancel and reclaim PT at any time, including while paused (anti-trap design).
-- `scripts/keeper.js` is the off-chain bot that calls `execute_rollover` for registered users within the grace window — **UNKNOWN** whether this script is actually run continuously in any production/testnet environment (no scheduler/cron infra for it was found in the repo; see Section 13).
+- The unscheduled `scripts/keeper.js` off-chain rollover-execution bot (and its `/api/keeper/register` registration endpoint) was removed; rollover execution relies entirely on the permissionless-after-grace-period fallback described above.
 
 ---
 
@@ -353,7 +351,7 @@ All formulas cited to `contracts/sy_wrapper/src/lib.rs` and `contracts/tokenizer
 `apps/web` (Next.js App Router).
 
 - **Routes**: `page.tsx` (landing), `app/app/{page,trade,vaults,portfolio,analytics}.tsx`, `app/docs/*`, `app/dev/page.tsx`.
-- **API routes**: `app/api/history/route.ts`, `history/snapshot`, `history/sync`, `markets/route.ts`, `prices/route.ts`, `keeper/register/route.ts`, `waitlist/route.ts`.
+- **API routes**: `app/api/history/route.ts`, `history/snapshot`, `history/sync`, `markets/route.ts`, `prices/route.ts`, `waitlist/route.ts`.
 - **Components**: `components/{dashboard,trade,vaults,portfolio,analytics,ui}/*`.
 - **Hooks**: `useWallet`, `useTrade`, `useYield`, `usePortfolio`, `usePrices`, `useAnalyticsHistory`, `useNotifications`.
 - **Services**: `protocolService`, `portfolioService`, `yieldService`, `walletService`, `priceOracleService`, `marketService`, `activityService`, `analyticsHistoryService`, `notificationService`.
@@ -375,7 +373,6 @@ All formulas cited to `contracts/sy_wrapper/src/lib.rs` and `contracts/tokenizer
 4. `priceOracleService.ts` — sparkline and "historical prices" are synthetic interpolations from current/low/high, explicitly commented as mocks.
 5. `useTrade.ts` — dummy wallet address used for read-only market-data simulation when no wallet connected.
 6. `app/api/waitlist/route.ts` — explicitly simulated ("TODO: Connect to Resend/Airtable/Supabase"), artificial 800ms delay, no real persistence.
-7. `app/api/keeper/register/route.ts` — writes to a flat JSON file `registered_users.json`, not a real DB.
 
 ---
 
@@ -385,7 +382,7 @@ There is no separate backend service beyond the Next.js API routes described in 
 
 - **API routes are a mix of on-chain-proxy and non-authoritative**: `history/*` routes read/write a flat-file JSON store (`apps/web/src/lib/historyStore.ts`, "Replaces Prisma/SQLite for the dev/testnet environment"), populated by re-querying live chain state — not itself a source of truth, purely a cache for charting.
 - `markets`/`prices` routes are pure proxies to the CoinDCX external ticker API.
-- **No standalone scheduler/cron/keeper daemon was found running in the repo** beyond: (a) the indexer's 5s poll loop (see Section 14, which is a no-op for data), and (b) client-side polling intervals in the frontend itself (`useTrade.ts` 15s market refresh, `analyticsHistoryService` 10s poll triggering `/api/history/sync`). `scripts/keeper.js` (rollover executor) exists as a script but **UNKNOWN** whether/how it is scheduled to run continuously in any deployed environment — no systemd unit, cron entry, or CI scheduled workflow invoking it was found.
+- **No standalone scheduler/cron/keeper daemon runs in the repo** beyond: (a) the indexer's 5s poll loop (see Section 14, which is a no-op for data), and (b) client-side polling intervals in the frontend itself (`useTrade.ts` 15s market refresh, `analyticsHistoryService` 10s poll triggering `/api/history/sync`). The unscheduled legacy `scripts/keeper.js` rollover-executor script and its `/api/keeper/register` registration endpoint were removed.
 
 ---
 
@@ -711,8 +708,8 @@ No discrepancies were found regarding: AMM YieldSpace pricing model claims, TWAP
 - **No independent verification of Blend pool legitimacy** at epoch-proposal time (SEC-10, Section 16/17).
 - **No fallback if Blend pool is unresponsive** — `sy_wrapper::withdraw`/`deposit` unconditionally call into Blend; no circuit breaker identified (Section 20). **UNKNOWN** if this has been stress-tested.
 - **Single RPC endpoint** configured per network in frontend config — no identified failover (Section 20). **UNKNOWN** if there's redundancy elsewhere not found by this audit.
-- **`scripts/keeper.js` scheduling is UNKNOWN** — no cron/systemd/CI schedule found invoking it; if it's not run, rollover execution relies entirely on the permissionless-after-grace-period fallback.
-- **Waitlist and keeper-registration API routes are non-production placeholders** (flat file / simulated persistence) — not financially relevant but indicates parts of the app are demo-stage.
+- **`scripts/keeper.js` was unscheduled and has been removed** — rollover execution relies entirely on the permissionless-after-grace-period fallback.
+- **Waitlist API route is a non-production placeholder** (simulated persistence) — not financially relevant but indicates parts of the app are demo-stage.
 - **PT face-value guarantee under severe external-protocol-loss scenario is not independently re-verified** by this audit beyond the standing `assert_invariant` checks at mint/claim time (Section 19B) — flagged UNKNOWN, not asserted safe.
 
 ---
