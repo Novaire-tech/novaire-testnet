@@ -163,12 +163,12 @@ async function scenarioVaultPlusPt() {
   let bought = false;
   try {
     const buy = await buyPT(wallet, 10);
-    r.tx('marketplace.swap_underlying_for_pt(10 XLM)', buy);
+    r.tx('amm.swap_sy_for_pt(10 XLM via SY Wrapper)', buy);
     if (buy.hash) await waitForTransaction(buy.hash, server);
     await settleAfterConfirmation();
     bought = true;
   } catch (e: any) {
-    r.skip(`Marketplace PT purchase failed — likely no seeded AMM liquidity this epoch: ${e.message || e}`);
+    r.skip(`AMM PT purchase failed — likely no seeded AMM liquidity this epoch: ${e.message || e}`);
     return;
   }
 
