@@ -4,8 +4,7 @@ on:
   pull_request:
     paths:
       - "scripts/deployments.*.json"
-      - "scripts/deploy.ts"
-      - "scripts/bootstrap_liquidity.ts"
+      - "contracts/scripts/deploy-testnet-resilient.sh"
       - ".github/scripts/validate-deployment.mjs"
       - ".github/workflows/deployment-validation.yml"
   push:

@@ -100,8 +100,6 @@ Novaire/
 ├── prisma/
 │   └── schema.prisma                  # Postgres schema (web + indexer); schema-only at runtime today
 ├── scripts/                           # Deployment / bootstrap / smoke / verification tooling
-│   ├── deploy.ts                      # Full contract build + upload + deploy + bindings (Stellar CLI)
-│   ├── bootstrap_liquidity.ts         # Seeds initial vault/marketplace liquidity
 │   ├── verify-testnet.ts              # `npm run verify:testnet` entrypoint
 │   ├── verify_testnet/                # chain.ts, expected.ts, README.md
 │   ├── utils.ts / utils.test.ts       # Shared script helpers + vitest suite
@@ -145,10 +143,10 @@ Novaire/
 | **npm** | ≥ 9 — **npm workspaces** are configured (`apps/*`, `packages/*`) and `package-lock.json` is the only lockfile | Everything that isn't Rust |
 | **Rust + Cargo** | Recent stable toolchain (workspace pins `soroban-sdk = 22.0.11`) | Building the Soroban contracts |
 | **WASM target** | `rustup target add wasm32-unknown-unknown` | Compiled Soroban WASM for building/testing contracts |
-| **Stellar CLI** (`stellar`) | Any recent release | `npm run deploy`, `npm run bootstrap` (build/upload/deploy/bindings) |
+| **Stellar CLI** (`stellar`) | Any recent release | `npm run deploy` (build/upload/deploy/bindings; liquidity bootstrap runs inline) |
 | **git** | any | everything |
 
-Networking: RPC calls default to `https://soroban-testnet.stellar.org`. Verify the endpoints in your `.env` are reachable before running `deploy`/`bootstrap`/`verify:testnet`.
+Networking: RPC calls default to `https://soroban-testnet.stellar.org`. Verify the endpoints in your `.env` are reachable before running `deploy`/`verify:testnet`.
 
 ### Operating systems supported
 
@@ -161,11 +159,10 @@ Create `.env` at the repo root from `.env.example` (`cp .env.example .env`). Onl
 
 | Variable | Consumed by | Description |
 | :--- | :--- | :--- |
-| `NETWORK` | `scripts/deploy.ts`, `scripts/bootstrap_liquidity.ts` | `testnet` (default) or `mainnet`. Selects RPC/passphrase and the `deployments.<network>.json` file. |
-| `RPC_URL` | `scripts/deploy.ts`, `bootstrap_liquidity.ts`, `apps/indexer` | Soroban RPC endpoint (defaults per `NETWORK`). |
-| `NETWORK_PASSPHRASE` | `scripts/deploy.ts`, `bootstrap_liquidity.ts` | Overrides the passphrase (defaults per `NETWORK`). |
-| `BOOTSTRAP_AMOUNT` | `scripts/bootstrap_liquidity.ts` | Amount used to seed initial liquidity (~12 XLM default). |
-| `SKIP_BOOTSTRAP` | `scripts/deploy.ts` | If set to `true`, skips the automatic liquidity bootstrap step after deploy. |
+| `NETWORK` | `contracts/scripts/deploy-testnet-resilient.sh` | `testnet` (default) or `mainnet`. Selects RPC/passphrase and the `deployments.<network>.*` manifest. |
+| `NETWORK_PASSPHRASE` | `contracts/scripts/deploy-testnet-resilient.sh` | Overrides the passphrase (defaults per `NETWORK`). |
+| `BOOTSTRAP_AMOUNT` | `contracts/scripts/deploy-testnet-resilient.sh` | Amount used to seed initial liquidity (~12 XLM default). |
+| `SKIP_BOOTSTRAP` | `contracts/scripts/deploy-testnet-resilient.sh` | If set to `true`, skips the automatic liquidity bootstrap step after deploy. |
 | `NEXT_PUBLIC_RPC_URL` | Frontend (`apps/web`) | Soroban RPC the browser client talks to. |
 | `NEXT_PUBLIC_NETWORK` | Frontend (`apps/web`) | `TESTNET` (default) or `MAINNET`; selects the deployment set in `apps/web/src/config/`. |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Frontend (`apps/web`) | Passphrase for client-side transaction building. |
@@ -187,14 +184,15 @@ npm install
 
 # 3. Environment (copy the template; defaults target Testnet)
 cp .env.example .env
-# No secrets are required for deploy/bootstrap — they auto-generate scripts/testnet_keys.json.
+# No secrets are required for deploy — it auto-generates scripts/testnet_keys.json
+# and seeds liquidity inline as part of the deploy script.
 # Set DATABASE_URL only if you run the indexer or Prisma tooling.
 
 # 4. Compile the Rust contracts (add the WASM target once)
 rustup target add wasm32-unknown-unknown
 ```
 
-The workspace does **not** require a global `stellar` install for frontend work — it is only needed for `npm run deploy` / `npm run bootstrap`.
+The workspace does **not** require a global `stellar` install for frontend work — it is only needed for `npm run deploy`.
 
 ### Start the frontend
 
@@ -555,7 +553,7 @@ These are the most safety-critical areas of the protocol. A bug here can silentl
 | **Blend integration** | `contracts/sy_wrapper` | The external yield source is trusted; a bad submit path or unverified address is systemic |
 | **TWAP** | `contracts/marketplace` | Flash-loan/manipulation resistance; the slip-path gate uses `get_twap_rate_checked()` |
 | **Oracle (on-chain rate/price)** | `sy_wrapper` exchange rate, `marketplace` price | The only price source; staleness and monotonicity must hold |
-| **Deployment** | `scripts/deploy.ts`, `bootstrap_liquidity.ts`, `factory` wiring | A miswired deployment is caught only by the Deployment Verification checklist at best |
+| **Deployment** | `contracts/scripts/deploy-testnet-resilient.sh` (build/deploy/wire/bootstrap) | A miswired deployment is caught only by the Deployment Verification checklist at best |
 
 ### Deployment verification (mandatory for every deploy, even a hotfix)
 
@@ -648,7 +646,7 @@ The intended shape for `.github/workflows/` — and a great low-risk first PR �
 - `scripts-test` — `npm run test:scripts` (blocking)
 - `e2e` — `npm run test:e2e -w web` (non-blocking, required for UI PRs)
 
-`verify:testnet` must **not** run automatically from CI: it creates real testnet wallets and spends real funds. It is a manual step for maintainers / release runs. `npm run deploy` / `npm run bootstrap` likewise run manually with the appropriate `.env`.
+`verify:testnet` must **not** run automatically from CI: it creates real testnet wallets and spends real funds. It is a manual step for maintainers / release runs. `npm run deploy` (which bootstraps liquidity inline) likewise runs manually with the appropriate `.env`.
 
 Until a workflow exists, treat the local gates as blocking and reviewers should verify them against the PR diff before approving.
 
@@ -679,7 +677,7 @@ A release is a deployable, verifiable snapshot of `master` that exercises the ep
 - [ ] All tests green (workspace + `cargo test` + `npm run lint` + `npm run build`).
 - [ ] **`npm run verify:testnet` passes** on the deployment to be released.
 - [ ] Contracts compiled with the release profile; bindings regenerated and committed.
-- [ ] Deployment executed: `npm run deploy` (or `deploy:epoch`) clean, `deployments.testnet.json` updated, `npm run bootstrap` succeeded.
+- [ ] Deployment executed: `npm run deploy` clean, `deployments.testnet.json` updated, inline liquidity bootstrap succeeded.
 - [ ] [Deployment verification](SECURITY.md#deployment-verification-required-before-every-deploy) checklist enforced (Blend address verified against the registry).
 - [ ] No Open Critical/High (P0/P1) findings scope the system exercising the epoch.
 - [ ] Security review complete for every included contract change (two-reviewer sign-off).

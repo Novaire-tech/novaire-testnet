@@ -14,7 +14,7 @@
 
 <br />
 
-> **Status: v0.3.0 — deployed and exercised on Stellar Testnet only.** The protocol runs on real Testnet contracts with a live verification suite, but no independent third-party security audit has been performed and it is **not intended for use with real funds**. See [Security Considerations & Known Limitations](#security-considerations--known-limitations).
+> **Status: v0.2.0 — deployed and exercised on Stellar Testnet only.** The protocol runs on real Testnet contracts with a live verification suite, but no independent third-party security audit has been performed and it is **not intended for use with real funds**. See [Security Considerations & Known Limitations](#security-considerations--known-limitations).
 
 ## Table of Contents
 
@@ -123,9 +123,10 @@ Novaire/
 │   ├── amm/                       # Time-decay AMM
 │   ├── blend-adapter/             # Library crate: Blend client + rate math
 │   ├── shared/types/              # Shared trait crate (StandardizedYield, Market)
-│   └── integration_tests/         # Cross-contract integration, fuzz, invariants, regression
+│   ├── integration_tests/         # Cross-contract integration, fuzz, invariants, regression
+│   └── scripts/
+│       └── deploy-testnet-resilient.sh  # Main deployment script (builds, deploys, wires, binds)
 ├── scripts/                       # Deployment / bootstrap / verification TS scripts
-│   ├── deploy-testnet-resilient.sh  # Main deployment script (builds, deploys, wires, binds)
 │   ├── deployments.testnet.json   # Current testnet deployment record
 │   └── deployments.mainnet.json   # Historical/reference only — NOT a verified deployment
 ├── prisma/                        # Postgres schema (schema-only at runtime today)
@@ -149,7 +150,7 @@ Novaire/
 | **npm** | Used for install/scripts; workspaces are configured for `apps/*` and `packages/*` |
 | **Rust + Cargo** | Required to build the Soroban contracts in `contracts/` |
 | **Soroban WASM target** | `rustup target add wasm32-unknown-unknown` |
-| **Stellar CLI** (`stellar`) | Required by `scripts/deploy-testnet-resilient.sh` (contract build/upload/deploy/invoke/bindings). Install per the [Stellar CLI docs](https://developers.stellar.org/docs/tools/developer-tools/cli). |
+| **Stellar CLI** (`stellar`) | Required by `contracts/scripts/deploy-testnet-resilient.sh` (contract build/upload/deploy/invoke/bindings). Install per the [Stellar CLI docs](https://developers.stellar.org/docs/tools/developer-tools/cli). |
 
 ---
 
@@ -172,12 +173,11 @@ Only variables actually read by the codebase are listed. `.env.example` at the r
 
 | Variable | Used by | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `NETWORK` | `scripts/deploy.ts`, `scripts/bootstrap_liquidity.ts` | No | `testnet` (default) or `mainnet`. Selects RPC URL, passphrase, and which `deployments.<network>.json` is read/written. |
-| `RPC_URL` | `scripts/deploy.ts`, `scripts/bootstrap_liquidity.ts`, `apps/indexer` | No | Soroban RPC endpoint. Defaults to `https://soroban-testnet.stellar.org` (testnet) or `https://mainnet.sorobanrpc.com` when `NETWORK=mainnet`. |
-| `NETWORK_PASSPHRASE` | `scripts/deploy.ts`, `scripts/bootstrap_liquidity.ts` | No | Overrides the network passphrase; defaults based on `NETWORK`. |
-| `BLEND_POOL` | `scripts/deploy.ts`, `scripts/deploy_xlm_epoch.ts` | Only for mainnet | Blend Capital pool address wired into the epoch's SY Wrapper. Defaults to the live Testnet pool `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF`; must be set explicitly for mainnet. |
-| `BOOTSTRAP_AMOUNT` | `scripts/deploy-testnet-resilient.sh` | No | Amount used to seed initial AMM/SY liquidity (default `120000000`, ~12 XLM). |
-| `SKIP_BOOTSTRAP` | `scripts/deploy-testnet-resilient.sh` | No | If set to `true`, skips the automatic liquidity bootstrap step after deploy. |
+| `NETWORK` | `contracts/scripts/deploy-testnet-resilient.sh`, `apps/indexer` | No | `testnet` (default) or `mainnet`. Selects RPC/network passphrase and which `deployments.<network>.*` manifest is read/written. |
+| `NETWORK_PASSPHRASE` | `contracts/scripts/deploy-testnet-resilient.sh` | No | Overrides the network passphrase; defaults to the Testnet passphrase. |
+| `BLEND_POOL` | `contracts/scripts/deploy-testnet-resilient.sh` | Only for mainnet | Blend Capital pool address wired into the SY Wrapper. Defaults to the live Testnet pool `CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF`; must be set explicitly for mainnet. |
+| `BOOTSTRAP_AMOUNT` | `contracts/scripts/deploy-testnet-resilient.sh` | No | Amount used to seed initial AMM/SY liquidity (default `120000000`, ~12 XLM). |
+| `SKIP_BOOTSTRAP` | `contracts/scripts/deploy-testnet-resilient.sh` | No | If set to `true`, skips the automatic liquidity bootstrap step after deploy. |
 | `NEXT_PUBLIC_RPC_URL` | Frontend (`apps/web`) | No | Soroban RPC endpoint the browser client talks to. Defaults per [Environment notes](#running-the-frontend-locally). |
 | `NEXT_PUBLIC_NETWORK` | Frontend (`apps/web`) | No | `TESTNET` (default) or `MAINNET`; selects the deployment set in `apps/web/src/config/`. |
 | `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Frontend (`apps/web`) | No | Passphrase used by client-side transaction building. |
@@ -196,8 +196,7 @@ All commands below are exact scripts defined in the root `package.json` unless n
 | `npm run build` | Runs `prisma generate` (schema validation only — no DB connection needed) then `next build` for a production build. |
 | `npm start` | Starts the built Next.js app (`next start`). |
 | `npm run lint` | Runs ESLint on `apps/web` (`eslint` using `eslint.config.mjs`). |
-| `npm run deploy` | Runs `scripts/deploy-testnet-resilient.sh` — builds, uploads, deploys, and wires all contracts to `NETWORK` (default `testnet`). |
-| `npm run bootstrap` | Seeds initial liquidity into the deployed contracts (part of deploy script). |
+| `npm run deploy` | Runs `contracts/scripts/deploy-testnet-resilient.sh` — builds, uploads, deploys, and wires all contracts to `NETWORK` (default `testnet`), then seeds initial liquidity inline (unless `SKIP_BOOTSTRAP=true`). There is no separate standalone bootstrap command. |
 | `npm run verify:testnet` | Runs the live Testnet verification suite — see [Testnet Verification](#testnet-verification). |
 | `npm run test:scripts` | Runs the vitest unit tests under `scripts/` (`scripts/utils.test.ts`). |
 
@@ -222,7 +221,7 @@ cd packages/bindings/<contract>
 npm run build   # tsc
 ```
 
-These bindings are also regenerated as part of `scripts/deploy-testnet-resilient.sh` via `stellar contract bindings`.
+These bindings are also regenerated as part of `contracts/scripts/deploy-testnet-resilient.sh` via `stellar contract bindings`.
 
 **Indexer** (`apps/indexer/`):
 
@@ -352,7 +351,7 @@ All routes are Next.js Route Handlers under `apps/web/src/app/api/`. There is no
 
 ## Testnet Verification
 
-`npm run verify:testnet` runs a live verification suite against the deployed Testnet contracts (`scripts/verify-testnet.ts` + `scripts/verify_testnet/`). No CI, no mocks, no browser automation: it creates fresh (or `--deterministic`) Testnet wallets, funds them via Friendbot, executes **real signed transactions** (`sy-wrapper.deposit`, `tokenizer.split`, `amm.swap_sy_for_pt`), reads balances directly from the contracts, and cross-checks **two independently implemented formulas** (`computeIndependent` vs `computeAppFormula`, mirroring `apps/web/src/services/portfolioService.ts`) against the on-chain numbers. It prints a per-scenario PASS/FAIL report (5 scenarios) that must show `RESULT: PASS`.
+`npm run verify:testnet` runs a live verification suite against the deployed Testnet contracts (`scripts/verify-testnet.ts` + `scripts/verify_testnet/`). No CI, no mocks, no browser automation: it creates fresh (or `--deterministic`) Testnet wallets, funds them via Friendbot, executes **real signed transactions** (`sy-wrapper.deposit`, `tokenizer.split`, `amm.swap_sy_for_pt`), reads balances directly from the contracts, and cross-checks **two independently implemented formulas** (`computeIndependent` vs `computeAppFormula`, mirroring `apps/web/src/services/portfolioService.ts`) against the on-chain numbers. It prints a per-scenario PASS/FAIL report (6 scenarios A–F, including scenario F, which checks Blend rate propagation against a real pool) that must show `RESULT: PASS`.
 
 ```bash
 npm run verify:testnet           # live run against deployments.testnet.json
@@ -439,7 +438,7 @@ Run `rustup target add wasm32-unknown-unknown`.
 **Friendbot funding errors during `deploy`**
 The deploy script calls `https://friendbot.stellar.org` to fund the admin/issuer accounts from `scripts/testnet_keys.json`. A `400` response is treated as "already funded" and ignored; other failures are logged as warnings and the script proceeds assuming the account already has funds. If deployment then fails with an underfunded-account error, fund the account manually via [Friendbot](https://friendbot.stellar.org) and retry.
 
-**Deploy script hangs or retries repeatedly**
+**Deploy script hangs or retries repeatedly (`contracts/scripts/deploy-testnet-resilient.sh`)**
 The deploy script retries failed Stellar CLI invocations up to 5 times with exponential backoff — expected under RPC rate limiting or network congestion; let it finish or reduce concurrent activity against the RPC endpoint.
 
 **Frontend shows stale prices / empty charts**
@@ -462,7 +461,7 @@ No. The project is exercised on Stellar Testnet only. `scripts/deployments.mainn
 [Freighter](https://www.freighter.app/), via `@stellar/freighter-api`. No other wallet integration is present in `apps/web/package.json`.
 
 **Where do I get testnet funds?**
-`scripts/deploy-testnet-resilient.sh` funds its own admin/issuer accounts automatically via [Friendbot](https://friendbot.stellar.org). For a personal wallet, fund it directly through Friendbot or the Freighter testnet faucet link.
+`contracts/scripts/deploy-testnet-resilient.sh` funds its own admin/issuer accounts automatically via [Friendbot](https://friendbot.stellar.org). For a personal wallet, fund it directly through Friendbot or the Freighter testnet faucet link.
 
 **Where are the current testnet contract addresses?**
 Committed in `scripts/deployments.testnet.json` (the full set including the SY Wrapper, Tokenizer, PT/YT Tokens, and AMM is present, along with deprecated epoch records), mirrored for the frontend in `apps/web/src/config/deployments.testnet.json`. Update both when you redeploy.
@@ -471,7 +470,7 @@ Committed in `scripts/deployments.testnet.json` (the full set including the SY W
 Not yet implemented. The only HTTP endpoints are the internal Next.js routes under `apps/web/src/app/api/`, and the only publishable TypeScript packages are the per-contract bindings under `packages/bindings/`.
 
 **Why does the frontend config call the underlying token `MOCK_USDC`?**
-Legacy label; the configured address is the native XLM SAC (`CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`), which `deploy-testnet-resilient.sh` sets via `Asset.native().contractId(...)`.
+Legacy label; the configured address is the native XLM SAC (`CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC`), which `contracts/scripts/deploy-testnet-resilient.sh` sets via `Asset.native().contractId(...)`.
 
 **How is historical chart data produced?**
 `GET /api/history/sync` (server) records protocol-price snapshots when on-chain events occur on AMM/SY Wrapper; `POST /api/history/snapshot` (client) records wallet balances at that time. Both write to the file-based `history-store.json`, scoped by (network, SY wrapper) so redeployed markets never mix.
