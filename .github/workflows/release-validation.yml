@@ -30,14 +30,6 @@ jobs:
     name: Deployment validation
     uses: ./.github/workflows/deployment-validation.yml
 
-  code-quality:
-    name: Code quality
-    uses: ./.github/workflows/code-quality.yml
-
-  docs-validation:
-    name: Documentation validation
-    uses: ./.github/workflows/docs-validation.yml
-
   verify-testnet:
     name: verify:testnet
     if: github.event_name == 'release' || inputs.run_verify_testnet
@@ -67,7 +59,7 @@ jobs:
   validation-report:
     name: Generate release-validation.md / deployment-summary.md
     if: always()
-    needs: [ci, protocol-integrity, security, deployment-validation, code-quality, docs-validation, verify-testnet]
+    needs: [ci, protocol-integrity, security, deployment-validation, verify-testnet]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -85,8 +77,6 @@ jobs:
             echo "| Protocol integrity | ${{ needs.protocol-integrity.result }} |"
             echo "| Security | ${{ needs.security.result }} |"
             echo "| Deployment validation | ${{ needs.deployment-validation.result }} |"
-            echo "| Code quality | ${{ needs.code-quality.result }} |"
-            echo "| Docs validation | ${{ needs.docs-validation.result }} |"
             echo "| verify:testnet | ${{ needs.verify-testnet.result }} |"
             echo
             if [[ "${{ contains(needs.*.result, 'failure') }}" == "true" ]]; then

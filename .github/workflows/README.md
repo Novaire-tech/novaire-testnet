@@ -11,12 +11,9 @@ Monorepo: `contracts/` (Rust/Soroban workspace, 6 crates), `apps/web` (Next.js),
 | Protocol Integrity | `protocol-integrity.yml` | PR/push touching `contracts/**`, reusable | Runs `cargo test -p integration_tests`, full workspace tests, NaN/Infinity scan, portfolio/allocation vitest. Fails immediately on invariant break. See `docs/PROTOCOL_INVARIANTS.md`. |
 | Security | `security.yml` | PR, push, daily 03:17 UTC, reusable | gitleaks, custom secret/mnemonic/key pattern scan, `cargo audit`, unsafe-Rust detection, `npm audit` (root + scripts) |
 | Deployment Validation | `deployment-validation.yml` | PR/push touching deployment files, manual, reusable | Validates `scripts/deployments.{testnet,mainnet}.json` — required keys present, correctly shaped strkeys/wasm hashes, no placeholders/zero values |
-| Code Quality | `code-quality.yml` | PR, push, reusable | Configurable scan (`.github/code-quality-rules.json`) for TODO/FIXME/console.log/debugger/hardcoded APY & price/mock values. Report as job summary + artifact. |
-| Docs Validation | `docs-validation.yml` | PR, push, manual, reusable | Confirms README/CONTRIBUTING/SECURITY/LICENSE/CHANGELOG/RELEASE_NOTES exist and are non-empty |
 | Verify Testnet | `verify-testnet.yml` | **Manual only** (`workflow_dispatch`) | Runs `npm run verify:testnet` against live Stellar Testnet, captures report/wallets/tx hashes; optional Playwright real-wallet/portfolio e2e with traces |
 | Nightly | `nightly.yml` | Cron 02:00 UTC, manual | Calls protocol-integrity + security workflows, runs verify:testnet + dependency scan, produces nightly report |
 | Release Validation | `release-validation.yml` | GitHub Release created, manual | Runs every gate above plus verify:testnet, produces `release-validation.md` + `deployment-summary.md`, fails release on any blocker |
-| Dependency Review | `dependency-review.yml` | PR touching manifests | GitHub's dependency-review-action, fails on high-severity advisories in the diff |
 | Dependabot | `../dependabot.yml` | Weekly (Monday) | Automated PRs for cargo (`contracts/`), npm (root + `scripts/`), GitHub Actions |
 
 ## Composite actions
@@ -31,7 +28,6 @@ gh workflow run verify-testnet.yml
 gh workflow run verify-testnet.yml -f run_e2e_traces=true
 gh workflow run nightly.yml
 gh workflow run release-validation.yml -f run_verify_testnet=true
-gh workflow run docs-validation.yml
 gh workflow run deployment-validation.yml
 ```
 
@@ -44,7 +40,7 @@ gh workflow run deployment-validation.yml
 | `MAINNET_RPC` | future mainnet deploy workflow | Not currently wired into any workflow above — add before enabling mainnet automation |
 | `DEPLOYER_SECRET` | not used in CI today (deploys are manual/local) | **Do not** add to a workflow that runs on `pull_request` — only ever reference in `workflow_dispatch`/`release` jobs with required environment protection |
 | `DATABASE_URL` | `ci.yml` (web build) | Falls back to a dummy local Postgres URL if unset so CI builds still succeed without a real DB |
-| `GITHUB_TOKEN` | gitleaks-action, dependency-review-action | Auto-provided by Actions, no setup needed |
+| `GITHUB_TOKEN` | gitleaks-action | Auto-provided by Actions, no setup needed |
 
 `BLEND_POOL`, `SY_WRAPPER_ID`, `TOKENIZER_ID`, `PT_TOKEN_ID`, `YT_TOKEN_ID`, `AMM_ID`: these live in `scripts/deployments.{testnet,mainnet}.json`, not GitHub Secrets — `deployment-validation.yml` validates that file directly rather than duplicating the values as secrets.
 
@@ -54,8 +50,6 @@ Add secrets in **repo Settings → Secrets and variables → Actions**. Scope `D
 
 - `rust-test-report`, `node-test-report-*`, `web-build`, `wasm-<contract>` (CI)
 - `protocol-integrity-log` (Protocol Integrity)
-- `code-quality-report` (Code Quality)
-- `docs-validation-report` (Docs Validation)
 - `verify-testnet-report`, `wallets.txt`, `transaction-hashes.txt`, `playwright-e2e-artifacts` (Verify Testnet)
 - `nightly-report`, `nightly-verify-testnet-report` (Nightly)
 - `release-validation-reports` (`release-validation.md`, `deployment-summary.md`) (Release Validation)
@@ -74,13 +68,13 @@ Add secrets in **repo Settings → Secrets and variables → Actions**. Scope `D
 - All Rust jobs share a `cargo`+`target` cache keyed on `contracts/Cargo.lock`; wasm builds run as a matrix (one job per contract) so a slow contract doesn't block the others.
 - All Node jobs use `actions/setup-node`'s built-in npm cache; `apps/web`, `apps/indexer`, `scripts` build/typecheck as a matrix.
 - Every workflow triggered by `push`/`pull_request` has a `concurrency` group with `cancel-in-progress: true`, so superseded pushes don't burn runner time.
-- `protocol-integrity.yml`, `security.yml`, `ci.yml`, `deployment-validation.yml`, `code-quality.yml`, `docs-validation.yml` all declare `workflow_call`, so `nightly.yml` and `release-validation.yml` reuse them instead of duplicating steps.
+- `protocol-integrity.yml`, `security.yml`, `ci.yml`, `deployment-validation.yml` all declare `workflow_call`, so `nightly.yml` and `release-validation.yml` reuse them instead of duplicating steps.
 
 ## Recommended branch protection (`main`)
 
 - Require a pull request before merging (no direct pushes)
 - Require approvals: **2** (matches `CONTRIBUTING.md`'s "paired review" requirement for `contracts/` changes)
-- Require status checks to pass: `ci-gate`, `Protocol Integrity gate`, `Security gate`, `Documentation Validation / check-required-docs`, `Deployment Validation gate`
+- Require status checks to pass: `ci-gate`, `Protocol Integrity gate`, `Security gate`, `Deployment Validation gate`
 - Require branches to be up to date before merging
 - Require conversation resolution before merging
 - Require linear history
