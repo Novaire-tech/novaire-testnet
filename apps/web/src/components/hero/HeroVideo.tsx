@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import Link from 'next/link';
+import { DOCS_URL } from '@/lib/docsUrl';
 
 export function HeroVideo() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,7 +93,9 @@ export function HeroVideo() {
                   className="mt-8 pointer-events-auto"
                 >
                   <Link
-                    href="/docs"
+                    href={DOCS_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     aria-label="Read more about Novaire"
                     className="group inline-flex h-[44px] items-center gap-2 rounded-full border border-[rgba(245,244,240,0.18)] bg-[rgba(245,244,240,0.08)] px-[26px] font-poppins text-[15px] font-medium text-[#f5f4f0] transition-all duration-[250ms] ease-out hover:-translate-y-[2px] hover:border-[rgba(245,244,240,0.3)] hover:bg-[rgba(245,244,240,0.14)] active:scale-[0.98]"
                   >
