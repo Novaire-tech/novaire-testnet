@@ -35,8 +35,26 @@ warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
 require_cmd() { command -v "$1" >/dev/null 2>&1 || die "$1 not found"; }
+require_var() { [[ -n "${!1:-}" ]] || die "required mainnet config \$$1 is not set. Refusing to run."; }
 require_cmd stellar
 require_cmd python3
+
+# --- required mainnet configuration (no testnet defaults, no guessing) ----
+# Deployer must supply the real underlying asset, real Blend pool, and real
+# market economics for Mainnet. Unlike deploy-testnet-resilient.sh these have
+# no fallback values — a missing var must fail the run, not silently deploy
+# against a placeholder.
+UNDERLYING_ID="${UNDERLYING_ID:-}"
+BLEND_POOL="${BLEND_POOL:-}"
+MATURITY="${MATURITY:-}"
+SCALAR_ROOT="${SCALAR_ROOT:-}"
+INITIAL_ANCHOR="${INITIAL_ANCHOR:-}"
+FEE_BPS="${FEE_BPS:-}"
+TWAP_WINDOW="${TWAP_WINDOW:-}"
+
+for v in UNDERLYING_ID BLEND_POOL MATURITY SCALAR_ROOT INITIAL_ANCHOR FEE_BPS TWAP_WINDOW; do
+  require_var "$v"
+done
 
 # --- network validation -----------------------------------------------
 CONFIGURED_PASSPHRASE="$(stellar network ls --long 2>/dev/null | awk -v n="$NETWORK" '
@@ -143,13 +161,75 @@ for name in "${CONTRACTS[@]}"; do
   log "  $name -> ${ADDR[$name]}"
 done
 
+SY="${ADDR[sy_wrapper]}"
+PT="${ADDR[pt_token]}"
+YT="${ADDR[yt_token]}"
+TK="${ADDR[tokenizer]}"
+AMM="${ADDR[amm]}"
+
+invoke() {
+  local contract_id="$1"
+  shift
+  stellar contract invoke \
+    --id "$contract_id" \
+    --source "$IDENTITY" \
+    --network "$NETWORK" \
+    -- "$@" >/dev/null
+}
+
+# Initialization order mirrors deploy-testnet-resilient.sh: SY wrapper first
+# (it owns the Blend pool link), then PT/YT (each needs the tokenizer address
+# and maturity), then the tokenizer itself, then the AMM last since it
+# references all four other contracts plus the curve parameters.
+log "Initializing SY wrapper"
+invoke "$SY" initialize_blend --admin "$DEPLOYER_ADDRESS" --underlying "$UNDERLYING_ID" --pool "$BLEND_POOL"
+
+log "Initializing PT token"
+invoke "$PT" initialize --admin "$DEPLOYER_ADDRESS" --tokenizer "$TK" --sy_token "$SY" --maturity "$MATURITY"
+
+log "Initializing YT token"
+invoke "$YT" initialize --admin "$DEPLOYER_ADDRESS" --tokenizer "$TK" --sy_token "$SY" --maturity "$MATURITY"
+
+log "Initializing tokenizer"
+invoke "$TK" initialize --admin "$DEPLOYER_ADDRESS" --sy_token "$SY" --pt_token "$PT" --yt_token "$YT" --maturity "$MATURITY"
+
+log "Initializing AMM"
+invoke "$AMM" initialize \
+  --admin "$DEPLOYER_ADDRESS" \
+  --pt_token "$PT" \
+  --sy_token "$SY" \
+  --yt_token "$YT" \
+  --tokenizer "$TK" \
+  --maturity "$MATURITY" \
+  --scalar_root "$SCALAR_ROOT" \
+  --initial_anchor "$INITIAL_ANCHOR" \
+  --fee_bps "$FEE_BPS" \
+  --twap_window "$TWAP_WINDOW"
+
+log "Verifying on-chain Wasm hash matches upload for each contract"
+for name in "${CONTRACTS[@]}"; do
+  chain_hash="$(stellar contract info hash --id "${ADDR[$name]}" --network "$NETWORK")"
+  [[ "$chain_hash" == "${UPLOAD_HASH[$name]}" ]] || die "$name on-chain Wasm hash mismatch after deploy"
+done
+
 python3 -c "
 import json
 json.dump({
   'network': '$NETWORK',
   'deployer': '$DEPLOYER_ADDRESS',
+  'underlying': '$UNDERLYING_ID',
+  'blend_pool': '$BLEND_POOL',
+  'maturity': $MATURITY,
+  'curve': {
+    'scalar_root': '$SCALAR_ROOT',
+    'initial_anchor': '$INITIAL_ANCHOR',
+    'fee_bps': $FEE_BPS,
+    'twap_window': $TWAP_WINDOW,
+  },
   'contracts': { $(for n in "${CONTRACTS[@]}"; do printf '\"%s\": \"%s\", ' "$n" "${ADDR[$n]}"; done) },
+  'initialized': True,
 }, open('$RESULT_FILE', 'w'), indent=2)
 "
-log "Saved deployment addresses to $RESULT_FILE"
-warn "Initialize calls are NOT included in this script yet — wire them up (mirroring deploy-testnet-resilient.sh's invoke_once calls) before using this in anger, and re-run the whole dry-run flow once more against them first."
+log "Saved deployment addresses and init config to $RESULT_FILE"
+log "Deployment and initialization complete"
+warn "Review $RESULT_FILE, then hand it to whatever wires the frontend/manifest for Mainnet — this script intentionally does not touch apps/web or deployments/$NETWORK.toml."
