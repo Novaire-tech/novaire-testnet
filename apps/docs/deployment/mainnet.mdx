@@ -1,0 +1,31 @@
+---
+title: "Mainnet"
+description: "Current mainnet status — read this before assuming any address here is live"
+---
+
+<Warning>
+  **No verified live mainnet deployment.** `README.md` states plainly: "Is this deployed on Stellar Mainnet? No." and describes `scripts/deployments.mainnet.json` as "a historical/reference file... not a supported, audited deployment." This documentation does not claim mainnet contracts are live, and you should independently verify any address before trusting it.
+</Warning>
+
+## What's actually in `scripts/deployments.mainnet.json`
+
+The file contains a populated set of contract addresses in the same shape as the testnet file, with `factory_initialized: "true"` and `epoch_deployed: "true"`. However, there is a specific, documented inconsistency worth understanding before treating this as evidence of a real deployment:
+
+- Its `underlying_token` field is `CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA`.
+- `scripts/deployments.testnet.json` explicitly flags this **exact same address** as the token from a deprecated, broken first testnet epoch that "does not exist on testnet."
+- `scripts/deploy.ts`'s actual live-deployment code path only ever sets `underlying_token` to the native XLM Stellar Asset Contract ID (computed via `Asset.native().contractId(...)`) — there is no code path in `deploy.ts` or `deploy_xlm_epoch.ts` that would produce that specific address for a genuine deploy.
+
+<Note>
+  This documentation rebuild did not query Stellar mainnet RPC/Horizon to check whether these contract IDs resolve to real, live contracts — it only reports what the repository's own files contain and the inconsistency found between them. If you need to know whether these addresses are live, check them directly against mainnet, and do not rely on this file's presence in the repo as proof either way.
+</Note>
+
+## Before considering mainnet
+
+Per `SECURITY_AUDIT.md`'s Mainnet Readiness section: not blocked by any confirmed Critical/High finding, but recommends an independent third-party audit before mainnet use. Per `SECURITY.md`: no bug bounty is active, and the security contact is a placeholder. See [Security Status](/security/security-status) for the full picture.
+
+## If you are planning a real mainnet deployment
+
+1. Do **not** reuse any address from `scripts/deployments.mainnet.json` without independently confirming it on mainnet first.
+2. Follow [Deployment → Verification](/deployment/verification) in full, especially the manual Blend pool address verification step — this is not code-enforceable and is entirely your responsibility as the deployer.
+3. Get an independent, licensed third-party security audit — the existing `SECURITY_AUDIT.md` explicitly disclaims being one.
+4. Replace the placeholder security contact in `SECURITY.md` before accepting real user funds.

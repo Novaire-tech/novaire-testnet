@@ -1,0 +1,38 @@
+---
+title: "Verification"
+description: "Post-deployment checks — including the one that must be done manually"
+---
+
+## What Factory verifies automatically
+
+`factory.deploy_epoch()` cross-validates every contract's self-reported metadata against the deployment parameters before considering the epoch live — this catches misconfigured wiring (wrong address assigned to the wrong role) at deploy time. `deploy_xlm_epoch.ts` additionally runs an explicit post-deploy check via `epoch_count()`/`get_epoch()` to confirm the new epoch is wired to the newly-deployed `tokenizer`.
+
+## What Factory cannot verify — the Blend pool address
+
+<Warning>
+  This is the single most important manual step in the entire deployment process, per `SECURITY.md`. It is explicitly **not code-enforceable** — no on-chain check can distinguish a genuine Blend pool address from a convincing fake.
+</Warning>
+
+Before submitting any `factory.deploy_epoch()` transaction, whoever deploys must, per `SECURITY.md`'s "Deployment Verification" checklist:
+
+- [ ] Confirm the `blend_pool` address matches the official Blend Capital pool listed in Blend's own deployment registry/docs for the target network (mainnet vs. testnet) — not a value copied from a prior epoch, a fork, or an unverified third-party source.
+- [ ] Confirm the underlying asset accepted by that pool matches `params.underlying_token` for this epoch.
+- [ ] Record the verified `blend_pool` address (and the source used to verify it) alongside the epoch's deployment record for later audit.
+
+`sy_wrapper`'s `YieldSource` is set once at `initialize()` with no rotation function — get this wrong, and there is no way to fix it short of deploying a new epoch entirely.
+
+## Post-deployment checks
+
+| Check | How |
+| --- | --- |
+| Epoch wiring is self-consistent | Automatic — `factory.deploy_epoch()` reverts if metadata doesn't cross-validate |
+| Blend pool address is genuine | **Manual** — see checklist above |
+| Bindings reflect the deployed contracts | Automatic — regenerated from the just-deployed contract IDs every run |
+| Liquidity was bootstrapped | Check `marketplace.get_reserves()` is non-zero, or that `SKIP_BOOTSTRAP` wasn't set |
+| Epoch is queryable | `factory.get_epoch(epoch_id)`, `factory.latest_epoch()` |
+
+## Verifying an existing deployment as a third party
+
+1. Read `scripts/deployments.<network>.json` for the recorded addresses.
+2. Query `factory.get_epoch(epoch_id)` directly to confirm the on-chain wiring matches the recorded addresses.
+3. Independently verify `sy_wrapper`'s configured `YieldSource` against Blend Capital's own published pool registry — do not trust the deployment file alone. See [Mainnet](/deployment/mainnet) for why this matters concretely.

@@ -1,0 +1,34 @@
+---
+title: "Pricing"
+description: "How the implied rate is discovered and read"
+---
+
+## Implied rate, not an oracle rate
+
+Novaire does not use an oracle to set the fixed rate. PT trades at a discount to its 1:1 redemption value, and the size of that discount — relative to time remaining until maturity — is the market's implied fixed rate. This is entirely a function of `marketplace`'s reserves and the [AMM](/protocol/amm) curve.
+
+## Spot price
+
+```text
+get_spot_price(a_pool, x, y) = (a_pool + y) / (a_pool + x), scaled to 1e9
+```
+
+Where `x` = PT reserves, `y` = underlying reserves. As `a_pool` grows toward maturity, spot price converges toward 1e9 (i.e. PT worth exactly 1 unit of underlying) — see `test_10_near_maturity_pt_price`.
+
+## TWAP
+
+`ImpliedRateTwap` is an EMA-style time-weighted average (weight `20` ledgers) updated on every swap, guarding against a single large trade or same-block manipulation from being read as "the" rate. Reads:
+
+- `get_twap_rate()` — raw value, no staleness check.
+- `get_twap_rate_checked()` — reverts if the last update is older than `MAX_TWAP_AGE_LEDGERS = 200`. This is what `intent_engine` calls before executing a strategy.
+- `get_twap_age()` — ledgers since last update.
+
+Regression tests specifically cover: TWAP equals spot at bootstrap (`test_2_twap_equals_spot_at_bootstrap`), TWAP trading below face value pre-maturity (`test_3_twap_below_face_value`), EMA convergence (`test_4_ema_converges_toward_spot`), same-ledger idempotency (`test_5_same_ledger_twap_idempotent`), flash-loan resistance (`test_6_flash_loan_twap_resistance`), and a temporal-ordering regression (`test_6b_h3_twap_temporal_ordering_regression`).
+
+## YT pricing
+
+`get_yt_price()`, `quote_underlying_for_yt`, `quote_yt_for_underlying` all derive from the PT/underlying curve via a virtual-sale simulation (see [AMM](/protocol/amm)) rather than from `YtReserves` acting as its own curve. This is tested for internal consistency: `test_yt_pt_price_consistency`, `test_yt_quote_matches_execution` (quote must match actual execution), `test_yt_round_trip_no_free_profit` (buy-then-sell can't produce riskless profit), and `test_yt_size_dependent_slippage` (larger trades get worse prices, as expected of a curve-derived quote).
+
+## Reading prices as an integrator
+
+Use `get_reserves()` for raw state, `get_pt_price()`/`get_yt_price()` for current spot quotes, and `get_twap_rate_checked()` — never `get_twap_rate()` unguarded — if your integration needs a manipulation-resistant rate to gate a transaction on, exactly as `intent_engine` does.

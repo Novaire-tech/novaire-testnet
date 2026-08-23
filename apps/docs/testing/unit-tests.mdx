@@ -1,0 +1,38 @@
+---
+title: "Unit Tests"
+description: "Per-contract test suites and what each proves"
+---
+
+<AccordionGroup>
+  <Accordion title="factory — contracts/factory/src/test.rs">
+    `test_successful_deployment_and_wiring`, `test_multiple_epochs_coexist`. Proves an epoch's contracts get deployed and cross-wired correctly, and that multiple epochs can coexist without collision. `SECURITY_AUDIT.md` additionally references `test_wiring_mismatch_fails`, `test_maturity_engine_wiring_mismatch_fails`, `test_duplicate_maturity_panic`, and `test_unauthorized_initialization_fails` in this file — worth an independent grep before citing those four names verbatim.
+  </Accordion>
+  <Accordion title="sy_wrapper — src/test.rs, src/audit_tests.rs">
+    Core: `test_normal_deposit`, `test_multiple_deposits`, `test_extremely_large_deposits`, `test_partial_withdraw`, `test_real_yield_backing`, `test_solvency_invariant_holds`, `test_yield_cannot_increase_without_underlying_increasing`, `test_previews`, `test_harvest_yield_donation_clamp`.
+    Audit-hardening (`audit_tests.rs`): `test_invariant_accounting_across_complex_transitions`, `test_stress_randomized_operations`, `test_dishonest_pool_inflated_report_clamped_to_ten_percent_ratchet`, `test_dishonest_pool_persistent_lying_still_bounded_per_call`, `test_dishonest_pool_underreport_does_not_decrease_rate`, plus dust/boundary tests (`test_deposit_tiny_amount_above_minimum`, `test_deposit_at_minimum_threshold_rejected`, `test_withdraw_zero_shares_rejected`).
+  </Accordion>
+  <Accordion title="vault — inline in src/lib.rs">
+    `test_vault_flow`, `test_user_shares_ttl_survives_long_maturity_gap`.
+  </Accordion>
+  <Accordion title="maturity_engine — inline in src/lib.rs">
+    `test_lifecycle_and_invariants`, `test_sequential_epoch_lifecycle`, `test_ledger_boundaries`, `test_invalid_transitions`, `test_repeated_settle_epoch_spam_all_fail_after_first`, `test_open_epoch_at_maturity_equal_to_current_ledger_rejected`.
+  </Accordion>
+  <Accordion title="tokenizer — inline in tokenizer/tokenizer/src/lib.rs">
+    `test_tokenizer_state_machine`, `test_redeem_pt_dust_and_tiny_amounts`, `test_redeem_pt_repeated_full_balance_fails_second_time`, `test_mint_pt_yt_rejects_non_positive_sy_shares`, `test_mint_pt_yt_late_minter_gets_historical_yield_credit`, `test_settle_epoch_repeated_calls_all_fail_after_first`.
+  </Accordion>
+  <Accordion title="pt_token — src/test.rs">
+    `test_mint_success`, `test_transfer_works_while_paused` (confirms the deliberate pause-bypass), `test_admin_transfer_two_step`, `test_tokenizer_transfer_two_step`, `test_new_tokenizer_can_mint_after_acceptance`, `test_metadata_fields`.
+  </Accordion>
+  <Accordion title="yt_token — src/test.rs">
+    `test_checkpoint_accrues_yield_on_mint`, `test_transfer_locks_accrued_yield_to_sender`, `test_is_expired_true_after_maturity`, `test_transfer_still_works_after_maturity`, `test_sy_wrapper_transfer_two_step`.
+  </Accordion>
+  <Accordion title="marketplace — inline in src/lib.rs">
+    The largest suite in the workspace. See [AMM Tests](/testing/amm-tests) for the full breakdown.
+  </Accordion>
+  <Accordion title="intent_engine — inline in src/lib.rs">
+    `test_fixed_yield_intent`, `test_yield_speculation`.
+  </Accordion>
+  <Accordion title="rollover — src/test.rs">
+    `test_register_and_execute_rollover`, `test_exit_rollover`, `test_register_rollover_rejects_double_registration`, `test_pt_custody_matches_tracked_total_across_lifecycle`, `test_execute_rollover_keeper_vs_permissionless_boundary` (added for SEC-09).
+  </Accordion>
+</AccordionGroup>

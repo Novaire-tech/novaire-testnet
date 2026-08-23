@@ -1,0 +1,53 @@
+---
+title: "Blend Integration"
+description: "How sy_wrapper talks to Blend Capital — and what is and isn't verified"
+---
+
+<Warning>
+  **Real Blend E2E testing: not verified.** Production `sy_wrapper` code issues genuine Soroban cross-contract calls against a configurable Blend pool address, but no test in this repository exercises an actual, deployed Blend Capital pool. Every test uses `MockBlendPool` (or an adversarial `DishonestBlendPoolClient`). Do not read "the code calls Blend" as "the integration has been tested against Blend."
+</Warning>
+
+## Architecture: embedded, not a separate adapter
+
+There is **no separate "Blend Adapter" contract**. Blend integration lives directly inside `sy_wrapper/src/lib.rs`:
+
+```text
+SY Wrapper (sy_wrapper)
+   ├── Request / Positions structs — hand-mirrored from Blend v2's on-chain types
+   ├── BlendPoolClient (#[contractclient]) — declares only submit() and get_positions()
+   └── pool_id: Address — the configured Blend pool, set at initialize()
+        ↓
+Blend Pool (external contract)
+```
+
+The `Request`/`Positions` struct layouts are copied from Blend v2's source with an explicit in-code comment claiming they were checked against `blend-capital/blend-contracts-v2` on GitHub. This is a documentation source, not something independently re-verified as part of this docs rebuild — treat the struct layout as "author asserts it matches Blend v2" rather than independently confirmed.
+
+## What actually gets called
+
+| Operation | Blend call | Request type |
+| --- | --- | --- |
+| `deposit()` | `pool_client.submit(...)` | `BLEND_REQUEST_TYPE_SUPPLY` |
+| `withdraw()` | `pool_client.submit(...)` | `BLEND_REQUEST_TYPE_WITHDRAW` |
+| `refresh_rate()` | `pool_client.get_positions(...)` | — reads state, no request |
+| `mark_loss()` | (no Blend call — admin-only local write) | — |
+
+## AUM derivation: an explicit approximation
+
+`pool_supplied_value()` sums each position's reported `supply` field and treats it as 1:1 underlying value. Blend's real accounting derives value from bTokens via a `b_rate` obtained from the pool's `get_reserve` call — `sy_wrapper` does not do this, because the code's author states they could not confirm `get_reserve`'s `ReserveData` field layout with confidence, and chose to avoid guessing rather than risk misreading it. The stated consequence: yield is under-reported relative to Blend's true accrual, not over-reported.
+
+## Trust boundary
+
+`sy_wrapper` fully trusts whatever address is configured as its Blend pool at `initialize()` — bounded only by the SY exchange-rate's 10%-per-call ratchet cap (see [SY](/protocol/sy)). `factory` explicitly documents (SEC-10) that it cannot verify on-chain whether a configured pool address is genuinely Blend's official pool versus a convincing fake — that verification is entirely an off-chain deployment-process responsibility.
+
+## Production vs. test infrastructure
+
+<Tabs>
+  <Tab title="Production (real Blend integration)">
+    `sy_wrapper`'s `deposit`, `withdraw`, `refresh_rate`, and `mark_loss` call `BlendPoolClient::new(&env, &pool_id)` against a real, runtime-configured address. This is a genuine cross-contract call capable of reaching an actual deployed Blend pool. **This code path is never compiled with a mock.**
+  </Tab>
+  <Tab title="Test infrastructure (MockBlendPool)">
+    `MockBlendPool` exists only inside `#[cfg(test)]` modules — separately copied in `sy_wrapper/src/audit_tests.rs`, `vault/src/lib.rs`, `tokenizer/tokenizer/src/lib.rs`, `intent_engine/src/lib.rs`, and shared in `integration_tests/src/mock_blend_pool.rs`. A `DishonestBlendPoolClient` variant exists specifically to test the 10%-per-call ratchet clamp against an adversarial pool. **None of this compiles into the deployed contract WASM.**
+  </Tab>
+</Tabs>
+
+See [Blend Testing](/testing/blend-testing) for exactly which test scenarios exist against `MockBlendPool`.

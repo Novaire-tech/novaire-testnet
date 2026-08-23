@@ -1,0 +1,44 @@
+---
+title: "Glossary"
+description: "Novaire-specific terms, defined from the actual implementation"
+---
+
+<Accordion title="SY (Standardized Yield)">
+  Shares minted by `sy_wrapper` against a deposit that has been supplied into a Blend Capital pool. Tracks an internally computed exchange rate, scaled by `EXCHANGE_RATE_SCALAR = 1e9`. See [SY](/protocol/sy).
+</Accordion>
+<Accordion title="PT (Principal Token)">
+  A standalone Soroban contract (`pt_token`, symbol `nPT`, 7 decimals) minted 1:1 against SY shares. Redeemable 1:1 for underlying once its epoch is settled. See [PT](/protocol/pt).
+</Accordion>
+<Accordion title="YT (Yield Token)">
+  A standalone Soroban contract (`yt_token`, symbol `nYT`, 7 decimals) minted 1:1 alongside PT, entitled to all yield generated between mint and maturity. See [YT](/protocol/yt).
+</Accordion>
+<Accordion title="AUM">
+  Assets under management, as computed by `sy_wrapper.total_backing()` = idle contract balance + `pool_supplied_value()`. Note this is an approximation of Blend's true accounting, not exact `b_rate`-derived value. See [Blend Integration](/protocol/blend-integration).
+</Accordion>
+<Accordion title="bRate">
+  Blend Capital's own internal rate for converting bTokens to underlying value. Novaire's `sy_wrapper` does **not** compute this directly — it treats Blend's reported `supply` as 1:1 underlying, an explicitly documented simplification.
+</Accordion>
+<Accordion title="AMM">
+  `marketplace` — a YieldSpace-style time-decaying automated market maker for PT/underlying, with YT priced off the same curve via a derived route. See [AMM](/protocol/amm).
+</Accordion>
+<Accordion title="LP">
+  Liquidity provider on `marketplace`. Deposits PT+underlying (and separately, YT via `add_yt_liquidity`) and earns the 0.3% swap fee plus a share of AMM-claimed yield.
+</Accordion>
+<Accordion title="WAD">
+  Not used in this codebase. Novaire's fixed-point scalars are all `1_000_000_000` (1e9) — `EXCHANGE_RATE_SCALAR` in `sy_wrapper`, `YIELD_SCALAR` in `yt_token`, and internal AMM curve math in `marketplace`. If you're porting logic from a WAD-based (1e18) protocol, this is the single most important unit difference to account for.
+</Accordion>
+<Accordion title="Implied Rate">
+  The fixed rate implied by how deeply PT trades below its 1:1 redemption value, relative to time remaining until maturity. Tracked as a TWAP (`ImpliedRateTwap`) by `marketplace`. See [Pricing](/protocol/pricing).
+</Accordion>
+<Accordion title="Maturity">
+  The `maturity_ledger` at which an epoch's PT becomes redeemable 1:1 and YT stops accruing new yield. Tracked canonically by `maturity_engine`.
+</Accordion>
+<Accordion title="Settlement">
+  The point at which `tokenizer.settle_epoch()` freezes `SettlementExchangeRate`, fixing the value every subsequent `redeem_pt` call uses. Permissionless, callable once `maturity_engine.live_state()` reports Matured. See [Settlement](/protocol/settlement).
+</Accordion>
+<Accordion title="Epoch">
+  A fixed-term market: its own `maturity_ledger`, its own PT/YT tokens, its own `marketplace` instance — deployed and wired atomically by `factory.deploy_epoch()`.
+</Accordion>
+<Accordion title="A_pool">
+  The time-varying parameter in `marketplace`'s pricing invariant `k = A_pool*(x+y) + x*y`, computed by `compute_a_pool()`. Grows from near-zero at epoch genesis toward a large value at maturity.
+</Accordion>

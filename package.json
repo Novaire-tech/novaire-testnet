@@ -11,6 +11,8 @@
     "build": "npm run build -w web",
     "start": "npm run start -w web",
     "lint": "npm run lint -w web",
+    "dev:docs": "npm run dev -w docs",
+    "build:docs": "npm run build -w docs",
     "deploy": "tsx --env-file=.env scripts/deploy.ts",
     "deploy:epoch": "tsx --env-file=.env scripts/deploy.ts",
     "bootstrap": "tsx --env-file=.env scripts/bootstrap_liquidity.ts"

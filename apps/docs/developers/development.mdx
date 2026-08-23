@@ -1,0 +1,78 @@
+---
+title: "Development"
+description: "Repository structure and local development workflow"
+---
+
+## Repository structure
+
+```text
+novaire-testnet/
+├── contracts/            # 9 Soroban contracts (Rust workspace)
+│   ├── factory/
+│   ├── sy_wrapper/
+│   ├── vault/
+│   ├── tokenizer/        # tokenizer, pt_token, yt_token
+│   ├── marketplace/
+│   ├── maturity_engine/
+│   ├── intent_engine/
+│   ├── rollover/
+│   └── integration_tests/
+├── apps/
+│   ├── web/               # Next.js 16 frontend
+│   ├── indexer/           # off-chain event indexer
+│   └── docs/               # this documentation site (Mintlify)
+├── packages/
+│   └── bindings/          # generated TypeScript contract clients, one per contract
+├── scripts/               # deployment and operational scripts
+├── prisma/                # shared Prisma schema (Postgres)
+├── docs/                  # source architecture/protocol markdown (ARCHITECTURE.md, CONTRACTS.md, PROTOCOL_INVARIANTS.md)
+├── SECURITY.md
+├── SECURITY_AUDIT.md
+└── README.md
+```
+
+## Running the frontend locally
+
+```bash
+npm run dev
+```
+
+Runs `apps/web` (`next dev`) against whatever contract addresses are already recorded in `scripts/deployments.testnet.json`.
+
+## Building
+
+```bash
+npm run build
+```
+
+Runs `prisma generate --schema=../../prisma/schema.prisma && next build` inside `apps/web` — note the build depends on the root-level `prisma/` directory, not a workspace-local schema.
+
+## Running the docs site locally
+
+```bash
+npm run dev:docs
+```
+
+Runs Mintlify's dev server against `apps/docs/docs.json`.
+
+## Contract development loop
+
+```bash
+cd contracts/<contract-name>
+cargo build --target wasm32-unknown-unknown --release
+cargo test
+```
+
+Or from the workspace root: `cargo test -p <contract-name>` (e.g. `cargo test -p sy_wrapper -p intent_engine`).
+
+## Linting
+
+```bash
+npm run lint
+```
+
+Runs ESLint against `apps/web`.
+
+## Contributing
+
+Per `README.md`'s Contributing section: run `npm run lint` and `cargo test` (from `contracts/`) before submitting. There is no CI workflow configured in this repository — these checks are currently run manually.

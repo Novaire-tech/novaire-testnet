@@ -1,0 +1,22 @@
+---
+title: "E2E Tests"
+description: "Full-lifecycle end-to-end tests"
+---
+
+## `rollover/tests/e2e.rs`
+
+`test_novaire_end_to_end_integration` — a full-lifecycle test exercising deposit → mint → trade → maturity → rollover through real (not mocked, aside from Blend) instances of every contract in the rollover chain: `tokenizer`, `vault`, `marketplace`, `intent_engine`, `factory`.
+
+## `integration_tests/src/e2e.rs`
+
+`scenario_full_lifecycle` is the broadest single scenario: deposit, mint PT/YT, trade on `marketplace`, advance to maturity, settle, and redeem — all in one test, using the shared `framework.rs` harness. See [Integration Tests](/testing/integration-tests) for the full scenario list.
+
+## `integration_tests/src/simulation.rs`
+
+`simulation_7_phase_protocol_lifecycle` runs a scripted seven-phase simulation across the protocol and calls `generate_simulation_report` to summarize the run — the closest thing in this repository to a "dry run of a real market's life," entirely within the Soroban test environment (no live network).
+
+<Warning>
+  All of the above run inside Soroban's local test SDK (`soroban_sdk::testutils`), not against a live testnet or mainnet RPC. "E2E" here means "full contract-call lifecycle within the test environment," not "against a live deployed network." There is no fork-testing or live-network E2E infrastructure in this repository.
+</Warning>
+
+Run: `cargo test -p integration_tests`, `cargo test -p rollover --test e2e`.

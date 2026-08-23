@@ -1,0 +1,52 @@
+---
+title: "Contracts"
+description: "Building, testing, and understanding individual contracts"
+---
+
+## Workspace layout
+
+`contracts/Cargo.toml` defines a workspace of 11 crates: `factory`, `sy_wrapper`, `vault`, `tokenizer/tokenizer`, `tokenizer/pt_token`, `tokenizer/yt_token`, `marketplace`, `maturity_engine`, `intent_engine`, `rollover`, `integration_tests`.
+
+Release profile settings (`contracts/Cargo.toml`):
+
+```toml
+[profile.release]
+overflow-checks = true
+
+[profile.release-with-logs]
+debug-assertions = true
+```
+
+`overflow-checks = true` in the actual release profile means an unexpected overflow **aborts the transaction** in production, not just in debug builds — this is a deliberate "fail safe over fail permissive" choice per `SECURITY.md`.
+
+## Building
+
+```bash
+cd contracts
+stellar contract build
+```
+
+Builds every contract's WASM. `scripts/deploy.ts` runs this same command as part of its pipeline.
+
+## Testing an individual contract
+
+```bash
+cargo test -p sy_wrapper
+cargo test -p marketplace
+```
+
+See [Testing](/developers/testing) for the full contract-level test workflow, and [Testing → Unit Tests](/testing/unit-tests) for what each suite proves.
+
+## Understanding a contract before modifying it
+
+For each contract, read in this order:
+
+1. Its entry in [Contract Architecture](/architecture/contract-architecture) for responsibility and admin surface.
+2. [Contract Dependencies](/architecture/contract-dependencies) for what it calls and what calls it.
+3. Its dedicated [Protocol](/protocol/sy) page if one exists (SY, PT, YT, AMM, Settlement).
+4. Its `src/lib.rs` `DataKey` enum — the fastest way to see everything a contract actually persists.
+5. Its test module — the fastest way to see the intended behavior under edge cases.
+
+## Adding a new epoch's worth of contracts
+
+New epochs are deployed via `factory.deploy_epoch()`, not by hand-deploying and wiring each contract. See [Deployment → Testnet](/deployment/testnet) for the exact pipeline (`scripts/deploy.ts`, `scripts/deploy_xlm_epoch.ts`).

@@ -1,0 +1,42 @@
+---
+title: "Security Model"
+description: "Authorization, admin privileges, and cross-contract trust — from SECURITY.md"
+---
+
+<Info>
+  This page summarizes `SECURITY.md` and `SECURITY_AUDIT.md`, quoted with attribution. Read the source documents in the repository root for the full text.
+</Info>
+
+## Philosophy (verbatim principles from SECURITY.md)
+
+- **Fail safe over fail permissive** — `checked_*` arithmetic throughout; release build compiled with `overflow-checks = true`.
+- **Invariants over trust** — every state-mutating function in the AMM, tokenizer, rollover, and maturity engine runs an explicit `assert_invariant()` post-condition before returning.
+- **Minimal privilege for cross-contract calls** — `intent_engine`/`rollover` use `authorize_as_current_contract` scoped to a single `(contract, function, args)` triple, no further sub-delegation.
+- **Liveness over convenience** — `remove_liquidity` and `exit_rollover` remain callable even while paused; an admin pause can never trap user funds.
+- **Single source of truth for time** — epoch state lives only in `maturity_engine`; every other contract queries it rather than keeping a local copy.
+
+## Admin privileges
+
+| Contract | Admin-gated operations |
+| --- | --- |
+| `factory` | `initialize`, `deploy_epoch`, `link_epochs` |
+| `sy_wrapper` | `mark_loss`, `harvest_yield`, `pause`/`unpause`, `transfer_admin` (two-step) |
+| `vault` | `pause`/`unpause`, `transfer_admin` (two-step) |
+| `marketplace` | `pause`/`unpause` |
+| `intent_engine` | `pause`/`unpause` |
+| `rollover` | `update_keeper`, `pause`/`unpause` |
+| `maturity_engine` | `open_epoch`, `archive_epoch` |
+| `pt_token` / `yt_token` | `set_tokenizer`/`set_sy_wrapper` (staged, two-step via `accept_*` since SEC-06), `transfer_admin` (two-step) |
+
+## Cross-contract trust
+
+`sy_wrapper` is the only contract with a trust dependency outside the Novaire protocol — the configured Blend Capital pool. Every other cross-contract call is between two Novaire contracts deployed and wired by the same `factory.deploy_epoch()` call, and `factory` cross-validates each contract's self-reported metadata against deployment parameters at wiring time, catching misconfiguration (wrong address in the wrong role) before an epoch goes live.
+
+## Token custody
+
+- `vault` and `sy_wrapper` custody underlying/SY shares.
+- `pt_token`/`yt_token` custody nothing themselves — they are balance ledgers, minted/burned exclusively by `tokenizer`.
+- `rollover` custodies matured PT on a user's behalf between registration and execution, with an explicit invariant (`assert_invariant`) that it never warehouses underlying between operations.
+- `marketplace` custodies PT, underlying, and YT reserves contributed by LPs.
+
+See [Trust Boundaries](/security/trust-boundaries) for the full actor-by-actor breakdown, and [Access Control](/security/access-control) for the `require_auth()` pattern used throughout.

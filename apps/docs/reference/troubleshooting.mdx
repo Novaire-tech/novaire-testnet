@@ -1,0 +1,36 @@
+---
+title: "Troubleshooting"
+description: "Common operational issues, from README.md and repository structure"
+---
+
+<AccordionGroup>
+  <Accordion title="stellar CLI missing / wrong CLI installed">
+    `scripts/deploy.ts` and `deploy_xlm_epoch.ts` require the `stellar` CLI (not the deprecated `soroban` CLI used by legacy `scripts/initialize.ts`). Install/update the Stellar CLI before running any deploy script.
+  </Accordion>
+  <Accordion title="wasm32 target missing">
+    Contract builds require the `wasm32-unknown-unknown` Rust target: `rustup target add wasm32-unknown-unknown`.
+  </Accordion>
+  <Accordion title="Friendbot funding errors">
+    Testnet/futurenet deploy flows auto-fund accounts via Friendbot. If funding fails, Friendbot may be rate-limited or temporarily down — retry, or fund the admin/keeper account manually via the Stellar Laboratory.
+  </Accordion>
+  <Accordion title="Missing environment variables">
+    Re-check `.env` against `.env.example` — see [Reference → Configuration](/reference/configuration) for the full variable list and what each is for.
+  </Accordion>
+  <Accordion title="Deploy script retry behavior">
+    `deploy.ts`/`deploy_xlm_epoch.ts` are idempotent against `scripts/deployments.<network>.json` — re-running after a partial failure skips any contract already uploaded/deployed rather than re-deploying from scratch.
+  </Accordion>
+  <Accordion title="Stale frontend prices">
+    `apps/web` reads cached price/TVL data through its own API routes backed by Prisma/Postgres, updated by `apps/indexer`. If prices look stale, check the indexer is running and `DATABASE_URL` is correctly configured.
+  </Accordion>
+  <Accordion title="Prisma client errors">
+    `apps/web`'s build runs `prisma generate --schema=../../prisma/schema.prisma` — the schema lives at the repo root, not inside `apps/web`. Confirm `DATABASE_URL`/`DATABASE_URL_UNPOOLED` are set before running Prisma commands.
+  </Accordion>
+  <Accordion title="Local file-based state has no access control">
+    `registered_users.json` and the local SQLite/Postgres dev database are unauthenticated by design — local/testnet development only, per `README.md`'s Known Limitations section.
+  </Accordion>
+  <Accordion title="No public SDK/API for third-party integration yet">
+    Per `README.md`'s FAQ: there is currently no formally published, versioned public API for third-party integration beyond using `packages/bindings` directly against your own deployed or the recorded testnet addresses.
+  </Accordion>
+</AccordionGroup>
+
+If your issue isn't covered here, check `README.md`'s own Troubleshooting and FAQ sections, which this page summarizes but doesn't fully replace.

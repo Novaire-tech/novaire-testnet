@@ -1,0 +1,29 @@
+---
+title: "Configuration"
+description: "Environment variables and deploy-time parameters"
+---
+
+## Environment variables
+
+See [Reference → Configuration](/reference/configuration) for the full `.env.example` table.
+
+## `factory.deploy_epoch` parameters
+
+`DeployEpochParams`, passed in one call to wire an epoch:
+
+| Field | Source |
+| --- | --- |
+| `maturity_ledger` | Computed from `MATURITY_LEDGERS` (testnet default ≈470,000 ledgers ≈30 days) or fixed at `518400` for mainnet in `deploy_xlm_epoch.ts` |
+| `underlying_token` | Native XLM SAC contract ID (via `Asset.native().contractId(...)`) unless already configured |
+| `blend_pool` | `BLEND_POOL` env var — defaults to a hardcoded testnet Blend pool ID, empty on mainnet unless set |
+| All 9 contract addresses | The addresses just deployed/uploaded in the same script run |
+| `keeper` | The account whose secret is `KEEPER_SECRET` |
+| `grace_period_ledgers` | Fixed at `1000` in the deploy scripts |
+
+## Idempotency
+
+`scripts/deployments.<network>.json` is checked and updated after every step of `deploy.ts`/`deploy_xlm_epoch.ts` — re-running the script skips any contract already uploaded/deployed, so a partially-failed run can be safely resumed.
+
+## `scripts/initialize.ts` — legacy, do not use
+
+`README.md` explicitly calls this script out as legacy/inconsistent: "do not rely on it." It uses the deprecated `soroban` CLI (not `stellar`) and deploys a dummy underlying token rather than using native XLM. Use `scripts/deploy.ts` instead.

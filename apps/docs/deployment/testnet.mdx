@@ -1,0 +1,62 @@
+---
+title: "Testnet"
+description: "The real testnet deployment pipeline and current state"
+---
+
+## Status
+
+<Note>
+  Testnet is the only network this protocol is actually exercised on. `scripts/deployments.testnet.json` records a populated, wired deployment: `factory_initialized: "true"`, `epoch_deployed: "true"`, `maturity_ledger: "4471443"`.
+</Note>
+
+## Deployment pipeline (`scripts/deploy.ts`)
+
+```bash
+NETWORK=testnet npm run deploy
+```
+
+<Steps>
+  <Step title="Network config & keys">
+    Reads `NETWORK`, picks RPC URL/passphrase, loads or creates admin/issuer keypairs in `testnet_keys.json`.
+  </Step>
+  <Step title="Fund via Friendbot">
+    Non-mainnet networks fund the admin/issuer accounts automatically.
+  </Step>
+  <Step title="Set underlying token">
+    Uses the native XLM SAC contract ID (via `Asset.native().contractId(...)`) if not already configured.
+  </Step>
+  <Step title="Build">
+    `stellar contract build` — compiles all 9 contracts to WASM.
+  </Step>
+  <Step title="Upload & deploy">
+    For each of `factory, sy_wrapper, vault, tokenizer, pt_token, yt_token, marketplace, intent_engine, rollover`: `stellar contract upload`, then `stellar contract deploy`. Idempotent — skips any step already recorded in `deployments.testnet.json`.
+  </Step>
+  <Step title="Initialize Factory">
+    `stellar contract invoke ... -- initialize --admin <admin> --protocol_version 1`.
+  </Step>
+  <Step title="Wire the epoch">
+    A single `factory.deploy_epoch()` call with `maturity_ledger`, `underlying_token`, `blend_pool` (env `BLEND_POOL`), and every contract address.
+  </Step>
+  <Step title="Generate SDK bindings">
+    `stellar contract bindings typescript` for each contract, into `packages/bindings/<name>`.
+  </Step>
+  <Step title="Bootstrap liquidity">
+    Unless `SKIP_BOOTSTRAP=true`, runs `scripts/bootstrap_liquidity.ts` to seed `marketplace`.
+  </Step>
+</Steps>
+
+## Deploying a new epoch on an existing Factory
+
+```bash
+NETWORK=testnet npm run deploy:epoch
+```
+
+`scripts/deploy_xlm_epoch.ts` redeploys fresh `sy_wrapper, vault, tokenizer, pt_token, yt_token, marketplace, intent_engine, rollover` instances from already-uploaded WASM hashes, computes a new `maturity_ledger` (default ≈30 days out via `MATURITY_LEDGERS`, override-able), wires via `factory.deploy_epoch()`, regenerates bindings, and **verifies** the new epoch via `epoch_count()`/`get_epoch()` before bootstrapping liquidity.
+
+## A note on a superseded epoch
+
+`scripts/deployments.testnet.json` documents (verbatim) a deprecated first epoch: *"First epoch deployment used a stale/incorrect underlying_token (CAS3J7GY...) that does not exist on testnet. These contract instances are wired to that bad token and cannot be reused (already initialized). Superseded by epoch 2."* This is left in the file as a historical record, not something to redeploy against.
+
+## Full address set
+
+`README.md`'s FAQ notes that the complete testnet address set requires running `npm run deploy` yourself — the committed addresses in the repo are not guaranteed complete or current for your own fork. Always treat `scripts/deployments.testnet.json` and `packages/bindings/*/src/index.ts`'s `networks.testnet.contractId` as the live source of truth for your own deployment.

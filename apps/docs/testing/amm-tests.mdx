@@ -1,0 +1,65 @@
+---
+title: "AMM Tests"
+description: "marketplace's test suite — the deepest in the workspace"
+---
+
+All tests below live inline in `contracts/marketplace/src/lib.rs`'s `#[cfg(test)]` module unless noted.
+
+## Bootstrap and rate = 1
+
+| Test | Proves |
+| --- | --- |
+| `test_1_clean_bootstrap_reserves_match` | Fresh pool reserves match what was deposited |
+| `test_2_twap_equals_spot_at_bootstrap` | TWAP equals spot price with no prior trade history |
+
+## Rate > 1 / near-maturity convergence
+
+| Test | Proves |
+| --- | --- |
+| `test_10_near_maturity_pt_price` | PT price converges toward par as `a_pool` grows near maturity |
+| `test_3_twap_below_face_value` | Pre-maturity, PT correctly trades at a discount, not at par |
+
+## TWAP correctness and manipulation resistance
+
+| Test | Proves |
+| --- | --- |
+| `test_4_ema_converges_toward_spot` | The EMA tracks spot over repeated updates |
+| `test_5_same_ledger_twap_idempotent` | Multiple updates in the same ledger don't distort the TWAP |
+| `test_6_flash_loan_twap_resistance` | A single large trade within one transaction can't move the TWAP the way it moves spot |
+| `test_6b_h3_twap_temporal_ordering_regression` | Regression for a historical temporal-ordering bug (H3) |
+| `test_7_no_reciprocal_twap_regression` | TWAP isn't vulnerable to a reciprocal-rate computation bug |
+| `test_8_twap_and_spot_directional_agreement` | TWAP and spot never disagree on direction of movement |
+| `test_twap_staleness_guard` | `get_twap_rate_checked()` correctly reverts past `MAX_TWAP_AGE_LEDGERS` |
+
+## YT pricing (derived-route correctness)
+
+| Test | Proves |
+| --- | --- |
+| `test_c1_yt_purchase_updates_reserves` | Buying YT correctly moves `YtReserves` |
+| `test_yt_size_dependent_slippage` | Larger YT trades get worse prices, as expected of a curve-derived quote |
+| `test_yt_no_negative_or_zero_price` | YT price never goes to zero or negative |
+| `test_yt_pt_price_consistency` | YT and PT prices stay mutually consistent |
+| `test_yt_round_trip_no_free_profit` | Buy-then-sell YT can't produce riskless profit |
+| `test_yt_quote_matches_execution` | `quote_*` functions match what actually executes |
+| `test_yt_whale_trade_rejected_at_small_trade_price` | A large trade can't execute at a small-trade's quoted price |
+| `test_yt_price_updates_immediately_with_pt_state` | YT price reacts immediately to PT-side state changes, confirming it's genuinely derived, not cached |
+
+## Liquidity and reserve accounting
+
+| Test | Proves |
+| --- | --- |
+| `test_c1_lp_withdrawal_after_yt_swap`, `test_c1_pricing_after_yt_swap`, `test_c1_sequential_swaps_reserve_consistency`, `test_c1_multiple_lps_yt_swap_fairness` | Reserve/LP-share accounting stays correct across YT swaps and multiple LPs |
+| `test_add_liquidity_zero_amount_rejected`, `test_first_add_liquidity_at_minimum_liquidity_boundary_rejected` | Bootstrap edge cases at the `MINIMUM_LIQUIDITY` boundary |
+| `test_remove_all_liquidity_leaves_only_locked_minimum` | Confirms `MINIMUM_LIQUIDITY = 1000` is permanently un-redeemable |
+| `test_repeated_remove_liquidity_beyond_balance_fails` | Can't withdraw more LP shares than owned |
+| `test_add_liquidity_dust_amount_after_bootstrap` | Dust-amount liquidity additions handled correctly |
+
+## Pause / access control
+
+`test_pause_and_unpause_toggle_state`, `test_unauthorized_pause_fails`, `test_paused_remove_liquidity_still_allows_recovery` (confirms exit remains possible while paused), `test_swap_against_zero_liquidity_fails`, `test_remove_liquidity_on_zero_liquidity_fails`.
+
+## Property-based fuzzing
+
+A `proptest` block (around line 2757+) with property functions: `lp_share_accounting_stays_consistent`, `zero_liquidity_pool_rejects_add_below_minimum`, `large_liquidity_round_trip_conserves_shares`, `repeated_small_add_withdraw_cycles_do_not_leak_shares` — randomized operation sequences checked against invariants rather than fixed inputs.
+
+Run just this crate: `cargo test -p marketplace`.

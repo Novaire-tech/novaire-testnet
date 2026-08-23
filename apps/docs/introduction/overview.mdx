@@ -1,0 +1,54 @@
+---
+title: "Overview"
+description: "What Novaire is, what it does, and what's implemented today"
+---
+
+## What Novaire is
+
+Novaire is a yield-tokenization protocol built on Stellar's Soroban smart-contract platform. It takes a yield-bearing underlying asset, standardizes it into a **Standardized Yield (SY)** position, and splits that position into two separately tradeable tokens:
+
+- **Principal Token (PT)** — redeemable 1:1 for the underlying at maturity. Holding PT to maturity is a fixed-return position.
+- **Yield Token (YT)** — entitled to all yield the underlying position generates between mint and maturity. Holding YT is a leveraged bet on yield.
+
+A time-decaying AMM (`marketplace`) lets PT and YT trade against the underlying, so the fixed rate is discovered by the market rather than set by an oracle or admin.
+
+## What problem it solves
+
+Yield-bearing assets (e.g. a Blend Capital lending position) bundle principal and yield into one variable-rate instrument. Novaire separates the two so:
+
+- Someone who wants a **known, fixed return** can buy PT at a discount and redeem it 1:1 at maturity.
+- Someone who wants **leveraged exposure to yield** can buy YT without buying the principal.
+- Liquidity providers can earn AMM fees on the PT/underlying market.
+
+## Core components (implemented)
+
+| Contract | Responsibility |
+| --- | --- |
+| `factory` | Deploys and wires a full set of per-epoch contracts; the single source of truth for which contracts belong to which epoch |
+| `sy_wrapper` | Wraps underlying deposits, supplies them into a Blend Capital pool, tracks the SY exchange rate |
+| `vault` | Share-accounting layer between users/Tokenizer and `sy_wrapper` |
+| `tokenizer` | Mints PT+YT 1:1 against vault shares, tracks yield accrual, handles settlement and PT redemption |
+| `pt_token` / `yt_token` | Standalone, custom ERC20-like token contracts, one pair deployed per epoch |
+| `marketplace` | The AMM — YieldSpace-style time-decaying curve for PT/underlying, plus derived YT pricing |
+| `maturity_engine` | The canonical epoch clock (Active → Matured → Settled → Archived) |
+| `intent_engine` | Composes deposit → mint → swap into single-transaction strategies |
+| `rollover` | Automates rolling a matured PT position into the next epoch |
+
+See [Contract Architecture](/architecture/contract-architecture) for the full dependency graph and [Protocol](/protocol/sy) for how each contract's mechanics actually work.
+
+## Current status
+
+<CardGroup cols={2}>
+  <Card title="Network" icon="network-wired">
+    Deployed and exercised on **Stellar Testnet**. Mainnet deployment is not verified — see [Deployment](/deployment/mainnet).
+  </Card>
+  <Card title="Audit" icon="magnifying-glass">
+    No independent, licensed third-party audit has been performed. An AI-assisted internal review exists — see [Security Status](/security/security-status).
+  </Card>
+  <Card title="External dependency" icon="link">
+    `sy_wrapper` calls a real Blend Capital pool contract in production code, but no test exercises a live Blend pool — only `MockBlendPool`. See [Blend Integration](/protocol/blend-integration).
+  </Card>
+  <Card title="SDK" icon="cube">
+    TypeScript bindings for every contract are generated via the Stellar CLI and checked into `packages/bindings/`. See [SDK](/developers/sdk).
+  </Card>
+</CardGroup>

@@ -1,0 +1,37 @@
+---
+title: "PT (Principal Token)"
+description: "The fixed-principal side of a tokenized position"
+---
+
+## What PT is
+
+`pt_token` is a standalone, custom ERC20-like Soroban contract (not a Stellar Asset Contract, not a module inside `tokenizer`) — one fresh instance deployed per epoch by `factory`. It represents a claim on 1 unit of the underlying asset, redeemable once its epoch is settled.
+
+- `name()` = "Novaire Principal Token", `symbol()` = "nPT", `decimals()` = 7 (hardcoded).
+- Minted and burned exclusively by `tokenizer` (`mint`/`burn` require `tokenizer.require_auth()`).
+
+## Minting
+
+`tokenizer.mint_pt_yt(user, sy_shares)` mints PT and YT **1:1** against `sy_shares` — for every SY share converted, the user gets an equal amount of PT and YT. There's no discount applied at mint time; the discount that implies a fixed rate emerges from how PT subsequently trades on `marketplace`, not from the mint itself.
+
+<Note>
+  A late minter (someone who deposits after the epoch has already been accruing yield) still mints PT/YT at 1:1 against their SY shares — `tokenizer` credits them "historical yield" self-funded from their own deposit's accrual, not drawn from earlier holders. See `test_mint_pt_yt_late_minter_gets_historical_yield_credit`.
+</Note>
+
+## Transfers bypass pause — deliberately
+
+`transfer`, `approve`, and `transfer_from` on `pt_token` are **not gated by the contract's pause flag**. This is an explicit design decision documented in-code: pausing is meant to stop new minting/burning in an emergency, not to trap holders who already have PT — secondary-market liquidity remains available as an escape valve even if the contract is paused.
+
+## Redemption
+
+Once an epoch is settled (`tokenizer.settle_epoch()` has run — permissionless, callable once `maturity_engine.live_state()` reports Matured), holders call `tokenizer.redeem_pt(user, pt_amount)`:
+
+1. `pt_amount` of PT is burned.
+2. The corresponding underlying is released via `vault`/`sy_wrapper` at the frozen `SettlementExchangeRate`.
+3. Underlying is transferred to the user.
+
+Redemption is tested down to dust amounts (`test_redeem_pt_dust_and_tiny_amounts`) and against double-redemption (`test_redeem_pt_repeated_full_balance_fails_second_time`).
+
+## PT and the AMM
+
+Before maturity, PT trades on `marketplace` against the underlying. The market price PT trades at — always at or below its 1:1 redemption value — is what implies the fixed rate for the remaining term. See [AMM](/protocol/amm) and [Pricing](/protocol/pricing).

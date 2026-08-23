@@ -1,0 +1,53 @@
+---
+title: "Known Findings"
+description: "The SEC-01 through SEC-14 findings register, as tracked in SECURITY.md's Remediation Roadmap"
+---
+
+<Warning>
+  No independent, licensed third-party security audit has been performed. `SECURITY_AUDIT.md` is explicit that it "was produced by AI-assisted code review, not a licensed security firm, and should not be treated as a substitute for one." Treat every "Fixed" status below as self-reported by the repository, not independently re-verified line-by-line as part of this documentation rebuild.
+</Warning>
+
+## Findings register
+
+Source: `SECURITY.md` → Remediation Roadmap (the more recently updated of the two source documents — see note below).
+
+| ID | Severity | Component | Finding | Status |
+| --- | --- | --- | --- | --- |
+| SEC-01 | Low–Medium | `intent_engine` | Rate gate used the unstaleness-checked TWAP accessor instead of `get_twap_rate_checked()` | Fixed |
+| SEC-02 | Low | `sy_wrapper` | No `extend_ttl` calls anywhere in the contract | Fixed |
+| SEC-03 | Low | `tokenizer` | Raw division instead of `checked_div` in `claim_yield`/`redeem_pt` settlement math | Fixed |
+| SEC-04 | Low | `intent_engine` | Raw multiply/divide instead of `checked_*` in YT-sale-percentage calculation | Fixed |
+| SEC-05 | Low | `tokenizer` | `record_surplus_baseline_pub` not restricted to the registered YtToken | Fixed |
+| SEC-06 | Low | `pt_token` / `yt_token` | `set_tokenizer`/`set_sy_wrapper` took effect immediately on one signature (centralization risk) | Fixed — now two-step (`accept_tokenizer`/`accept_sy_wrapper`) |
+| SEC-07 | Low | `sy_wrapper` | Instance-storage TTL bump relied on incidental calls rather than a shared helper | Fixed |
+| SEC-08 | Informational | `rollover` | Silent `max(0, …)` floors masked potential anomalies instead of erroring | Fixed |
+| SEC-09 | Informational | `rollover` | Missing test for keeper-vs-permissionless access-control boundary | Fixed — `test_execute_rollover_keeper_vs_permissionless_boundary` added |
+| SEC-10 | Informational | `factory` / `sy_wrapper` | Yield-source (Blend pool) trust assumption not documented | Documented — remains a required manual operational step, not code-enforceable |
+| SEC-11 | Informational | `sy_wrapper` | `deposit` didn't mirror `withdraw`'s commit-before-external-call ordering | Fixed |
+| SEC-12 | Informational | `intent_engine` | Unused `_maturity_ledger` parameter | Fixed |
+| SEC-13 | Informational | `yt_token` | `add_accrued_yield` didn't explicitly handle zero amount | Fixed |
+| SEC-14 | Informational | `pt_token` / `yt_token` | Zero dedicated unit tests for these contracts | Fixed — test suites added |
+
+**Outstanding, not yet fixed:**
+
+| Item | Status |
+| --- | --- |
+| Security contact email/PGP key in `SECURITY.md` | Placeholder — "replace with a monitored address before mainnet" |
+| Independent third-party audit | Not performed |
+| TWAP staleness guard wired into every consumer | Partial — `intent_engine` uses the checked variant; not confirmed for every other consumer (see `SECURITY.md`'s Oracle Security section) |
+
+## No Critical or High severity findings
+
+Per `SECURITY_AUDIT.md`: "No Critical or High severity findings were confirmed. 14 findings were confirmed, all Low/Informational, plus one process-level finding." `SECURITY.md`'s Remediation Roadmap independently states the same under its Critical/High sections: "None identified."
+
+## A note on document consistency
+
+`SECURITY_AUDIT.md` (the original audit document, dated against commit `881fc15`) lists SEC-03 through SEC-07 without explicit "Fixed" tags in its own findings table. `SECURITY.md`'s Remediation Roadmap — which is structured specifically as a living roadmap and marks all of SEC-01 through SEC-07 as fixed with file citations — appears to be the more recently maintained source of truth. This documentation follows `SECURITY.md`'s roadmap status. If you are relying on this for a security decision, cross-check both documents and the cited files directly rather than this summary alone.
+
+## Severity scale (shared by both documents)
+
+- **Critical** — direct, unconditional loss or freezing of user funds, or minting/redeeming outside protocol rules.
+- **High** — fund loss achievable under plausible conditions, or breaks a core invariant.
+- **Medium** — fund loss only under narrow/unlikely conditions.
+- **Low** — fails safe, narrow theoretical exposure, or defense-in-depth gap.
+- **Informational** — code quality, documentation, or centralization observation with no direct exploit path.
