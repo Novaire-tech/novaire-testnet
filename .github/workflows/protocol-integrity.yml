@@ -32,7 +32,6 @@ jobs:
       matrix:
         suite:
           - { name: "PT/YT accounting",      filter: "pt_yt" }
-          - { name: "Vault accounting",      filter: "vault" }
           - { name: "Tokenization",          filter: "tokeniz" }
           - { name: "Untokenization",        filter: "untokeniz" }
           - { name: "Redemption",            filter: "redeem" }

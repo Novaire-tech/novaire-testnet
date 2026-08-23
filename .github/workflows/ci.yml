@@ -72,16 +72,11 @@ jobs:
       fail-fast: false
       matrix:
         contract:
-          - { crate: factory, path: factory }
-          - { crate: intent_engine, path: intent_engine }
-          - { crate: marketplace, path: marketplace }
-          - { crate: maturity_engine, path: maturity_engine }
-          - { crate: rollover, path: rollover }
-          - { crate: sy_wrapper, path: sy_wrapper }
-          - { crate: tokenizer, path: tokenizer/tokenizer }
-          - { crate: pt_token, path: tokenizer/pt_token }
-          - { crate: yt_token, path: tokenizer/yt_token }
-          - { crate: vault, path: vault }
+          - { crate: novaire-sy-wrapper, path: sy-wrapper }
+          - { crate: novaire-tokenizer, path: tokenizer }
+          - { crate: novaire-pt-token, path: pt-token }
+          - { crate: novaire-yt-token, path: yt-token }
+          - { crate: novaire-amm, path: amm }
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust

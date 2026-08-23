@@ -374,7 +374,7 @@ See `scripts/verify_testnet/README.md` for scenario details and known scope limi
 | Frontend e2e (real wallet) | `npm run vendor:freighter -w web` then `npm run test:e2e:real -w web` | Playwright `real-wallet` project: drives the real Freighter extension against live Testnet. |
 | Frontend e2e (portfolio) | `npm run vendor:freighter -w web` then `npm run test:e2e:portfolio -w web` | Playwright `portfolio-e2e` project: verifies portfolio math vs real Testnet contracts (240s timeouts, traces). |
 
-CI (`.github/workflows/ci.yml`) runs the same quality gates: Rust fmt/clippy/test/audit, WASM builds for all 10 contracts, Node tsc/lint/vitest/build for `apps/web`, `apps/indexer`, and `scripts`, gated by a final `ci-gate` job. See [`CI.md`](./CI.md) and [`.github/workflows/README.md`](./.github/workflows/README.md).
+CI (`.github/workflows/ci.yml`) runs the same quality gates: Rust fmt/clippy/test/audit, WASM builds for the deployable contracts, Node tsc/lint/vitest/build for `apps/web`, `apps/indexer`, and `scripts`, gated by a final `ci-gate` job. See [`CI.md`](./CI.md) and [`.github/workflows/README.md`](./.github/workflows/README.md).
 
 ---
 
