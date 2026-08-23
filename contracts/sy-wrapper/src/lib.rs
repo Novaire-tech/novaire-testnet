@@ -368,7 +368,11 @@ impl SyWrapper {
         };
 
         Self::write_balance(env, from, from_balance - amount);
-        Self::write_principal(env, from, sub_or_panic(env, from_principal, moved_principal));
+        Self::write_principal(
+            env,
+            from,
+            sub_or_panic(env, from_principal, moved_principal),
+        );
         let to_balance = Self::read_balance(env, to);
         Self::write_balance(env, to, add_or_panic(env, to_balance, amount));
         let to_principal = Self::read_principal(env, to);
@@ -456,11 +460,8 @@ impl StandardizedYield for SyWrapper {
 
         pull_underlying(env, &config.underlying, &from, amount);
         blend_submit(env, &config, REQUEST_SUPPLY, amount, false);
-        let assets_credited = sub_or_panic(
-            env,
-            blend_assets_under_management(env, &config),
-            aum_before,
-        );
+        let assets_credited =
+            sub_or_panic(env, blend_assets_under_management(env, &config), aum_before);
         let shares = mul_div_or_panic(env, assets_credited, WAD, exchange_rate);
         if shares <= 0 {
             panic_with_error!(env, Error::InvalidAmount);
@@ -717,10 +718,7 @@ fn blend_submit(
 
     let client = BlendPoolClient::new(env, &pool);
     if tolerate_failure {
-        matches!(
-            client.try_submit(&me, &me, &me, &requests),
-            Ok(Ok(_))
-        )
+        matches!(client.try_submit(&me, &me, &me, &requests), Ok(Ok(_)))
     } else {
         client.submit(&me, &me, &me, &requests);
         true
@@ -782,7 +780,6 @@ fn gcd_i128(mut lhs: i128, mut rhs: i128) -> i128 {
 
 #[cfg(test)]
 extern crate std;
-
 
 #[cfg(test)]
 mod test {
@@ -850,17 +847,20 @@ mod test {
         // Solve for the b_rate that makes derived_exchange_rate hit `target`
         // given the wrapper's current bToken supply, then mint enough
         // underlying into the pool to cover a full redemption at that rate.
-        let aum_before =
-            assets_from_b_tokens(
-                fixture
-                    .pool_client
-                    .get_positions(&fixture.client.address)
-                    .supply
-                    .get(0)
-                    .unwrap_or(0),
-                fixture.pool_client.get_reserve(&fixture.underlying).data.b_rate,
-            )
-            .unwrap();
+        let aum_before = assets_from_b_tokens(
+            fixture
+                .pool_client
+                .get_positions(&fixture.client.address)
+                .supply
+                .get(0)
+                .unwrap_or(0),
+            fixture
+                .pool_client
+                .get_reserve(&fixture.underlying)
+                .data
+                .b_rate,
+        )
+        .unwrap();
         let total_shares = fixture.client.total_supply();
         let target_aum = if total_shares == 0 {
             aum_before
@@ -919,7 +919,10 @@ mod test {
             underlying_balance(&fixture, &fixture.pool_client.address),
             100 * UNIT
         );
-        assert_eq!(underlying_balance(&fixture, &fixture.alice), MINT - 100 * UNIT);
+        assert_eq!(
+            underlying_balance(&fixture, &fixture.alice),
+            MINT - 100 * UNIT
+        );
     }
 
     #[test]

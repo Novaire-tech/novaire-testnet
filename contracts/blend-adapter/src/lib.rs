@@ -130,9 +130,7 @@ pub trait YieldAdapter {
 /// reserve's `b_rate` (12-decimal). `assets = b_tokens * b_rate / SCALAR_12`,
 /// floored, matching Blend's `to_asset_from_b_token`. Checked; `None` on overflow.
 pub fn assets_from_b_tokens(b_tokens: i128, b_rate: i128) -> Option<i128> {
-    b_tokens
-        .checked_mul(b_rate)
-        .map(|v| v / BLEND_SCALAR_12)
+    b_tokens.checked_mul(b_rate).map(|v| v / BLEND_SCALAR_12)
 }
 
 /// The SY exchange rate (asset-per-share, WAD) derived from the vault's real
@@ -335,7 +333,10 @@ pub mod testutils {
     }
 
     fn reserve_index(env: &Env) -> u32 {
-        env.storage().instance().get(&DataKey::ReserveIndex).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::ReserveIndex)
+            .unwrap_or(0)
     }
 
     fn reserve(env: &Env, config: MockConfig) -> Reserve {
@@ -457,7 +458,10 @@ mod test {
         let r1 = derived_exchange_rate(105 * UNIT, supply).unwrap();
         let r2 = derived_exchange_rate(120 * UNIT, supply).unwrap();
         assert_eq!(r0, WAD);
-        assert!(r1 > r0 && r2 > r1, "rate must rise with AUM: {r0} {r1} {r2}");
+        assert!(
+            r1 > r0 && r2 > r1,
+            "rate must rise with AUM: {r0} {r1} {r2}"
+        );
     }
 
     #[test]
@@ -467,9 +471,11 @@ mod test {
         // => rate 1.05, exactly the yield that accrues to YT holders.
         let b_tokens = 100 * UNIT;
         let sy_supply = 100 * UNIT;
-        let rate_at_deposit =
-            derived_exchange_rate(assets_from_b_tokens(b_tokens, BLEND_SCALAR_12).unwrap(), sy_supply)
-                .unwrap();
+        let rate_at_deposit = derived_exchange_rate(
+            assets_from_b_tokens(b_tokens, BLEND_SCALAR_12).unwrap(),
+            sy_supply,
+        )
+        .unwrap();
         assert_eq!(rate_at_deposit, WAD);
 
         let b_rate_later = 1_050_000_000_000; // 1.05
@@ -487,8 +493,14 @@ mod test {
     #[test]
     fn b_tokens_from_assets_inverts_the_conversion() {
         // Supplying at b_rate 1.0 credits 1:1; at 1.2, 60 underlying buys 50 bTokens.
-        assert_eq!(b_tokens_from_assets(100 * UNIT, BLEND_SCALAR_12).unwrap(), 100 * UNIT);
-        assert_eq!(b_tokens_from_assets(60 * UNIT, 1_200_000_000_000).unwrap(), 50 * UNIT);
+        assert_eq!(
+            b_tokens_from_assets(100 * UNIT, BLEND_SCALAR_12).unwrap(),
+            100 * UNIT
+        );
+        assert_eq!(
+            b_tokens_from_assets(60 * UNIT, 1_200_000_000_000).unwrap(),
+            50 * UNIT
+        );
         assert_eq!(b_tokens_from_assets(1, 0), None);
     }
 
@@ -507,7 +519,8 @@ mod test {
         let mut sy_supply = 100 * UNIT;
         assert_eq!(b_tokens, 100 * UNIT);
         assert_eq!(
-            derived_exchange_rate(assets_from_b_tokens(b_tokens, b_rate).unwrap(), sy_supply).unwrap(),
+            derived_exchange_rate(assets_from_b_tokens(b_tokens, b_rate).unwrap(), sy_supply)
+                .unwrap(),
             WAD
         );
 
@@ -516,7 +529,10 @@ mod test {
         b_rate = 1_200_000_000_000; // 1.2
         let aum = assets_from_b_tokens(b_tokens, b_rate).unwrap();
         assert_eq!(aum, 120 * UNIT);
-        assert_eq!(derived_exchange_rate(aum, sy_supply).unwrap(), 1_200_000_000_000_000_000);
+        assert_eq!(
+            derived_exchange_rate(aum, sy_supply).unwrap(),
+            1_200_000_000_000_000_000
+        );
 
         // 3) Bob supplies 60 at the current b_rate 1.2 -> 50 bTokens, minting SY at
         //    the current rate 1.2: 60/1.2 = 50 SY. The rate must not move: he paid
@@ -527,7 +543,10 @@ mod test {
         sy_supply += 50 * UNIT; // 60 underlying / rate 1.2 = 50 SY
         let aum = assets_from_b_tokens(b_tokens, b_rate).unwrap();
         assert_eq!(aum, 180 * UNIT);
-        assert_eq!(derived_exchange_rate(aum, sy_supply).unwrap(), 1_200_000_000_000_000_000);
+        assert_eq!(
+            derived_exchange_rate(aum, sy_supply).unwrap(),
+            1_200_000_000_000_000_000
+        );
 
         // 4) Alice redeems 30 SY at rate 1.2 -> 36 underlying withdrawn -> burns
         //    36/1.2 = 30 bTokens. Matched reduction, so the rate is still 1.20.
@@ -540,6 +559,9 @@ mod test {
         sy_supply -= redeem_sy;
         let aum = assets_from_b_tokens(b_tokens, b_rate).unwrap();
         assert_eq!(aum, 144 * UNIT); // (150 - 30) bTokens * 1.2
-        assert_eq!(derived_exchange_rate(aum, sy_supply).unwrap(), 1_200_000_000_000_000_000);
+        assert_eq!(
+            derived_exchange_rate(aum, sy_supply).unwrap(),
+            1_200_000_000_000_000_000
+        );
     }
 }

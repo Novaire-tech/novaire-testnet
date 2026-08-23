@@ -173,11 +173,7 @@ impl Market {
         let sy = SyWrapperClient::new(&self.env, &self.sy);
         let pool = MockBlendPoolClient::new(&self.env, &self.pool);
         let supply = sy.total_supply();
-        let b_tokens = pool
-            .get_positions(&self.sy)
-            .supply
-            .get(0)
-            .unwrap_or(0);
+        let b_tokens = pool.get_positions(&self.sy).supply.get(0).unwrap_or(0);
         let aum_target = rate * supply / WAD;
         let new_b_rate = aum_target * BLEND_SCALAR_12 / b_tokens;
         pool.set_b_rate(&new_b_rate);
@@ -318,7 +314,10 @@ fn escrow_covers_outstanding_claims() {
     m.assert_escrow_covers(&holders);
 
     m.claim(&bob);
-    assert!(m.sy_balance(&bob) > 0, "Bob must receive his YT yield in SY");
+    assert!(
+        m.sy_balance(&bob) > 0,
+        "Bob must receive his YT yield in SY"
+    );
     m.assert_escrow_covers(&holders);
 
     // Both redeem PT at maturity; the invariant holds after each.
@@ -350,7 +349,10 @@ fn redemption_uses_frozen_maturity_rate() {
     let half = 50 * UNIT;
     let expected = half * WAD / RATE_1_10;
     let sy1 = m.redeem_pt(&alice, half); // first post-maturity redeem snapshots 1.10
-    assert!((sy1 - expected).abs() <= 4, "first redeem at the maturity rate");
+    assert!(
+        (sy1 - expected).abs() <= 4,
+        "first redeem at the maturity rate"
+    );
     assert_eq!(m.maturity_rate(), RATE_1_10, "rate frozen at maturity");
 
     // The admin bumps the rate AFTER maturity; redemption must ignore it.
@@ -424,7 +426,10 @@ fn direct_yt_transfer_is_observed_by_the_maturity_freeze() {
     m.transfer_yt(&alice, &bob, UNIT);
     let yt = YtTokenClient::new(&m.env, &m.yt);
     let banked = yt.preview_claim_yield(&alice);
-    assert!(banked > 0, "the transfer banked Alice's accrued yield at 1.10");
+    assert!(
+        banked > 0,
+        "the transfer banked Alice's accrued yield at 1.10"
+    );
 
     m.env.ledger().set_timestamp(MATURITY + 1);
 
@@ -584,7 +589,11 @@ fn pt_redeem_and_yt_claim_use_one_frozen_rate_regardless_of_order() {
     // Identical economic outcome regardless of order.
     assert_eq!(a.0, b.0, "PT redemption SY must not depend on order");
     assert_eq!(a.1, b.1, "YT claim SY must not depend on order");
-    assert_eq!(a.0 + a.1, b.0 + b.1, "total SY paid out must not depend on order");
+    assert_eq!(
+        a.0 + a.1,
+        b.0 + b.1,
+        "total SY paid out must not depend on order"
+    );
     assert_eq!(a.2, b.2, "escrow left must not depend on order");
 
     // The rate both contracts used equals the tokenizer's frozen maturity_rate:
@@ -622,7 +631,10 @@ fn redeem_allowed_at_exact_maturity() {
     m.env.ledger().set_timestamp(MATURITY); // exactly at maturity
     let pt = m.pt_balance(&alice);
     let out = m.redeem_pt(&alice, pt);
-    assert!(out > 0, "redemption works at exactly the maturity timestamp");
+    assert!(
+        out > 0,
+        "redemption works at exactly the maturity timestamp"
+    );
 }
 
 #[test]

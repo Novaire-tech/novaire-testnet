@@ -1,5 +1,5 @@
 name: Setup Rust toolchain
-description: Installs Rust with wasm32 target, clippy, rustfmt, and caches cargo registry/target dirs.
+description: Installs Rust with the wasm32v1-none target, clippy, rustfmt, and caches cargo registry/target dirs.
 
 inputs:
   components:
@@ -9,7 +9,7 @@ inputs:
   target:
     description: Extra compilation target to install
     required: false
-    default: "wasm32-unknown-unknown"
+    default: "wasm32v1-none"
   cache-key-prefix:
     description: Extra string mixed into the cache key (job name)
     required: false
@@ -20,9 +20,13 @@ runs:
   steps:
     - name: Install rustup toolchain
       shell: bash
+      working-directory: contracts
       run: |
-        rustup toolchain install stable --profile minimal --no-self-update
-        rustup default stable
+        # contracts/rust-toolchain.toml pins the channel; run rustup here so
+        # it resolves (and auto-installs) that toolchain instead of "stable",
+        # otherwise components land on the wrong toolchain and cargo fmt/
+        # clippy fail to find them when invoked from contracts/.
+        rustup show
         for c in ${{ inputs.components }}; do rustup component add "$c"; done
         rustup target add ${{ inputs.target }}
 

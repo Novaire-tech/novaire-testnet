@@ -84,13 +84,13 @@ jobs:
           components: ""
           cache-key-prefix: build-${{ matrix.contract.crate }}
       - name: Build ${{ matrix.contract.crate }} for wasm32
-        run: cargo build --release --target wasm32-unknown-unknown -p ${{ matrix.contract.crate }}
+        run: cargo build --release --target wasm32v1-none -p ${{ matrix.contract.crate }}
         working-directory: contracts
       - name: Upload contract WASM
         uses: actions/upload-artifact@v7
         with:
           name: wasm-${{ matrix.contract.crate }}
-          path: contracts/target/wasm32-unknown-unknown/release/*.wasm
+          path: contracts/target/wasm32v1-none/release/*.wasm
           if-no-files-found: error
           retention-days: 14
 
@@ -109,9 +109,9 @@ jobs:
       - uses: ./.github/actions/setup-node
 
       - name: prisma generate
-        if: matrix.workspace.name == 'indexer'
+        if: matrix.workspace.name == 'indexer' || matrix.workspace.name == 'web'
         run: npx prisma generate --schema=../../prisma/schema.prisma
-        working-directory: apps/indexer
+        working-directory: ${{ matrix.workspace.path }}
 
       - name: tsc --noEmit
         run: npx tsc --noEmit

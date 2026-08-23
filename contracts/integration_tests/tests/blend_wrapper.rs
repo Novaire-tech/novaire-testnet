@@ -86,12 +86,7 @@ fn blend_supply_rate_growth_yield_claim_and_withdraw_round_trip() {
     let redeemed = sy_client.redeem(&alice, &sy_to_redeem);
     assert!(redeemed > 100 * UNIT);
     assert_eq!(token::TokenClient::new(&env, &underlying).balance(&sy), 0);
-    assert!(pool_client
-        .get_positions(&sy)
-        .supply
-        .get(0)
-        .unwrap_or(0)
-        < expected_b_tokens);
+    assert!(pool_client.get_positions(&sy).supply.get(0).unwrap_or(0) < expected_b_tokens);
 }
 
 /// If the pool is reconfigured so the underlying no longer sits at the reserve

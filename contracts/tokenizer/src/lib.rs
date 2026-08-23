@@ -5,7 +5,7 @@
 use soroban_sdk::{
     auth::{ContractContext, InvokerContractAuthEntry, SubContractInvocation},
     contract, contracterror, contractevent, contractimpl, contracttype, token, vec, Address, Env,
-    I256, IntoVal, MuxedAddress, Symbol, Val, Vec,
+    IntoVal, MuxedAddress, Symbol, Val, Vec, I256,
 };
 
 const WAD: i128 = 1_000_000_000_000_000_000;
@@ -450,8 +450,7 @@ impl Tokenizer {
         // face at `rate` (rounded UP so PT is never shorted), and pay YT only out
         // of the remainder. `escrow_shares` and `pt_supply` are read the same way
         // `redeem_at_maturity` reads them.
-        let escrow_shares =
-            token_balance(&env, &config.sy_token, &env.current_contract_address());
+        let escrow_shares = token_balance(&env, &config.sy_token, &env.current_contract_address());
         let pt_supply = pt_total_supply(&env, &config.pt_token);
         let pt_face_reservation = mul_div_ceil(&env, pt_supply, WAD, rate)?;
         let surplus = if escrow_shares > pt_face_reservation {
@@ -563,10 +562,7 @@ fn mul_div_ceil(env: &Env, a: i128, b: i128, c: i128) -> Result<i128, Error> {
     let c256 = I256::from_i128(env, c);
     let prod = I256::from_i128(env, a).mul(&I256::from_i128(env, b));
     let numerator = prod.add(&c256).sub(&I256::from_i128(env, 1));
-    numerator
-        .div(&c256)
-        .to_i128()
-        .ok_or(Error::MathOverflow)
+    numerator.div(&c256).to_i128().ok_or(Error::MathOverflow)
 }
 
 /// Settles `holder` on the YT contract at `rate` and returns their banked total
@@ -857,6 +853,9 @@ mod test {
         let fixture = fixture(NOW);
         initialize(&fixture);
         fixture.env.ledger().set_timestamp(MATURITY);
-        assert_eq!(fixture.client.observe_rate(), fixture.client.maturity_rate());
+        assert_eq!(
+            fixture.client.observe_rate(),
+            fixture.client.maturity_rate()
+        );
     }
 }

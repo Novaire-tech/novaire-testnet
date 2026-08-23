@@ -1108,7 +1108,7 @@ fn try_exact_pt_in_sy_out(
 /// difference. We binary search for the largest affordable `yt_out`; `best` is
 /// only ever set on a candidate whose cost fits inside `sy_in`, so even if the
 /// cost curve is locally non-monotone the result can only be suboptimal for
-/// the buyer, never unsafe for the pool.
+/// the buyer, never harmful to the pool.
 fn solve_yt_out_for_sy_in(
     env: &Env,
     config: &Config,
@@ -1127,9 +1127,7 @@ fn solve_yt_out_for_sy_in(
         let mid = low + ((high - low) / 2);
         let shares_needed = shares_in_for_face_up(env, mid, rate);
         match try_exact_pt_in_sy_out(env, config, state, comp, mid) {
-            Some(sy_paid)
-                if shares_needed > sy_paid && (shares_needed - sy_paid) <= sy_in =>
-            {
+            Some(sy_paid) if shares_needed > sy_paid && (shares_needed - sy_paid) <= sy_in => {
                 best = mid;
                 low = mid + 1;
             }
@@ -1586,8 +1584,8 @@ extern crate std;
 #[cfg(test)]
 mod test {
     use super::*;
-    use proptest::prelude::*;
     use novaire_sy_wrapper::{SyWrapper, SyWrapperClient};
+    use proptest::prelude::*;
     use soroban_sdk::testutils::{
         storage::Persistent, Address as _, Deployer, EnvTestConfig, Ledger,
     };
@@ -1917,7 +1915,9 @@ mod test {
             .client
             .add_liquidity(&fixture.admin, &10_000, &10_000, &0);
 
-        let (pt_out, sy_out) = fixture.client.remove_liquidity(&fixture.admin, &9_000, &0, &0);
+        let (pt_out, sy_out) = fixture
+            .client
+            .remove_liquidity(&fixture.admin, &9_000, &0, &0);
         let state = fixture.client.state();
 
         assert_eq!((pt_out, sy_out), (9_000, 9_000));
@@ -1948,7 +1948,9 @@ mod test {
             .add_liquidity(&fixture.admin, &10_000, &10_000, &0);
 
         fixture.env.ledger().set_timestamp(MATURITY);
-        let (pt_out, sy_out) = fixture.client.remove_liquidity(&fixture.admin, &9_000, &0, &0);
+        let (pt_out, sy_out) = fixture
+            .client
+            .remove_liquidity(&fixture.admin, &9_000, &0, &0);
         let state = fixture.client.state();
 
         assert_eq!((pt_out, sy_out), (9_000, 9_000));
@@ -2031,7 +2033,7 @@ mod test {
         let lp_out = fixture
             .client
             .add_liquidity(&fixture.bob, &1_000, &1_000, &900);
-        assert!(lp_out >= 900 && lp_out < 1_000);
+        assert!((900..1_000).contains(&lp_out));
     }
 
     #[test]
@@ -2085,11 +2087,12 @@ mod test {
         mint_pt(&fixture, &fixture.admin, 2_000);
         fixture.client.swap_pt_for_sy(&fixture.admin, &2_000, &1);
 
-        let (pt_out, sy_out) = fixture
-            .client
-            .remove_liquidity(&fixture.admin, &1_000, &1_000, &900);
+        let (pt_out, sy_out) =
+            fixture
+                .client
+                .remove_liquidity(&fixture.admin, &1_000, &1_000, &900);
         assert!(pt_out >= 1_000, "PT per LP grew after the PT sell");
-        assert!(sy_out >= 900 && sy_out < 1_000, "SY per LP shrank");
+        assert!((900..1_000).contains(&sy_out), "SY per LP shrank");
     }
 
     #[test]
@@ -2102,7 +2105,9 @@ mod test {
             .add_liquidity(&fixture.admin, &10_000, &10_000, &0);
 
         fixture.env.ledger().set_timestamp(MATURITY);
-        fixture.client.add_liquidity(&fixture.admin, &1_000, &1_000, &0);
+        fixture
+            .client
+            .add_liquidity(&fixture.admin, &1_000, &1_000, &0);
     }
 
     #[test]
@@ -2169,7 +2174,9 @@ mod test {
             .client
             .add_liquidity(&fixture.admin, &10_000, &10_000, &0);
 
-        fixture.client.remove_liquidity(&fixture.bob, &1_000, &0, &0);
+        fixture
+            .client
+            .remove_liquidity(&fixture.bob, &1_000, &0, &0);
     }
 
     #[test]
@@ -2255,7 +2262,10 @@ mod test {
         assert!(landed_rate > WAD, "rate must have moved above par");
 
         let state = fixture.client.state();
-        assert_eq!(state.total_sy, 1_000_000, "no liquidity op should touch total_sy");
+        assert_eq!(
+            state.total_sy, 1_000_000,
+            "no liquidity op should touch total_sy"
+        );
         assert_eq!(state.total_pt, 1_000_000);
 
         let after_accrual = quote_pt_for_sy(&fixture, 10_000).expect("quote after accrual");
@@ -2522,7 +2532,10 @@ mod test {
         fixture.env.ledger().set_timestamp(NOW + 60);
         fixture.client.swap_sy_for_pt(&fixture.admin, &1_000, &1);
         fixture.env.ledger().set_timestamp(NOW + TWAP_WINDOW + 61);
-        assert!(!fixture.client.twap_warming_up(), "warmed up after a window");
+        assert!(
+            !fixture.client.twap_warming_up(),
+            "warmed up after a window"
+        );
 
         // Idle for well over a full window, then a single swap lands: the
         // observation snaps the TWAP, so the market must declare itself

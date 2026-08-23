@@ -408,11 +408,7 @@ impl YtToken {
     fn committing_rate(env: &Env, config: &Config) -> i128 {
         let args: soroban_sdk::Vec<Val> = vec![env];
         if env.ledger().timestamp() < config.maturity {
-            return env.invoke_contract(
-                &config.tokenizer,
-                &Symbol::new(env, "observe_rate"),
-                args,
-            );
+            return env.invoke_contract(&config.tokenizer, &Symbol::new(env, "observe_rate"), args);
         }
         env.invoke_contract(
             &config.tokenizer,
@@ -431,11 +427,8 @@ impl YtToken {
             return Self::current_rate(env, config);
         }
         let args: soroban_sdk::Vec<Val> = vec![env];
-        let frozen: i128 = env.invoke_contract(
-            &config.tokenizer,
-            &Symbol::new(env, "maturity_rate"),
-            args,
-        );
+        let frozen: i128 =
+            env.invoke_contract(&config.tokenizer, &Symbol::new(env, "maturity_rate"), args);
         if frozen > 0 {
             frozen
         } else {
@@ -801,9 +794,9 @@ mod test {
         // A mint is a mutating entrypoint, so it must bump the instance TTL to
         // the 120-day window. Read the live TTL from inside the contract frame.
         f.client.mint(&f.alice, &1_000);
-        let ttl = f.env.as_contract(&f.client.address, || {
-            f.env.storage().instance().get_ttl()
-        });
+        let ttl = f
+            .env
+            .as_contract(&f.client.address, || f.env.storage().instance().get_ttl());
         assert!(
             ttl >= TTL_EXTEND_TO_LEDGERS,
             "instance TTL {} should be extended to at least {}",
@@ -956,10 +949,8 @@ mod test {
     fn approve_and_transfer_from_spend_allowance() {
         let f = fixture(NOW);
         f.client.mint(&f.alice, &1_000);
-        f.client
-            .approve(&f.alice, &f.bob, &500, &1_000);
-        f.client
-            .transfer_from(&f.bob, &f.alice, &f.bob, &300);
+        f.client.approve(&f.alice, &f.bob, &500, &1_000);
+        f.client.transfer_from(&f.bob, &f.alice, &f.bob, &300);
         assert_eq!(f.client.balance(&f.alice), 700);
         assert_eq!(f.client.balance(&f.bob), 300);
         assert_eq!(f.client.allowance(&f.alice, &f.bob), 200);
