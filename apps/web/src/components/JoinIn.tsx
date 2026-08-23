@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { BookOpen, ArrowUpRight, ArrowRight } from 'lucide-react';
+import { DOCS_URL } from '@/lib/docsUrl';
 
 const LINKS = [
   {
@@ -17,7 +18,7 @@ const LINKS = [
   {
     label: 'Docs',
     showLabel: true,
-    href: '/docs',
+    href: DOCS_URL,
     icon: <BookOpen className="h-5 w-5" strokeWidth={1.75} />,
   },
 ];
