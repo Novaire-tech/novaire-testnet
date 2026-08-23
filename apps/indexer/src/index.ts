@@ -1,5 +1,5 @@
 import { rpc, Contract } from '@stellar/stellar-sdk';
-import { processEvent, getSyncState, getOrCreateEpoch, runInTransaction } from './processor';
+import { createBatch, planEvent, flushBatch, getSyncState, getOrCreateEpoch, runInTransaction } from './processor';
 import { takeSnapshot } from './snapshotter';
 import * as dotenv from 'dotenv';
 import * as fs from 'fs';
@@ -78,22 +78,26 @@ async function start() {
 
         // All event writes + the cursor advance happen in one transaction, so a crash
         // mid-batch can never advance SyncState past events that weren't persisted.
-        // A single malformed/unexpected event (bad topic shape, missing address, ...)
-        // is caught and skipped here rather than rethrown — otherwise it would abort
-        // the whole batch every poll, wedging the cursor on the same bad event forever.
-        await runInTransaction(async (tx) => {
-          if (eventsResponse.events) {
-            for (const event of eventsResponse.events) {
-              if (!event.contractId) continue;
-              const contractId = event.contractId.toString();
-              const contractLabel = contractLabelById.get(contractId) ?? 'unknown';
-              try {
-                await processEvent(tx, event, event.txHash, new Date(), contractId, contractLabel, epochId);
-              } catch (err) {
-                console.error(`Skipping unprocessable event ${event.id} (contract ${contractLabel}):`, err);
-              }
+        // Events are planned first (pure decode, no DB) so one malformed/unexpected
+        // event (bad topic shape, missing address, ...) is caught and skipped here
+        // rather than rethrown — otherwise it would abort the whole batch every poll,
+        // wedging the cursor on the same bad event forever. The flush itself is a
+        // handful of bulk statements, not 2+ queries per event.
+        const batch = createBatch();
+        if (eventsResponse.events) {
+          for (const event of eventsResponse.events) {
+            if (!event.contractId) continue;
+            const contractId = event.contractId.toString();
+            const contractLabel = contractLabelById.get(contractId) ?? 'unknown';
+            try {
+              planEvent(batch, event, event.txHash, new Date(), contractLabel, epochId);
+            } catch (err) {
+              console.error(`Skipping unprocessable event ${event.id} (contract ${contractLabel}):`, err);
             }
           }
+        }
+        await runInTransaction(async (tx) => {
+          await flushBatch(tx, batch);
           await tx.syncState.update({ where: { id: 'singleton' }, data: { lastLedger: currentLedger + 1 } });
         });
 

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { Keypair, nativeToScVal } from "@stellar/stellar-sdk";
 import { prisma } from "./db";
-import { processEvent, getOrCreateEpoch, getSyncState, runInTransaction } from "./processor";
+import { createBatch, planEvent, flushBatch, getOrCreateEpoch, getSyncState, runInTransaction } from "./processor";
 import { takeSnapshot } from "./snapshotter";
 
 // End-to-end smoke tests for the indexer's DB-facing pipeline: given a real
@@ -26,6 +26,12 @@ function depositEvent(id: string) {
     topic: [nativeToScVal("deposit", { type: "symbol" }), nativeToScVal(holder, { type: "address" })],
     value: nativeToScVal({ underlying_amount: BigInt(1_000_000) }),
   };
+}
+
+function depositBatch(eventId: string, epochId: string) {
+  const batch = createBatch();
+  planEvent(batch, depositEvent(eventId), "smoke-txhash", new Date(), "sy_wrapper", epochId);
+  return batch;
 }
 
 describe("indexer smoke", () => {
@@ -53,7 +59,7 @@ describe("indexer smoke", () => {
   it("processes a deposit event into an Activity row", async () => {
     const eventId = `smoke-deposit-${Date.now()}`;
     await runInTransaction(async (tx) => {
-      await processEvent(tx, depositEvent(eventId), "smoke-txhash", new Date(), deployments.sy_wrapper, "sy_wrapper", epochId);
+      await flushBatch(tx, depositBatch(eventId, epochId));
     });
 
     const activity = await prisma.activity.findUnique({ where: { id: eventId } });
@@ -69,9 +75,7 @@ describe("indexer smoke", () => {
   it("is idempotent for a re-delivered event id", async () => {
     const eventId = `smoke-idempotent-${Date.now()}`;
     const run = () =>
-      runInTransaction((tx) =>
-        processEvent(tx, depositEvent(eventId), "smoke-txhash", new Date(), deployments.sy_wrapper, "sy_wrapper", epochId)
-      );
+      runInTransaction(async (tx) => flushBatch(tx, depositBatch(eventId, epochId)));
     await run();
     await run();
 
@@ -87,7 +91,11 @@ describe("indexer smoke", () => {
       value: nativeToScVal({}),
     };
     await expect(
-      runInTransaction((tx) => processEvent(tx, event, "smoke-txhash", new Date(), deployments.sy_wrapper, "sy_wrapper", epochId))
+      runInTransaction(async (tx) => {
+        const batch = createBatch();
+        planEvent(batch, event, "smoke-txhash", new Date(), "sy_wrapper", epochId);
+        await flushBatch(tx, batch);
+      })
     ).resolves.toBeUndefined();
   });
 

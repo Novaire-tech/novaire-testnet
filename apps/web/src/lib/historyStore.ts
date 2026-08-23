@@ -94,24 +94,40 @@ function isDuplicate(prev: ProtocolHistoryEntry, next: Omit<ProtocolHistoryEntry
   );
 }
 
+// In-memory mirror of the store file. The JSON blob grows into the megabytes, and
+// every /api/history* request used to pay a full readFileSync + JSON.parse of it;
+// reads are served from this cache whenever the file's stat signature is unchanged.
+// Writes still persist synchronously, so the single-process semantics are identical.
+interface StoreCache {
+  data: StoreData;
+  mtimeMs: number;
+  size: number;
+}
+
+let cache: StoreCache | null = null;
+
 function readStore(): StoreData {
   const defaults: StoreData = { history: [], syncState: {} };
   try {
-    if (fs.existsSync(STORE_PATH)) {
-      const raw = fs.readFileSync(STORE_PATH, 'utf-8');
-      const parsed = JSON.parse(raw);
-      // Migrate the old singleton syncState shape ({id, lastLedger, updatedAt}) to
-      // an empty scoped map — its unscoped cursor can't be attributed to any one
-      // (network, syWrapper) epoch, so it must resync rather than be guessed at.
-      const syncState =
-        parsed.syncState && typeof parsed.syncState === 'object' && !('lastLedger' in parsed.syncState)
-          ? (parsed.syncState as Record<string, SyncStateEntry>)
-          : defaults.syncState;
-      return {
-        history: Array.isArray(parsed.history) ? parsed.history : defaults.history,
-        syncState,
-      };
+    const stat = fs.statSync(STORE_PATH);
+    if (cache && cache.mtimeMs === stat.mtimeMs && cache.size === stat.size) {
+      return cache.data;
     }
+    const raw = fs.readFileSync(STORE_PATH, 'utf-8');
+    const parsed = JSON.parse(raw);
+    // Migrate the old singleton syncState shape ({id, lastLedger, updatedAt}) to
+    // an empty scoped map — its unscoped cursor can't be attributed to any one
+    // (network, syWrapper) epoch, so it must resync rather than be guessed at.
+    const syncState =
+      parsed.syncState && typeof parsed.syncState === 'object' && !('lastLedger' in parsed.syncState)
+        ? (parsed.syncState as Record<string, SyncStateEntry>)
+        : defaults.syncState;
+    const data: StoreData = {
+      history: Array.isArray(parsed.history) ? parsed.history : defaults.history,
+      syncState,
+    };
+    cache = { data, mtimeMs: stat.mtimeMs, size: stat.size };
+    return data;
   } catch {
     // Corrupt or missing — start fresh
   }
@@ -120,9 +136,18 @@ function readStore(): StoreData {
 
 function writeStore(data: StoreData): void {
   try {
-    fs.writeFileSync(STORE_PATH, JSON.stringify(data, null, 2), 'utf-8');
+    // Write-to-temp + rename so readers never observe a torn/half-written file
+    // mid-request (the old direct write could leave truncated JSON behind a crash).
+    const tmpPath = `${STORE_PATH}.tmp`;
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, STORE_PATH);
+    const stat = fs.statSync(STORE_PATH);
+    cache = { data, mtimeMs: stat.mtimeMs, size: stat.size };
   } catch (err) {
     console.error('[HistoryStore] Failed to write store:', err);
+    // Drop the cache so subsequent reads fall back to what's actually on disk
+    // instead of serving rows that never made it through.
+    cache = null;
   }
 }
 

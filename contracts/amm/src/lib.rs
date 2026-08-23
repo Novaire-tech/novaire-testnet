@@ -129,6 +129,11 @@ struct Precompute {
     total_asset: i128,
     rate_anchor: i128,
     time_to_expiry: u64,
+    /// The SY exchange rate (asset per share, WAD scaled) used to derive
+    /// `total_asset` from `state.total_sy`. Carried alongside so swap math can
+    /// convert its asset-denominated results back to SY units without a
+    /// second cross-contract read.
+    rate: i128,
 }
 
 #[inline(never)]
@@ -876,7 +881,13 @@ fn time_to_expiry_or_panic(env: &Env, config: &Config) -> u64 {
 fn precompute_or_panic(env: &Env, config: &Config, state: &State) -> Precompute {
     let time_to_expiry = time_to_expiry_or_panic(env, config);
     let rate_scalar = get_rate_scalar_or_panic(env, config.scalar_root, time_to_expiry);
-    let total_asset = state.total_sy;
+    let rate = sy_rate_or_panic(env, config);
+    // The curve prices PT face against underlying-asset value, not raw SY
+    // shares; state.total_sy must be converted through the live SY exchange
+    // rate before it can stand in for "total_asset" below. Floor-rounded so
+    // the curve's view of backing never overstates what the pool actually
+    // holds.
+    let total_asset = sy_to_asset(env, state.total_sy, rate);
     if state.total_pt <= 0 || total_asset <= 0 {
         panic_with_error!(env, Error::MarketNotSeeded);
     }
@@ -895,6 +906,7 @@ fn precompute_or_panic(env: &Env, config: &Config, state: &State) -> Precompute 
         total_asset,
         rate_anchor,
         time_to_expiry,
+        rate,
     }
 }
 
@@ -913,9 +925,14 @@ fn exact_pt_in_sy_out_or_panic(
         comp.rate_anchor,
         -pt_in,
     );
-    let pre_fee_sy_out = mul_div_down_or_panic(env, pt_in, WAD, exchange_rate);
-    let fee = mul_div_down_or_panic(env, pre_fee_sy_out, config.fee_bps, BPS_DENOMINATOR);
-    let sy_out = checked_sub(env, pre_fee_sy_out, fee);
+    // exchange_rate is asset-per-PT-face (WAD), so this quotient is
+    // asset-denominated, not SY-denominated despite the variable name below.
+    let pre_fee_asset_out = mul_div_down_or_panic(env, pt_in, WAD, exchange_rate);
+    let fee = mul_div_down_or_panic(env, pre_fee_asset_out, config.fee_bps, BPS_DENOMINATOR);
+    let asset_out = checked_sub(env, pre_fee_asset_out, fee);
+    // Convert back to SY units (floor) at the boundary: state.total_sy and
+    // the SY token transfer downstream are share-denominated.
+    let sy_out = asset_to_sy_down(env, asset_out, comp.rate);
 
     if sy_out <= 0 || sy_out >= state.total_sy {
         panic_with_error!(env, Error::InsufficientLiquidity);
@@ -942,7 +959,7 @@ fn apply_exact_pt_in_trade_or_panic(
     let observed_ln_rate = get_ln_implied_rate_or_panic(
         env,
         state.total_pt,
-        state.total_sy,
+        sy_to_asset(env, state.total_sy, comp.rate),
         comp.rate_scalar,
         comp.rate_anchor,
         comp.time_to_expiry,
@@ -1001,7 +1018,7 @@ fn apply_exact_sy_in_trade_or_panic(
     let observed_ln_rate = get_ln_implied_rate_or_panic(
         env,
         state.total_pt,
-        state.total_sy,
+        sy_to_asset(env, state.total_sy, comp.rate),
         comp.rate_scalar,
         comp.rate_anchor,
         comp.time_to_expiry,
@@ -1043,9 +1060,13 @@ fn try_exact_pt_out_sy_in(
         comp.rate_anchor,
         pt_out,
     )?;
-    let pre_fee_sy_in = mul_div_up_or_panic(env, pt_out, WAD, exchange_rate);
-    let fee = mul_div_up_or_panic(env, pre_fee_sy_in, config.fee_bps, BPS_DENOMINATOR);
-    Some(checked_add(env, pre_fee_sy_in, fee))
+    // exchange_rate is asset-per-PT-face (WAD); this quotient is
+    // asset-denominated until converted back to SY units below.
+    let pre_fee_asset_in = mul_div_up_or_panic(env, pt_out, WAD, exchange_rate);
+    let fee = mul_div_up_or_panic(env, pre_fee_asset_in, config.fee_bps, BPS_DENOMINATOR);
+    let asset_in = checked_add(env, pre_fee_asset_in, fee);
+    // Ceil-rounded at the SY boundary so the pool never undercharges.
+    Some(asset_to_sy_up(env, asset_in, comp.rate))
 }
 
 /// Non-panicking SY out for selling `pt_in` PT to the pool, used by the YT-buy
@@ -1069,9 +1090,12 @@ fn try_exact_pt_in_sy_out(
         comp.rate_anchor,
         -pt_in,
     )?;
-    let pre_fee_sy_out = mul_div_down_or_panic(env, pt_in, WAD, exchange_rate);
-    let fee = mul_div_down_or_panic(env, pre_fee_sy_out, config.fee_bps, BPS_DENOMINATOR);
-    let sy_out = pre_fee_sy_out - fee;
+    // exchange_rate is asset-per-PT-face (WAD); this quotient is
+    // asset-denominated until converted back to SY units below.
+    let pre_fee_asset_out = mul_div_down_or_panic(env, pt_in, WAD, exchange_rate);
+    let fee = mul_div_down_or_panic(env, pre_fee_asset_out, config.fee_bps, BPS_DENOMINATOR);
+    let asset_out = pre_fee_asset_out - fee;
+    let sy_out = asset_to_sy_down(env, asset_out, comp.rate);
     if sy_out <= 0 || sy_out >= state.total_sy {
         return None;
     }
@@ -1132,6 +1156,26 @@ fn sy_rate_or_panic(env: &Env, config: &Config) -> i128 {
         panic_with_error!(env, Error::InvalidSyRate);
     }
     rate
+}
+
+/// Converts raw SY shares to underlying-asset units at the given WAD-scaled
+/// rate, floor-rounded so the curve's asset-denominated reserve view never
+/// overstates the pool's real backing.
+fn sy_to_asset(env: &Env, sy_amount: i128, rate: i128) -> i128 {
+    mul_div_down_or_panic(env, sy_amount, rate, WAD)
+}
+
+/// Converts an asset-denominated amount the curve computed back to SY
+/// shares, floor-rounded — the safe direction when the pool is about to pay
+/// this many shares out (never overpay).
+fn asset_to_sy_down(env: &Env, asset_amount: i128, rate: i128) -> i128 {
+    mul_div_down_or_panic(env, asset_amount, WAD, rate)
+}
+
+/// Same conversion, ceil-rounded — the safe direction when the pool is about
+/// to require this many shares in (never undercharge).
+fn asset_to_sy_up(env: &Env, asset_amount: i128, rate: i128) -> i128 {
+    mul_div_up_or_panic(env, asset_amount, WAD, rate)
 }
 
 /// SY shares that must be split so the tokenizer's floored face mint covers
@@ -1568,6 +1612,7 @@ mod test {
         yt_token: Address,
         tokenizer: Address,
         bob: Address,
+        pool: Address,
     }
 
     fn fixture(now: u64) -> Fixture {
@@ -1584,10 +1629,10 @@ mod test {
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
         // A real SY wrapper backed by a mock Blend pool, so the YT quote
-        // paths can read exchange_rate the same way the tokenizer does. All
-        // unit tests run at the default pool rate of 1.0, where SY shares and
-        // asset units coincide; the non-par flash routes are exercised in
-        // tests/integration.
+        // paths can read exchange_rate the same way the tokenizer does. Most
+        // unit tests run at the default pool rate of 1.0; tests that
+        // specifically target SY/asset unit handling move the rate with
+        // set_rate below.
         let underlying = env
             .register_stellar_asset_contract_v2(admin.clone())
             .address();
@@ -1619,7 +1664,22 @@ mod test {
             yt_token,
             tokenizer,
             bob,
+            pool,
         }
+    }
+
+    /// Moves the SY wrapper's pool-derived exchange rate as close to
+    /// `target_rate` (WAD-scale) as the mock pool's integer math allows, and
+    /// returns the rate actually landed on. Mirrors
+    /// tests/integration/journey.rs's set_rate: both the pool's b_rate
+    /// (12-decimal) and the wrapper's aum * WAD / sy_supply derivation
+    /// floor-divide, so callers must read back the returned rate.
+    fn set_rate(fixture: &Fixture, sy_supply: i128, target_rate: i128) -> i128 {
+        let aum_target = target_rate * sy_supply / WAD;
+        let new_b_rate = aum_target * novaire_blend_adapter::BLEND_SCALAR_12 / sy_supply;
+        novaire_blend_adapter::testutils::MockBlendPoolClient::new(&fixture.env, &fixture.pool)
+            .set_b_rate(&new_b_rate);
+        SyWrapperClient::new(&fixture.env, &fixture.sy_token).exchange_rate()
     }
 
     fn pt_balance(fixture: &Fixture, holder: &Address) -> i128 {
@@ -2173,6 +2233,158 @@ mod test {
         assert_eq!(
             sy_balance(&fixture, &fixture.admin),
             admin_sy_before - 1_000
+        );
+    }
+
+    #[test]
+    fn pt_for_sy_quote_reprices_after_sy_rate_move_without_liquidity_change() {
+        // Regression test for the SY/asset unit conflation at
+        // precompute_or_panic (formerly `total_asset = state.total_sy`
+        // unconverted). Yield accrual on the SY side, with no add/remove
+        // liquidity, must move the curve's priced output even though
+        // state.total_sy and state.total_pt are untouched.
+        let fixture = fixture(NOW);
+        initialize(&fixture);
+        fixture
+            .client
+            .add_liquidity(&fixture.admin, &1_000_000, &1_000_000, &0);
+
+        let baseline = quote_pt_for_sy(&fixture, 10_000).expect("quote at par");
+
+        let landed_rate = set_rate(&fixture, 1_000_000, 1_100_000_000_000_000_000);
+        assert!(landed_rate > WAD, "rate must have moved above par");
+
+        let state = fixture.client.state();
+        assert_eq!(state.total_sy, 1_000_000, "no liquidity op should touch total_sy");
+        assert_eq!(state.total_pt, 1_000_000);
+
+        let after_accrual = quote_pt_for_sy(&fixture, 10_000).expect("quote after accrual");
+        assert_ne!(
+            baseline, after_accrual,
+            "quote must reprice once the SY exchange rate departs from 1.0, even with total_sy unchanged"
+        );
+        // Each SY share is now worth more of the underlying asset, so the
+        // same PT face amount is priced against fewer, more valuable shares.
+        assert!(
+            after_accrual < baseline,
+            "sy_out should fall as the SY exchange rate rises above par: baseline={baseline} after_accrual={after_accrual}"
+        );
+    }
+
+    #[test]
+    fn pt_for_sy_quote_falls_monotonically_as_sy_rate_rises() {
+        let mut prior = i128::MAX;
+        for target_rate in [
+            WAD,
+            1_050_000_000_000_000_000,
+            1_100_000_000_000_000_000,
+            1_200_000_000_000_000_000,
+            1_500_000_000_000_000_000,
+        ] {
+            let fixture = fixture(NOW);
+            initialize(&fixture);
+            fixture
+                .client
+                .add_liquidity(&fixture.admin, &1_000_000, &1_000_000, &0);
+            set_rate(&fixture, 1_000_000, target_rate);
+
+            let sy_out = quote_pt_for_sy(&fixture, 10_000).expect("quote should succeed");
+            assert!(
+                sy_out < prior,
+                "sy_out must decrease as the SY rate rises: rate={target_rate} sy_out={sy_out} prior={prior}"
+            );
+            prior = sy_out;
+        }
+    }
+
+    #[test]
+    fn swap_pt_for_sy_executes_fewer_sy_shares_at_appreciated_rate() {
+        let par_fixture = fixture(NOW);
+        initialize(&par_fixture);
+        par_fixture
+            .client
+            .add_liquidity(&par_fixture.admin, &1_000_000, &1_000_000, &0);
+        mint_pt(&par_fixture, &par_fixture.admin, 10_000);
+        let par_sy_out = par_fixture
+            .client
+            .swap_pt_for_sy(&par_fixture.admin, &10_000, &1);
+
+        let rich_fixture = fixture(NOW);
+        initialize(&rich_fixture);
+        rich_fixture
+            .client
+            .add_liquidity(&rich_fixture.admin, &1_000_000, &1_000_000, &0);
+        set_rate(&rich_fixture, 1_000_000, 1_100_000_000_000_000_000);
+        mint_pt(&rich_fixture, &rich_fixture.admin, 10_000);
+        let rich_sy_out = rich_fixture
+            .client
+            .swap_pt_for_sy(&rich_fixture.admin, &10_000, &1);
+
+        assert!(
+            rich_sy_out < par_sy_out,
+            "the same PT trade must settle for fewer SY shares once the SY rate has appreciated: par={par_sy_out} rich={rich_sy_out}"
+        );
+        // Sanity bound: the shares should have shrunk by roughly the SY rate
+        // ratio (~1.10x), not stayed flat (the pre-fix bug) and not moved by
+        // an unrelated magnitude.
+        assert!(rich_sy_out * 11 / 10 <= par_sy_out + 5);
+    }
+
+    #[test]
+    fn yt_quote_reprices_after_sy_rate_move() {
+        // quote_sy_for_yt/quote_yt_for_sy do not touch the tokenizer, so they
+        // exercise the flash-route curve math directly even with this
+        // fixture's stub tokenizer.
+        let fixture = fixture(NOW);
+        initialize(&fixture);
+        fixture
+            .client
+            .add_liquidity(&fixture.admin, &1_000_000, &1_000_000, &0);
+
+        let baseline_yt = fixture.client.quote_sy_for_yt(&10_000);
+
+        set_rate(&fixture, 1_000_000, 1_100_000_000_000_000_000);
+        let after_yt = fixture.client.quote_sy_for_yt(&10_000);
+
+        assert_ne!(
+            baseline_yt, after_yt,
+            "the YT/flash quote must reflect the SY exchange rate through the same curve as the PT/SY path"
+        );
+    }
+
+    #[test]
+    fn round_trip_sy_to_pt_to_sy_conserves_value_at_nonpar_rate() {
+        let fixture = fixture(NOW);
+        initialize(&fixture);
+        fixture
+            .client
+            .add_liquidity(&fixture.admin, &1_000_000, &1_000_000, &0);
+        set_rate(&fixture, 1_000_000, 1_200_000_000_000_000_000);
+
+        mint_sy(&fixture, &fixture.admin, 50_000);
+        let sy_before = sy_balance(&fixture, &fixture.admin);
+
+        let pt_out = fixture.client.swap_sy_for_pt(&fixture.admin, &10_000, &1);
+        let sy_out = fixture.client.swap_pt_for_sy(&fixture.admin, &pt_out, &1);
+
+        let sy_after = sy_balance(&fixture, &fixture.admin);
+        assert_eq!(sy_after, sy_before - 10_000 + sy_out);
+        assert!(
+            sy_out < 10_000,
+            "round-tripping through PT must not create value beyond fee/rounding loss: sy_out={sy_out}"
+        );
+        // The only value destroyed should be the two legs' fees, the curve's
+        // own price impact on a trade against finite depth, and
+        // integer-rounding dust — not a unit-conversion artifact. Bound
+        // generously (1% of notional against a 100x-deeper pool) so this
+        // catches a broken conversion (which would be off by the ~20% SY
+        // rate move) without being sensitive to the curve's normal slippage.
+        let max_loss = 10_000 / 100;
+        assert!(
+            10_000 - sy_out <= max_loss,
+            "round-trip loss {} exceeds the fee+slippage+rounding budget {}",
+            10_000 - sy_out,
+            max_loss
         );
     }
 

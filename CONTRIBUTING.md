@@ -460,11 +460,10 @@ Snapshot tests live under `contracts/<contract>/test_snapshots/`. They capture t
 
 `contracts/integration_tests/` is a workspace crate exercising full flows — deposit → wrap → mint PT/YT → swap → settle — including:
 
-- `framework.rs` — shared test fixtures.
-- `invariants.rs` — protocol invariants (INV-1 … INV-8).
-- `l1_regression.rs`, `m1…m5_regression.rs` — regression suites pinned to historical bugs.
-- `fuzz.rs`, `stress.rs`, `simulation.rs` — randomized and adversarial scenarios.
-- `mock_blend_pool.rs` — a deterministic Blend pool mock so yield-source behavior is testable without Testnet RPC.
+- `journey.rs` — end-to-end user journeys (split/recombine, AMM swaps, flash routes, PT redemption).
+- `economics.rs` — protocol-economics invariants, including `conservation_holds_across_random_sequences`: a 10,000-step randomized walk of deposit/split/transfer/claim/recombine/rate-change ops that asserts the escrow covers every holder's claim after *every* step, then checks post-maturity leftover dust stays within the expected floor-rounding bound. This test is inherently slow (~10k real Soroban host calls) — expect several minutes; that's expected, not a hang.
+- `auth_invariants.rs` — access-control / authorization invariants.
+- `blend_wrapper.rs` — Blend yield-source integration via the sy-wrapper.
 
 ```bash
 cd contracts

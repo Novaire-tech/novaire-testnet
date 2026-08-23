@@ -14,15 +14,248 @@ function stringifyAmounts(data: Record<string, unknown>): Record<string, string>
   return out;
 }
 
-async function getOrCreateUser(tx: Tx, address: string) {
-  if (typeof address !== 'string' || address.length === 0) {
-    throw new Error(`getOrCreateUser: missing/invalid address (${JSON.stringify(address)})`);
+/**
+ * Rows decoded from one poll batch. Events are planned into this buffer first
+ * (pure CPU, no DB), then flushed as a handful of bulk statements inside the
+ * batch transaction — the old per-event upserts cost 2-4 sequential round trips
+ * per event (user upsert + record upsert; 2 legs for transfers), which on a
+ * full 1000-event page meant thousands of serialized queries inside one tx.
+ */
+export interface EventBatch {
+  /** Unique addresses referenced by this batch; inserted before child rows to satisfy FKs. */
+  users: Set<string>;
+  activities: Prisma.ActivityUncheckedCreateInput[];
+  trades: Prisma.TradeUncheckedCreateInput[];
+  yieldClaims: Prisma.YieldClaimUncheckedCreateInput[];
+}
+
+export function createBatch(): EventBatch {
+  return { users: new Set(), activities: [], trades: [], yieldClaims: [] };
+}
+
+function requireAmount(data: Record<string, string>, field: string, topicName: string): string {
+  const value = data[field];
+  if (value === undefined) {
+    // Match the old behavior where a malformed event failed its own insert and was
+    // skipped by the caller — validate here so one bad event can't poison a bulk flush.
+    throw new Error(`event ${topicName}: missing required field "${field}"`);
   }
-  await tx.user.upsert({
-    where: { id: address },
-    create: { id: address },
-    update: {},
-  });
+  return value;
+}
+
+function requireHolder(topicFields: unknown[], topicName: string): string {
+  const holder = topicFields[0];
+  if (typeof holder !== 'string' || holder.length === 0) {
+    throw new Error(`event ${topicName}: missing/invalid holder address (${JSON.stringify(holder)})`);
+  }
+  return holder;
+}
+
+/**
+ * Decode one event into pending rows in `batch`. Throws on malformed events
+ * (bad address shape, missing amount field) — callers catch and skip per event,
+ * exactly like the old per-event upsert path did.
+ * Returns true when the topic was handled, false for ignorable/unhandled topics.
+ */
+export function planEvent(
+  batch: EventBatch,
+  event: any,
+  txHash: string,
+  timestamp: Date,
+  contractLabel: string,
+  epochId: string
+): boolean {
+  const topicName = event.topic?.[0] !== undefined ? scValToNative(event.topic[0]) : undefined;
+  if (typeof topicName !== 'string') return false;
+
+  const topicFields = event.topic.slice(1).map((t: any) => scValToNative(t));
+  const data = stringifyAmounts((scValToNative(event.value) as Record<string, unknown>) ?? {});
+
+  // event.id is unique per (ledger, tx, operation, event-index) — used as the
+  // idempotency key so a re-delivered event never double-writes (flushBatch relies
+  // on createMany skipDuplicates for this).
+  const eventId: string = event.id;
+  const activityType = `${contractLabel}_${topicName}`;
+
+  switch (topicName) {
+    // sy-wrapper
+    case 'deposit':
+    case 'redeem': {
+      const holder = requireHolder(topicFields, topicName);
+      batch.users.add(holder);
+      batch.activities.push({
+        id: eventId,
+        type: activityType,
+        userId: holder,
+        epochId,
+        amount: requireAmount(data, 'underlying_amount', topicName),
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    // tokenizer
+    case 'split': {
+      const holder = requireHolder(topicFields, topicName);
+      batch.users.add(holder);
+      batch.activities.push({
+        id: eventId,
+        type: activityType,
+        userId: holder,
+        epochId,
+        amount: requireAmount(data, 'face', topicName),
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    case 'recombine': {
+      const holder = requireHolder(topicFields, topicName);
+      batch.users.add(holder);
+      batch.activities.push({
+        id: eventId,
+        type: activityType,
+        userId: holder,
+        epochId,
+        amount: requireAmount(data, 'sy_out', topicName),
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    case 'redeem_at_maturity': {
+      const holder = requireHolder(topicFields, topicName);
+      batch.users.add(holder);
+      batch.activities.push({
+        id: eventId,
+        type: activityType,
+        userId: holder,
+        epochId,
+        amount: requireAmount(data, 'pt_amount', topicName),
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    case 'claim_yield': {
+      const holder = requireHolder(topicFields, topicName);
+      batch.users.add(holder);
+      batch.yieldClaims.push({
+        id: eventId,
+        userId: holder,
+        epochId,
+        amount: requireAmount(data, 'sy_out', topicName),
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    // pt-token / yt-token (contractLabel disambiguates which token contract emitted this)
+    case 'mint':
+    case 'burn': {
+      const holder = requireHolder(topicFields, topicName);
+      batch.users.add(holder);
+      batch.activities.push({
+        id: eventId,
+        type: activityType,
+        userId: holder,
+        epochId,
+        amount: requireAmount(data, 'amount', topicName),
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    case 'transfer': {
+      // Activity has no counterparty column, so a transfer is recorded as two legs
+      // (sender/receiver) distinguished by an _out/_in suffix on the same eventId.
+      const [from, to] = topicFields;
+      if (typeof from !== 'string' || from.length === 0 || typeof to !== 'string' || to.length === 0) {
+        throw new Error(`event ${topicName}: missing/invalid transfer parties (${JSON.stringify([from, to])})`);
+      }
+      const amount = requireAmount(data, 'amount', topicName);
+      batch.users.add(from);
+      batch.users.add(to);
+      batch.activities.push({
+        id: `${eventId}:out`,
+        type: `${activityType}_out`,
+        userId: from,
+        epochId,
+        amount,
+        timestamp,
+        txHash,
+      });
+      batch.activities.push({
+        id: `${eventId}:in`,
+        type: `${activityType}_in`,
+        userId: to,
+        epochId,
+        amount,
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    // amm
+    case 'swap': {
+      const trader = requireHolder(topicFields, topicName);
+      batch.users.add(trader);
+      batch.trades.push({
+        id: eventId,
+        epochId,
+        buyer: trader,
+        amountIn: requireAmount(data, 'amount_in', topicName),
+        amountOut: requireAmount(data, 'amount_out', topicName),
+        // Not derivable from the Swap event alone (needs price/maturity context);
+        // left as "0" until a rate-calculation source is implemented.
+        impliedRate: '0',
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    case 'add_liquidity':
+    case 'remove_liquidity': {
+      const provider = requireHolder(topicFields, topicName);
+      batch.users.add(provider);
+      batch.activities.push({
+        id: eventId,
+        type: activityType,
+        userId: provider,
+        epochId,
+        amount: requireAmount(data, topicName === 'add_liquidity' ? 'lp_out' : 'lp_in', topicName),
+        timestamp,
+        txHash,
+      });
+      break;
+    }
+    default:
+      console.log(`Unhandled event topic: ${topicName} (contract ${contractLabel})`);
+      return false;
+  }
+  return true;
+}
+
+/**
+ * Flush planned rows as bulk INSERT .. ON CONFLICT DO NOTHING statements.
+ * Users go first (FK parents); children run concurrently afterwards. Per-event
+ * idempotency comes from the PKs + skipDuplicates, matching the old upserts'
+ * "insert if absent, else no-op" semantics.
+ */
+export async function flushBatch(tx: Tx, batch: EventBatch): Promise<void> {
+  if (batch.users.size > 0) {
+    await tx.user.createMany({
+      data: [...batch.users].map((id) => ({ id })),
+      skipDuplicates: true,
+    });
+  }
+  await Promise.all([
+    batch.activities.length > 0 ? tx.activity.createMany({ data: batch.activities, skipDuplicates: true }) : null,
+    batch.trades.length > 0 ? tx.trade.createMany({ data: batch.trades, skipDuplicates: true }) : null,
+    batch.yieldClaims.length > 0
+      ? tx.yieldClaim.createMany({ data: batch.yieldClaims, skipDuplicates: true })
+      : null,
+  ]);
 }
 
 /**
@@ -50,234 +283,6 @@ export async function getOrCreateEpoch(deployments: Record<string, string>) {
   return epoch.id;
 }
 
-async function recordActivity(
-  tx: Tx,
-  opts: { id: string; type: string; userId: string; epochId: string; amount: string; timestamp: Date; txHash: string }
-) {
-  await getOrCreateUser(tx, opts.userId);
-  await tx.activity.upsert({
-    where: { id: opts.id },
-    create: opts,
-    update: {},
-  });
-}
-
-export async function processEvent(
-  tx: Tx,
-  event: any,
-  txHash: string,
-  timestamp: Date,
-  contractId: string,
-  contractLabel: string,
-  epochId: string
-) {
-  // event.topic[0] is the event-name Symbol; #[contractevent]'s default
-  // data_format is Map, so event.value decodes to a plain object keyed by field name.
-  const topicName = event.topic?.[0] !== undefined ? scValToNative(event.topic[0]) : undefined;
-  if (typeof topicName !== 'string') return;
-
-  const topicFields = event.topic.slice(1).map((t: any) => scValToNative(t));
-  const data = stringifyAmounts((scValToNative(event.value) as Record<string, unknown>) ?? {});
-
-  // event.id is unique per (ledger, tx, operation, event-index) — use it as the
-  // idempotency key so a re-processed or duplicate-delivered event never double-writes.
-  const eventId: string = event.id;
-  const activityType = `${contractLabel}_${topicName}`;
-
-  try {
-    switch (topicName) {
-      // sy-wrapper
-      case 'deposit': {
-        const [holder] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: holder,
-          epochId,
-          amount: data.underlying_amount,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      case 'redeem': {
-        const [holder] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: holder,
-          epochId,
-          amount: data.underlying_amount,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      // tokenizer
-      case 'split': {
-        const [holder] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: holder,
-          epochId,
-          amount: data.face,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      case 'recombine': {
-        const [holder] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: holder,
-          epochId,
-          amount: data.sy_out,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      case 'redeem_at_maturity': {
-        const [holder] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: holder,
-          epochId,
-          amount: data.pt_amount,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      case 'claim_yield': {
-        const [holder] = topicFields;
-        await getOrCreateUser(tx, holder);
-        await tx.yieldClaim.upsert({
-          where: { id: eventId },
-          create: {
-            id: eventId,
-            userId: holder,
-            epochId,
-            amount: data.sy_out,
-            timestamp,
-            txHash,
-          },
-          update: {},
-        });
-        break;
-      }
-      // pt-token / yt-token (contractLabel disambiguates which token contract emitted this)
-      case 'mint': {
-        const [to] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: to,
-          epochId,
-          amount: data.amount,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      case 'burn': {
-        const [from] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: from,
-          epochId,
-          amount: data.amount,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      case 'transfer': {
-        // Activity has no counterparty column, so a transfer is recorded as two legs
-        // (sender/receiver) distinguished by an _out/_in suffix on the same eventId.
-        const [from, to] = topicFields;
-        await recordActivity(tx, {
-          id: `${eventId}:out`,
-          type: `${activityType}_out`,
-          userId: from,
-          epochId,
-          amount: data.amount,
-          timestamp,
-          txHash,
-        });
-        await recordActivity(tx, {
-          id: `${eventId}:in`,
-          type: `${activityType}_in`,
-          userId: to,
-          epochId,
-          amount: data.amount,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      // amm
-      case 'swap': {
-        const [trader] = topicFields;
-        await getOrCreateUser(tx, trader);
-        await tx.trade.upsert({
-          where: { id: eventId },
-          create: {
-            id: eventId,
-            epochId,
-            buyer: trader,
-            amountIn: data.amount_in,
-            amountOut: data.amount_out,
-            // Not derivable from the Swap event alone (needs price/maturity context);
-            // left as "0" until a rate-calculation source is implemented.
-            impliedRate: '0',
-            timestamp,
-            txHash,
-          },
-          update: {},
-        });
-        break;
-      }
-      case 'add_liquidity': {
-        const [provider] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: provider,
-          epochId,
-          amount: data.lp_out,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      case 'remove_liquidity': {
-        const [provider] = topicFields;
-        await recordActivity(tx, {
-          id: eventId,
-          type: activityType,
-          userId: provider,
-          epochId,
-          amount: data.lp_in,
-          timestamp,
-          txHash,
-        });
-        break;
-      }
-      default:
-        console.log(`Unhandled event topic: ${topicName} (contract ${contractLabel})`);
-    }
-  } catch (error) {
-    console.error(`Error processing event ${topicName}:`, error);
-    throw error; // surface to the caller so the enclosing transaction rolls back
-  }
-}
-
 export async function getSyncState() {
   let state = await prisma.syncState.findUnique({ where: { id: 'singleton' } });
   if (!state) {
@@ -288,6 +293,12 @@ export async function getSyncState() {
   return state;
 }
 
+// Prisma's interactive-transaction defaults (maxWait 2s / timeout 5s) are sized for
+// short single-row work; a full poll batch must plan, bulk-flush and advance the
+// cursor inside this window, so give it explicit headroom instead of failing with
+// P2028 once batches grow.
+const TX_OPTIONS = { maxWait: 5_000, timeout: 30_000 } as const;
+
 export async function runInTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
-  return prisma.$transaction(fn);
+  return prisma.$transaction(fn, TX_OPTIONS);
 }

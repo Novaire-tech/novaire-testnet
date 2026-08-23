@@ -16,6 +16,8 @@ interface ProtocolStateSnapshot {
   apyUnavailable: boolean;
   ptSupplyXlm: number;
   ytSupplyXlm: number;
+  /** Raw SY wrapper exchange rate at this instant; null when the read failed/was invalid. */
+  syExchangeRate: number | null;
 }
 
 function unwrapResult(rawResult: unknown): unknown {
@@ -54,6 +56,7 @@ async function getProtocolState(deployments: Record<string, string>): Promise<Pr
     apyUnavailable: true,
     ptSupplyXlm: 0,
     ytSupplyXlm: 0,
+    syExchangeRate: null,
   };
 
   try {
@@ -76,7 +79,9 @@ async function getProtocolState(deployments: Record<string, string>): Promise<Pr
     const syWrapperClient = new SyWrapperClient({ ...clientOptions, contractId: deployments.sy_wrapper });
     const ammClient = new AmmClient({ ...clientOptions, contractId: deployments.amm });
 
-    const [ptSupplyRes, ytSupplyRes, syTotalSupplyRes, twapApyRes, ptQuoteRes, exchangeRateRes] =
+    // One parallel round of all RPC + price reads — the XLM price used to be awaited
+    // serially afterwards, adding a full HTTP round trip to every snapshot tick.
+    const [ptSupplyRes, ytSupplyRes, syTotalSupplyRes, twapApyRes, ptQuoteRes, exchangeRateRes, xlmPriceRes] =
       await Promise.allSettled([
         ptClient.total_supply(),
         ytClient.total_supply(),
@@ -84,6 +89,7 @@ async function getProtocolState(deployments: Record<string, string>): Promise<Pr
         ammClient.twap_apy(),
         ammClient.quote_pt_for_sy({ pt_in: BigInt(1e7) }),
         syWrapperClient.exchange_rate(),
+        fetchXlmPriceUsd(),
       ]);
 
     const ptSupplyXlm =
@@ -113,12 +119,33 @@ async function getProtocolState(deployments: Record<string, string>): Promise<Pr
       if (!isNaN(syOut) && !isNaN(rate) && rate > 0) ptPriceUnderlying = syOut * rate;
     }
 
-    const xlmPriceUsd = await fetchXlmPriceUsd();
+    // Reuse the exchange_rate read already fetched above for the persisted field.
+    // This used to be a second RPC call with a freshly-imported client on every
+    // snapshot tick. Kept at raw scale (no /1e18) to stay comparable with
+    // syExchangeRate values already in ProtocolHistory — only the jump-ratio sanity
+    // check and downstream charts consume it, both of which are scale-relative.
+    let syExchangeRate: number | null = null;
+    if (exchangeRateRes.status === 'fulfilled') {
+      const raw = Number(unwrapResult(exchangeRateRes.value.result));
+      syExchangeRate = !isNaN(raw) && raw > 0 ? raw : null;
+    }
+
+    const xlmPriceUsd = xlmPriceRes.status === 'fulfilled' ? xlmPriceRes.value : null;
     const priceUnavailable = xlmPriceUsd === null;
     const tvlXlm = totalDepositsXlm; // dexLiquidityXlm omitted — not needed for this snapshot's fields
     const tvlUsd = priceUnavailable ? 0 : tvlXlm * (xlmPriceUsd as number);
 
-    return { ptPriceUnderlying, tvlXlm, tvlUsd, priceUnavailable, impliedYieldApy, apyUnavailable, ptSupplyXlm, ytSupplyXlm };
+    return {
+      ptPriceUnderlying,
+      tvlXlm,
+      tvlUsd,
+      priceUnavailable,
+      impliedYieldApy,
+      apyUnavailable,
+      ptSupplyXlm,
+      ytSupplyXlm,
+      syExchangeRate,
+    };
   } catch (e) {
     console.error('[snapshotter] Failed to fetch protocol state:', e);
     return defaultState;
@@ -155,22 +182,7 @@ export async function takeSnapshot(deployments: Record<string, string>, network:
     return;
   }
 
-  let syExchangeRate: number | null = null;
-  try {
-    const { Client: SyWrapperClient } = await import('../../../packages/bindings/sy_wrapper/src/index');
-    const RPC_URL = process.env.RPC_URL || 'https://soroban-testnet.stellar.org';
-    const NETWORK_PASSPHRASE =
-      process.env.NETWORK_PASSPHRASE ||
-      (network.toUpperCase() === 'MAINNET'
-        ? 'Public Global Stellar Network ; September 2015'
-        : 'Test SDF Network ; September 2015');
-    const client = new SyWrapperClient({ rpcUrl: RPC_URL, networkPassphrase: NETWORK_PASSPHRASE, contractId: syWrapper });
-    const res = await client.exchange_rate();
-    const rate = Number(res.result);
-    syExchangeRate = isNaN(rate) || rate <= 0 ? null : rate;
-  } catch (e) {
-    console.warn('[snapshotter] Could not fetch SY exchange rate:', e);
-  }
+  const syExchangeRate = state.syExchangeRate;
 
   if (syExchangeRate !== null) {
     const last = await prisma.protocolHistory.findFirst({

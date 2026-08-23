@@ -18,10 +18,26 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET() {
   try {
+    // select only the columns the shaped response uses — ptSupply/ytSupply are
+    // stored strings this endpoint never returns.
     const history = await prisma.protocolHistory.findMany({
       where: { network: NETWORK, syWrapper: CONTRACTS.SY_WRAPPER },
       orderBy: { timestamp: 'asc' },
       take: 5000,
+      select: {
+        id: true,
+        timestamp: true,
+        network: true,
+        syWrapper: true,
+        ptPrice: true,
+        ytPrice: true,
+        tvl: true,
+        fixedApy: true,
+        tradingVolume: true,
+        syExchangeRate: true,
+        eventType: true,
+        txHash: true,
+      },
     });
 
     const shaped = history.map((h) => ({
@@ -39,7 +55,11 @@ export async function GET() {
       txHash: h.txHash,
     }));
 
-    return NextResponse.json(shaped);
+    return NextResponse.json(shaped, {
+      // The indexer writes at most one snapshot per minute — let CDN/browser caches
+      // serve that window instead of re-running a 5000-row query per visitor.
+      headers: { 'Cache-Control': 's-maxage=60, stale-while-revalidate=300' },
+    });
   } catch (error) {
     // Never return 500 — always return valid JSON, matching /api/history's contract.
     console.error('[/api/protocol-history] Unexpected error:', error);
