@@ -1015,6 +1015,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "novaire-benches"
+version = "0.1.0"
+dependencies = [
+ "novaire-amm",
+ "novaire-blend-adapter",
+ "novaire-pt-token",
+ "novaire-shared-types",
+ "novaire-sy-wrapper",
+ "novaire-tokenizer",
+ "novaire-yt-token",
+ "serde",
+ "serde_json",
+ "soroban-sdk",
+]
+
+[[package]]
 name = "novaire-blend-adapter"
 version = "0.1.0"
 dependencies = [

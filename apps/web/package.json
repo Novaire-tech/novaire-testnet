@@ -13,7 +13,10 @@
     "pretest:e2e:real": "npm run vendor:freighter",
     "test:e2e:real": "playwright test --project=real-wallet",
     "pretest:e2e:portfolio": "npm run vendor:freighter",
-    "test:e2e:portfolio": "playwright test --project=portfolio-e2e"
+    "test:e2e:portfolio": "playwright test --project=portfolio-e2e",
+    "bench:bundle": "next build && tsx benchmarks/bundle-report.ts",
+    "bench:perf": "playwright test --project=bench",
+    "bench": "npm run bench:bundle && npm run bench:perf"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",

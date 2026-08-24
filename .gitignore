@@ -68,3 +68,7 @@ test-ledger/
 # resumable deploy state (contracts/scripts/deploy-testnet-resilient.sh) --
 # local progress tracking only, not part of the public deployment manifest
 deployments/*.state.env
+
+# generated benchmark reports -- baselines (e.g. contracts/benches/baseline.json)
+# are committed, but the latest-run reports under benchmarks/results/ are not
+benchmarks/results/

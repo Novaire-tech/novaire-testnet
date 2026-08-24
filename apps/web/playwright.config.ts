@@ -26,7 +26,7 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      testIgnore: [/.*\.real-wallet\.spec\.ts/, /.*\.e2e\.spec\.ts/],
+      testIgnore: [/.*\.real-wallet\.spec\.ts/, /.*\.e2e\.spec\.ts/, /.*\.bench\.spec\.ts/],
       use: { ...devices['Desktop Chrome'] },
       // Default 30s leaves too little headroom after a cold-compile page.goto
       // under fullyParallel contention -- raising navigationTimeout alone
@@ -38,6 +38,14 @@ export default defineConfig({
       // Run via `npm run test:e2e:real`, not part of the default `chromium` project.
       name: 'real-wallet',
       testMatch: /.*\.real-wallet\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      // Opt-in only: records page-load timings for a fixed set of routes.
+      // Run via `npm run bench:perf`. Not part of the default `chromium`
+      // project since it measures timing, not correctness.
+      name: 'bench',
+      testMatch: /.*\.bench\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {

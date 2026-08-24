@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Convenience targets for the novaire contracts workspace.
 
-.PHONY: help test wasm build deploy clean
+.PHONY: help test wasm build deploy clean bench bench-check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -9,6 +9,12 @@ help: ## Show this help
 
 test: ## Run all Soroban contract tests
 	cargo test --workspace
+
+bench: ## Run contract cost benchmarks (CPU/mem per entrypoint call)
+	cargo run -p novaire-benches --release -- --out ../benchmarks/results/contracts-latest.json
+
+bench-check: ## Run contract cost benchmarks and fail on regressions vs the committed baseline
+	cargo run -p novaire-benches --release -- --out ../benchmarks/results/contracts-latest.json --check benches/baseline.json
 
 wasm: ## Build optimized deployable contract Wasm artifacts
 	bash scripts/build-optimized-wasm.sh
