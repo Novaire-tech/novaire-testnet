@@ -1,13 +1,12 @@
 {
-  "name": "docs",
+  "name": "@novaire/docs",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "mintlify dev",
-    "build": "mintlify broken-links",
     "broken-links": "mintlify broken-links"
   },
   "devDependencies": {
-    "mintlify": "latest"
+    "mintlify": "^4"
   }
 }

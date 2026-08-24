@@ -1,8 +1,11 @@
 /**
- * Canonical documentation destination for the navbar "Docs" link and the
- * hero "Read more" CTA. Defaults to the site's internal /docs route so the
- * links never go dead. Once the Mintlify project in apps/docs is deployed,
- * set NEXT_PUBLIC_DOCS_URL to its live URL (e.g. https://docs.novaire.xyz)
- * to point both entry points at it — no other code change needed.
+ * Canonical documentation destination for the Navbar "Docs" link, the Hero
+ * "Read more" CTA, and JoinIn's "Docs" link. Mintlify (apps/docs) is a
+ * separate site, not part of this Next.js app, so it needs its own deployed
+ * URL — set NEXT_PUBLIC_DOCS_URL once it's connected to Mintlify's hosting
+ * (see apps/docs/README.md). Falls back to the GitHub-rendered source so
+ * these links are never dead in the meantime.
  */
-export const DOCS_URL = process.env.NEXT_PUBLIC_DOCS_URL || "/docs";
+export const DOCS_URL =
+  process.env.NEXT_PUBLIC_DOCS_URL ||
+  "https://github.com/Novaire-tech/novaire-testnet/tree/master/apps/docs";

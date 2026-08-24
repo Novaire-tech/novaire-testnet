@@ -1,42 +1,89 @@
 ---
 title: "Contract Architecture"
-description: "Every contract, its responsibility, and why it exists as a separate contract"
+description: "Per-contract storage, public interface, and privileged functions."
 ---
 
-## Why nine separate contracts
+Source: `contracts/*/src/lib.rs` at the current `master` HEAD. Line numbers are approximate and will drift as the code evolves — treat them as pointers, not guarantees.
 
-Novaire splits custody (`vault`), yield-source integration (`sy_wrapper`), tokenization (`tokenizer`, `pt_token`, `yt_token`), pricing (`marketplace`), epoch lifecycle (`maturity_engine`), orchestration (`intent_engine`), automation (`rollover`), and deployment (`factory`) into distinct contracts rather than one monolith. This isolates blast radius (a bug in the AMM can't touch custody) and lets each piece be reasoned about, and tested, independently.
+## sy-wrapper
 
 <AccordionGroup>
-  <Accordion title="factory — deployment & wiring orchestrator">
-    Not part of the runtime economic flow. Deploys and cross-initializes a full epoch's contracts in one call (`deploy_epoch`), verifies the wiring, and records an `EpochRecord`. Admin-gated. Explicitly documents (SEC-10) that it cannot verify on-chain whether a configured `blend_pool` address is genuinely Blend's pool — that's an off-chain deployment responsibility.
+  <Accordion title="Storage">
+    - `Config { admin, underlying, pool, reserve_index }` — instance
+    - `TotalSupply: i128` — instance, SY-share units
+    - `Balance(Address): i128` — persistent, SY shares
+    - `Principal(Address): i128` — persistent, underlying-asset units (tracks deposited principal for yield display)
+    - `Allowance(Address, Address): AllowanceValue` — temporary
   </Accordion>
-  <Accordion title="sy_wrapper — yield-source wrapper">
-    Deposits underlying, supplies 100% of it into a Blend Capital pool via a real cross-contract call, mints SY shares at an internally tracked exchange rate (`EXCHANGE_RATE_SCALAR = 1e9`). Tracks the Blend integration directly — there is no separate "Blend Adapter" contract. See [Blend Integration](/protocol/blend-integration).
+  <Accordion title="Public interface">
+    `initialize_blend`, `config`, `share_balance`, `total_shares`, `migrate_reserve_index` (admin-only), plus SEP-41 (`balance`, `total_supply`, `decimals` = 7, `name` = "Novaire Standardized Yield", `symbol` = "sSY", `allowance`, `approve`, `transfer`, `transfer_from`) and the `StandardizedYield` trait (`deposit`, `redeem`, `exchange_rate`, `underlying`, `accrued_yield`).
   </Accordion>
-  <Accordion title="vault — share custody & accounting">
-    A thin pass-through: deposits/withdrawals proxy 1:1 into `sy_wrapper.deposit`/`withdraw` and track per-user share balances. No yield logic, no epoch-awareness of its own.
+  <Accordion title="Privileged functions">
+    Only `migrate_reserve_index` is admin-gated — recovers from a Blend reserve re-indexing event. It re-derives the reserve index itself and cross-checks asset identity rather than trusting a caller-supplied index, so it cannot be used to repoint the rate at a different asset. **There is no admin rate setter** — the rate is entirely Blend-derived.
   </Accordion>
-  <Accordion title="maturity_engine — the epoch clock">
-    Holds no funds. Its only job is the epoch state machine: `Active(0) → Matured(1, dynamically evaluated) → Settled(2) → Archived(3)`. `tokenizer`, `marketplace`, and `yt_token` all query `live_state()` cross-contract rather than deriving expiry locally — this is the single canonical clock.
-  </Accordion>
-  <Accordion title="tokenizer — the economic coordinator">
-    Mints PT+YT 1:1 against vault shares, tracks the epoch state locally (delegating Active/Matured detection to `maturity_engine`), freezes the settlement exchange rate at settlement, guarantees PT principal redemption, and runs a reward-per-YT-share accumulator for yield distribution.
-  </Accordion>
-  <Accordion title="pt_token / yt_token — standalone token contracts">
-    Not Stellar Asset Contracts, not modules inside `tokenizer` — independent, custom ERC20-like contracts deployed fresh per epoch, with `tokenizer` as the sole mint/burn authority. `pt_token` transfers bypass `pause` deliberately, to preserve secondary-market liquidity as an escape valve. `yt_token` additionally carries the yield-accrual accumulator (`YieldIndex`, `UserYieldIndex`).
-  </Accordion>
-  <Accordion title="marketplace — the AMM">
-    A YieldSpace-style time-decaying curve for PT/underlying, with YT priced off the same curve via a virtual-sale derivation rather than a second AMM. See [AMM](/protocol/amm) for the full math.
-  </Accordion>
-  <Accordion title="intent_engine — one-transaction strategies">
-    Composes `vault.deposit` → `tokenizer.mint_pt_yt` → `marketplace` swap into two user-facing strategies (fixed-yield, yield-speculation), gated on a non-stale implied rate from `marketplace.get_twap_rate_checked`.
-  </Accordion>
-  <Accordion title="rollover — automated re-investment">
-    Custodies a user's matured PT, redeems it via `tokenizer.redeem_pt`, discovers the linked next epoch via `factory`, and reinvests via `intent_engine.execute_fixed_yield_intent` at a user-set minimum rate. Keeper-gated during a grace period, permissionless afterward for liveness.
+  <Accordion title="Events">
+    `ReserveMigrated{old_index, new_index}`, `Deposit{holder, underlying_amount, shares_minted}`, `Redeem{holder, shares_burned, underlying_amount}`
   </Accordion>
 </AccordionGroup>
 
-## Contract dependency graph
+## blend-adapter (library, not deployed)
 
-See [Contract Dependencies](/architecture/contract-dependencies) for the full cross-call graph, and [Reference → Contract Reference](/reference/contract-reference) for every public entry point.
+No storage, no contract entrypoints, no admin functions. A shared crate providing:
+
+- `BlendPool` trait / `BlendPoolClient` — bindings to a real Blend pool contract (`get_reserve_list`, `get_reserve`, `get_positions`, `submit`).
+- Pure math: `assets_from_b_tokens`, `derived_exchange_rate`, `b_tokens_from_assets` — all `checked_*` arithmetic returning `Option`.
+- `MockBlendPool` / `MockBlendPoolClient` — gated behind `#[cfg(any(test, feature = "testutils"))]`, an in-memory test double implementing the same trait. **Used by every unit test in this repository.** See [Blend Testing](/testing/blend-testing) for what this does and doesn't prove.
+- A `YieldAdapter` trait is also defined in this crate but is not implemented by any contract in the current codebase — an interface pin, not active code.
+
+## tokenizer
+
+<AccordionGroup>
+  <Accordion title="Storage">
+    - `Config { admin, sy_token, pt_token, yt_token, maturity }`
+    - `MaturityRate: i128` — WAD, frozen SY rate at/after maturity
+    - `LastObservedRate: i128` — WAD, last pre-maturity observation (fallback if maturity is never explicitly frozen before someone redeems)
+  </Accordion>
+  <Accordion title="Public interface">
+    `initialize`, `config`, `maturity`, `is_matured`, `observe_rate` (permissionless), `freeze_maturity_rate` (permissionless, post-maturity only, idempotent), `maturity_rate`, `preview_split`, `preview_recombine`, `position`, `escrowed_sy`, `split`, `recombine`, `redeem_at_maturity`, `claim_yield`
+  </Accordion>
+  <Accordion title="Privileged functions">
+    Only `initialize` is admin-gated. Every other mutating entrypoint is user-authorized (`from.require_auth()`), not admin-gated.
+  </Accordion>
+  <Accordion title="Events">
+    `Split{holder, sy_amount, face}`, `Recombine{holder, pt_amount, yt_amount, sy_out}`, `RedeemAtMaturity{holder, pt_amount, sy_out}`, `ClaimYield{holder, sy_out}`
+  </Accordion>
+</AccordionGroup>
+
+## pt-token
+
+Standard SEP-41 fungible token (`decimals` = 7, `name` = "Novaire Principal Token", `symbol` = "sPT") with `mint` gated to `config.tokenizer.require_auth()` — only the tokenizer can mint PT. Deliberately carries no redemption-quote logic of its own; all redemption pricing (frozen rate, pro-rata cap) lives in the tokenizer.
+
+## yt-token
+
+SEP-41 token (`decimals` = 7, `name` = "Novaire Yield Token", `symbol` = "sYT") plus a per-holder accrual ledger:
+
+- `Checkpoint(Address): i128` — WAD rate at the holder's last settle
+- `AccruedYield(Address): i128` — banked SY shares owed but not yet paid
+
+`mint`, `settle`, `consume`, `burn_settled` are all gated to `config.tokenizer.require_auth()`. `settle` banks yield at a given rate without zeroing it; `consume` deducts exactly the amount paid out, leaving any remainder banked for later.
+
+## amm
+
+<AccordionGroup>
+  <Accordion title="Storage">
+    - `Config { admin, pt_token, sy_token, yt_token, tokenizer, maturity, scalar_root, initial_anchor, fee_bps, twap_window }`
+    - `State { total_pt, total_sy, total_lp, last_ln_implied_rate, twap_ln_implied_rate, last_observation, warmup_until }`
+    - `LpBalance(Address): i128`
+  </Accordion>
+  <Accordion title="Public interface">
+    `initialize`, `config`, `state`, `reserve_pt`, `reserve_sy`, `total_lp`, `lp_balance`, `bump_ttl`/`bump_lp_ttl` (permissionless keepers), `quote_pt_for_sy`/`quote_sy_for_pt`/`quote_sy_for_yt`/`quote_yt_for_sy`, `spot_apy`, `twap_apy`, `twap_warming_up`, `swap_pt_for_sy`/`swap_sy_for_pt`/`swap_sy_for_yt`/`swap_yt_for_sy`, `add_liquidity`, `remove_liquidity`, `implied_apy`, `maturity`
+  </Accordion>
+  <Accordion title="Privileged functions">
+    Only `initialize` is admin-gated. No other admin lever exists over pricing, reserves, or fees post-deployment.
+  </Accordion>
+  <Accordion title="Events">
+    `Swap{trader, route, amount_in, amount_out}` (route ∈ `pt_for_sy`/`sy_for_pt`/`sy_for_yt`/`yt_for_sy`), `AddLiquidity{provider, pt_in, sy_in, lp_out}`, `RemoveLiquidity{provider, lp_in, pt_out, sy_out}`
+  </Accordion>
+</AccordionGroup>
+
+Full pricing math is documented separately in [AMM](/protocol/amm) and [Pricing](/protocol/pricing) — it's dense enough to warrant its own pages.

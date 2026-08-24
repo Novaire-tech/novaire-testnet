@@ -1,46 +1,51 @@
 ---
 title: "Trust Boundaries"
-description: "Where Novaire's trust perimeter actually sits"
+description: "Where Novaire's own trust domain ends."
 ---
 
 ```mermaid
-graph TD
-    subgraph "Fully trusted only for own funds"
-        USER[Any user]
+flowchart TB
+    subgraph Trusted["Novaire's own trust domain (5 contracts, deployed and initialized together)"]
+        SY[sy-wrapper]
+        TOK[tokenizer]
+        PT[pt-token]
+        YT[yt-token]
+        AMM[amm]
     end
-    subgraph "Trusted within scoped roles"
-        ADMIN[Protocol admin — single key]
-        KEEPER[Keeper — rollover grace period only]
+    subgraph External["Fully external, fully trusted"]
+        BP[Blend Capital Pool]
     end
-    subgraph "Trust boundary — accepted, not verified on-chain"
-        BLEND[(Blend Capital pool)]
-    end
-    subgraph "Novaire contracts — internally consistent by construction"
-        F[factory] --- SY[sy_wrapper] --- V[vault] --- T[tokenizer] --- M[marketplace] --- ME[maturity_engine] --- IE[intent_engine] --- R[rollover]
+    subgraph Admin["Admin key(s)"]
+        A[Single admin address, no multisig/timelock]
     end
 
-    USER -->|require_auth on own funds only| V
-    ADMIN -->|pause, epoch mgmt, config| F
-    KEEPER -->|execute_rollover during grace period| R
-    SY -->|fully trusts reported value, 10%/call ratchet| BLEND
+    SY -->|the only boundary crossing| BP
+    A -.one-time init + migrate_reserve_index only.-> SY
 ```
 
-## The one external trust boundary
+## Inside the trust domain
 
-`sy_wrapper` is the single point where Novaire's trust perimeter extends outside its own contracts. Its exchange rate is derived entirely from what the configured Blend Capital pool reports, bounded only by a 10%-per-call ratchet on increases (see [SY](/protocol/sy)). Every other contract in the protocol is downstream of this one number — a compromised or dishonest Blend pool is, per `SECURITY.md`, a systemic risk to the whole protocol, only partially mitigated (rate-of-change limiting, not a correctness guarantee).
+The five deployed contracts (`sy-wrapper`, `tokenizer`, `pt-token`, `yt-token`, `amm`) are deployed and initialized together as one system. Cross-contract calls between them are self-authorized by the calling contract, not re-authorized by the user each time — this is appropriate because all five are controlled by the same deploying party and their mutual trust is fixed at initialization (each is given the addresses of the others it needs to call).
 
-<Warning>
-  `sy_wrapper`'s `YieldSource` (the Blend pool address) is set once at `initialize()` with **no rotation function**. Its correctness depends entirely on whoever runs `factory.deploy_epoch()` verifying, off-chain, that the address is genuinely Blend's official pool. `factory` cannot check this on-chain — see [Deployment → Verification](/deployment/verification).
-</Warning>
+## The one boundary that leaves it: Blend
 
-## Internal boundaries (contract-to-contract)
+`sy-wrapper` depends entirely on a real, external Blend Capital pool for:
 
-Because every Novaire contract in an epoch is deployed and wired by the same `factory.deploy_epoch()` call, and `factory` cross-validates each contract's self-reported metadata against the deployment parameters before considering the epoch live, contract-to-contract calls within the protocol carry much less residual trust risk than the Blend boundary — misconfiguration (wrong address wired to the wrong role) is caught at deploy time, not discovered at runtime.
+- Custody of the underlying deposited assets (Blend holds the funds, not Novaire).
+- The `b_rate` that determines AUM and therefore the SY exchange rate.
+- Withdrawal availability on redeem.
+
+There is **no fallback, no circuit breaker, and no rate-of-change bound** on this dependency in the current code. If Blend's reported rate were wrong, manipulated, or Blend itself were compromised, that would flow directly into Novaire's SY exchange rate with no on-chain check. `SECURITY.md`'s Remediation Roadmap lists deciding whether to reintroduce such a bound as an open, unresolved Medium-priority item.
 
 ## Admin key
 
-A single `Address` per contract, not a multisig or timelock, as of this documentation. A compromised admin key could pause the protocol, reassign PT/YT mint/burn authority (via `set_tokenizer`/`set_sy_wrapper`, now two-step per SEC-06), or misconfigure a new epoch deployment. It cannot directly move user-owned token balances — no admin function transfers user funds.
+The admin address is trusted only for:
 
-## Keeper
+1. One-time initialization parameters at deploy time.
+2. `sy-wrapper.migrate_reserve_index` — a self-verifying recovery function (it re-derives the correct index itself rather than trusting the admin's input) for a Blend reserve re-indexing event.
 
-Scoped narrowly: a keeper can only trigger `rollover.execute_rollover` on a user's behalf, and only during the grace period after maturity. Funds always land in the position the user themselves registered — the keeper has no path to redirect funds elsewhere.
+The admin **cannot**: move user funds, mint or burn PT/YT/SY directly, change the AMM's pricing curve or fee, or pause any part of the protocol. There is no multisig or timelock on this key today — a single compromised key has the (limited) blast radius described above, not full protocol control.
+
+## Off-chain / non-contract components
+
+The frontend (`apps/web`), indexer (`apps/indexer`), and RPC infrastructure are outside the on-chain trust boundary entirely and are not covered by this section — they can display incorrect data or be unavailable without the on-chain contracts being affected, and vice versa.

@@ -1,37 +1,40 @@
 ---
 title: "PT (Principal Token)"
-description: "The fixed-principal side of a tokenized position"
+description: "Minting, redemption, and why PT carries no pricing logic of its own."
 ---
 
 ## What PT is
 
-`pt_token` is a standalone, custom ERC20-like Soroban contract (not a Stellar Asset Contract, not a module inside `tokenizer`) — one fresh instance deployed per epoch by `factory`. It represents a claim on 1 unit of the underlying asset, redeemable once its epoch is settled.
+A SEP-41 fungible token (`pt-token`, symbol `sPT`, 7 decimals) representing a claim on principal value, redeemable at maturity. `mint` is gated to `config.tokenizer.require_auth()` — only the `tokenizer` contract can mint PT; there is no other minting path.
 
-- `name()` = "Novaire Principal Token", `symbol()` = "nPT", `decimals()` = 7 (hardcoded).
-- Minted and burned exclusively by `tokenizer` (`mint`/`burn` require `tokenizer.require_auth()`).
+## Minted by split
 
-## Minting
+`tokenizer.split(from, sy_amount)` escrows `sy_amount` SY and mints equal PT and YT face amounts:
 
-`tokenizer.mint_pt_yt(user, sy_shares)` mints PT and YT **1:1** against `sy_shares` — for every SY share converted, the user gets an equal amount of PT and YT. There's no discount applied at mint time; the discount that implies a fixed rate emerges from how PT subsequently trades on `marketplace`, not from the mint itself.
+```
+face = floor(sy_amount * rate / WAD)
+```
 
-<Note>
-  A late minter (someone who deposits after the epoch has already been accruing yield) still mints PT/YT at 1:1 against their SY shares — `tokenizer` credits them "historical yield" self-funded from their own deposit's accrual, not drawn from earlier holders. See `test_mint_pt_yt_late_minter_gets_historical_yield_credit`.
-</Note>
+where `rate` is the live SY exchange rate at the moment of the split. PT face is therefore denominated in **underlying-asset terms as of split time**, not in raw SY shares.
 
-## Transfers bypass pause — deliberately
+There is no solvency gate on `split` — it mints exactly `face` PT and `face` YT regardless of anything else happening in the market. This is a deliberate design choice (Pendle-style: minting never reverts on collateralization), not a missing check. See [Trust Boundaries](/security/trust-boundaries) for why this is safe.
 
-`transfer`, `approve`, and `transfer_from` on `pt_token` are **not gated by the contract's pause flag**. This is an explicit design decision documented in-code: pausing is meant to stop new minting/burning in an emergency, not to trap holders who already have PT — secondary-market liquidity remains available as an escape valve even if the contract is paused.
+## Redemption logic lives in the tokenizer, not PT
 
-## Redemption
+`pt-token` itself has no `redeem` function and no rate awareness beyond a stored `maturity` timestamp for display. All redemption math — the frozen maturity rate, the pro-rata cap under a rate regression — lives in `tokenizer.redeem_at_maturity` and `tokenizer.recombine`. This is intentional: PT lacks the escrow/rate data needed to price its own redemption correctly, so that logic isn't duplicated.
 
-Once an epoch is settled (`tokenizer.settle_epoch()` has run — permissionless, callable once `maturity_engine.live_state()` reports Matured), holders call `tokenizer.redeem_pt(user, pt_amount)`:
+## Burn paths
 
-1. `pt_amount` of PT is burned.
-2. The corresponding underlying is released via `vault`/`sy_wrapper` at the frozen `SettlementExchangeRate`.
-3. Underlying is transferred to the user.
+- `burn(from, amount)` — holder-authorized, standard SEP-41 burn (used internally by `tokenizer.recombine`/`redeem_at_maturity`).
+- `burn_from(spender, from, amount)` — allowance-gated burn.
 
-Redemption is tested down to dust amounts (`test_redeem_pt_dust_and_tiny_amounts`) and against double-redemption (`test_redeem_pt_repeated_full_balance_fails_second_time`).
+## Lifecycle summary
 
-## PT and the AMM
+```mermaid
+flowchart LR
+    Split[tokenizer.split] -->|mint| PT((PT balance))
+    PT -->|tokenizer.recombine, pre-maturity, paired with equal YT| Burn1[burned]
+    PT -->|tokenizer.redeem_at_maturity, post-maturity| Burn2[burned, pays SY at frozen rate]
+```
 
-Before maturity, PT trades on `marketplace` against the underlying. The market price PT trades at — always at or below its 1:1 redemption value — is what implies the fixed rate for the remaining term. See [AMM](/protocol/amm) and [Pricing](/protocol/pricing).
+See [Settlement](/protocol/settlement) for the exact recombine/redeem payout formulas.

@@ -1,54 +1,64 @@
 ---
 title: "Setup"
-description: "Prerequisites and installation"
+description: "Prerequisites, installation, and repository structure."
 ---
 
 ## Prerequisites
 
-- Node.js (for the npm-workspaces monorepo — `apps/web`, `apps/indexer`, `packages/bindings`, root scripts)
-- Rust toolchain with the `wasm32` target (for building the 9 Soroban contracts under `contracts/`)
-- The `stellar` CLI (used by `scripts/deploy.ts` for `contract build`/`upload`/`deploy`/`bindings typescript` — note this is the `stellar` CLI, not the deprecated `soroban` CLI that `scripts/initialize.ts` uses)
-- A Postgres database (for `prisma/schema.prisma`, shared by `apps/web` and `apps/indexer`)
+Verified against `contracts/rust-toolchain.toml`, `contracts/Cargo.toml`, and `package.json` at the current `master` HEAD:
 
-## Clone and install
+- Node.js ≥ 20.9, npm ≥ 9 (npm workspaces)
+- Rust 1.96.0 (pinned via `rust-toolchain.toml`, `profile = "minimal"`) with the `wasm32v1-none` target
+- `soroban-sdk = "=26.1.0"` (pinned in `contracts/Cargo.toml`)
+- Stellar CLI
 
-```bash
-git clone <repository-url>
-cd novaire-testnet
-npm install
+## Repository structure
+
+```
+novaire-testnet/
+├── apps/
+│   ├── web/          — Next.js frontend (the only app wired to root npm scripts)
+│   ├── indexer/       — indexer service, uses Prisma/Postgres
+│   └── docs/          — this Mintlify documentation site
+├── contracts/
+│   ├── sy-wrapper/
+│   ├── blend-adapter/ — library crate, not deployed
+│   ├── tokenizer/
+│   ├── pt-token/
+│   ├── yt-token/
+│   ├── amm/
+│   ├── shared/types/  — shared trait definitions
+│   ├── integration_tests/
+│   └── scripts/       — deploy/build scripts
+├── packages/
+│   └── bindings/      — generated TypeScript SDK, one package per deployed contract
+├── scripts/           — standalone workspace: verify-testnet.ts and other TS tooling
+├── deployments/       — deployment records (testnet.toml)
+└── prisma/            — indexer database schema
 ```
 
-This is a plain npm-workspaces monorepo (`"workspaces": ["apps/*", "packages/*"]` in the root `package.json` — no Turborepo despite the folder layout resembling one).
-
-## Environment configuration
+## Install
 
 ```bash
+git clone https://github.com/Novaire-tech/novaire-testnet.git
+cd novaire-testnet
+npm install
 cp .env.example .env
 ```
 
-| Variable | Purpose |
-| --- | --- |
-| `NETWORK` | `testnet` (default) or `mainnet` |
-| `RPC_URL` | Soroban RPC endpoint; defaults based on `NETWORK` if unset |
-| `NETWORK_PASSPHRASE` | Overrides network passphrase; defaults based on `NETWORK` |
-| `ADMIN_SECRET` | Secret key used to build/upload/deploy/initialize contracts |
-| `KEEPER_SECRET` | Secret key registered as the protocol keeper |
-| `BOOTSTRAP_AMOUNT` | Amount used to seed initial vault/marketplace liquidity |
-| `SKIP_BOOTSTRAP` | If set, skips the liquidity bootstrap step |
-| `NEXT_PUBLIC_RPC_URL` | Soroban RPC endpoint the browser client talks to |
-| `NEXT_PUBLIC_NETWORK` | Network label surfaced to the client |
-| `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Passphrase for client-side transaction building |
-| `DATABASE_URL` | Postgres connection string, shared by Prisma/`apps/web`/`apps/indexer` |
-| `DATABASE_URL_UNPOOLED` | Unpooled Postgres connection string for migrations |
+## Environment variables
 
-<Warning>
-  Never commit `.env` or reuse a funded mainnet key for testnet development — `.env.example`'s own header comment says exactly this.
-</Warning>
+See [Configuration](/reference/configuration) for the full table. `DATABASE_URL`/`DATABASE_URL_UNPOOLED` are only needed for the indexer/Prisma tooling — not for running the frontend or contracts.
 
-## Verify the toolchain
+## Build
 
 ```bash
-cd contracts && cargo test
+npm run build              # next build, apps/web only
+npm run contracts:build    # bash contracts/scripts/build-optimized-wasm.sh
 ```
 
-If this passes, your Rust/Soroban toolchain is correctly set up. See [Testing](/developers/testing) for the full test workflow.
+## Branching
+
+Default branch is `master` (not `main`).
+
+<Card title="Next: Development" href="/developers/development" />

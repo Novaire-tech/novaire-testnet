@@ -1,65 +1,33 @@
 ---
 title: "AMM Tests"
-description: "marketplace's test suite — the deepest in the workspace"
+description: "Regression coverage for the pricing curve, by scenario."
 ---
 
-All tests below live inline in `contracts/marketplace/src/lib.rs`'s `#[cfg(test)]` module unless noted.
+Mapping regression categories to what actually exists as named tests in `contracts/amm/src/lib.rs` and `contracts/integration_tests/tests/journey.rs`.
 
-## Bootstrap and rate = 1
+| Scenario | Coverage | Status |
+|---|---|---|
+| Rate = 1 (par baseline) | Covered implicitly via default WAD-rate initialization tests | Present, not as an isolated named "rate=1" test |
+| Rate > 1 / SY appreciation | Rate-move repricing tests confirming quotes fall/rise monotonically and fewer SY shares are needed at an appreciated rate | PASS |
+| PT/SY repricing | Quote-vs-execution parity tests | PASS |
+| YT / flash repricing | Leveraged-YT-quote and below-face-YT-quote tests, plus the integration `yt_flash_route_round_trips_through_the_tokenizer` | PASS |
+| Round trips | Unit round-trip-conserves-value test, integration `split_then_recombine_preserves_sy` / `amm_swap_round_trip_charges_fees` | PASS |
+| Reserve accounting | Reserve/observation-update tests on both swap directions, pro-rata liquidity-removal tests | PASS |
 
-| Test | Proves |
-| --- | --- |
-| `test_1_clean_bootstrap_reserves_match` | Fresh pool reserves match what was deposited |
-| `test_2_twap_equals_spot_at_bootstrap` | TWAP equals spot price with no prior trade history |
+## Not found as dedicated tests
 
-## Rate > 1 / near-maturity convergence
+- An isolated "rate exactly = 1, non-default" regression case, distinct from the initialization default.
+- A donation/inflation-attack-specific test targeting the AMM's own `MINIMUM_LIQUIDITY` bootstrap (the equivalent gap for `sy-wrapper` is explicitly flagged in `SECURITY.md`'s Remediation Roadmap; no analogous statement exists for the AMM specifically, but no dedicated test was found either).
+- An adversarial/dishonest-Blend-pool scenario feeding extreme or malformed rate values into the AMM.
 
-| Test | Proves |
-| --- | --- |
-| `test_10_near_maturity_pt_price` | PT price converges toward par as `a_pool` grows near maturity |
-| `test_3_twap_below_face_value` | Pre-maturity, PT correctly trades at a discount, not at par |
+## The property-based model checker
 
-## TWAP correctness and manipulation resistance
+A `proptest!` block running **10,000 cases**, comparing the AMM's actual on-chain state against an independently-maintained position model across random sequences of split/recombine/swap operations. This is the single broadest piece of regression coverage in the AMM test suite — it's a general invariant fuzzer, not a scenario-specific test, so it complements rather than replaces the scenario-specific tests in the table above.
 
-| Test | Proves |
-| --- | --- |
-| `test_4_ema_converges_toward_spot` | The EMA tracks spot over repeated updates |
-| `test_5_same_ledger_twap_idempotent` | Multiple updates in the same ledger don't distort the TWAP |
-| `test_6_flash_loan_twap_resistance` | A single large trade within one transaction can't move the TWAP the way it moves spot |
-| `test_6b_h3_twap_temporal_ordering_regression` | Regression for a historical temporal-ordering bug (H3) |
-| `test_7_no_reciprocal_twap_regression` | TWAP isn't vulnerable to a reciprocal-rate computation bug |
-| `test_8_twap_and_spot_directional_agreement` | TWAP and spot never disagree on direction of movement |
-| `test_twap_staleness_guard` | `get_twap_rate_checked()` correctly reverts past `MAX_TWAP_AGE_LEDGERS` |
+## Slippage and boundary behavior
 
-## YT pricing (derived-route correctness)
+Dedicated `min_*_out` slippage-gate tests for both `add_liquidity` and `remove_liquidity`; `swap_*_rejects_after_maturity` (one per direction) and `add_liquidity_rejects_after_maturity` confirm the market correctly closes to new trades/liquidity past maturity (removal remains open — see [Liquidity](/protocol/liquidity)); `initialize_rejects_curve_inputs_above_testnet_bounds` and `liquidity_rejects_amounts_above_testnet_bounds` confirm the conservative input caps described in [AMM](/protocol/amm#constants) are actually enforced.
 
-| Test | Proves |
-| --- | --- |
-| `test_c1_yt_purchase_updates_reserves` | Buying YT correctly moves `YtReserves` |
-| `test_yt_size_dependent_slippage` | Larger YT trades get worse prices, as expected of a curve-derived quote |
-| `test_yt_no_negative_or_zero_price` | YT price never goes to zero or negative |
-| `test_yt_pt_price_consistency` | YT and PT prices stay mutually consistent |
-| `test_yt_round_trip_no_free_profit` | Buy-then-sell YT can't produce riskless profit |
-| `test_yt_quote_matches_execution` | `quote_*` functions match what actually executes |
-| `test_yt_whale_trade_rejected_at_small_trade_price` | A large trade can't execute at a small-trade's quoted price |
-| `test_yt_price_updates_immediately_with_pt_state` | YT price reacts immediately to PT-side state changes, confirming it's genuinely derived, not cached |
+## TWAP-specific coverage
 
-## Liquidity and reserve accounting
-
-| Test | Proves |
-| --- | --- |
-| `test_c1_lp_withdrawal_after_yt_swap`, `test_c1_pricing_after_yt_swap`, `test_c1_sequential_swaps_reserve_consistency`, `test_c1_multiple_lps_yt_swap_fairness` | Reserve/LP-share accounting stays correct across YT swaps and multiple LPs |
-| `test_add_liquidity_zero_amount_rejected`, `test_first_add_liquidity_at_minimum_liquidity_boundary_rejected` | Bootstrap edge cases at the `MINIMUM_LIQUIDITY` boundary |
-| `test_remove_all_liquidity_leaves_only_locked_minimum` | Confirms `MINIMUM_LIQUIDITY = 1000` is permanently un-redeemable |
-| `test_repeated_remove_liquidity_beyond_balance_fails` | Can't withdraw more LP shares than owned |
-| `test_add_liquidity_dust_amount_after_bootstrap` | Dust-amount liquidity additions handled correctly |
-
-## Pause / access control
-
-`test_pause_and_unpause_toggle_state`, `test_unauthorized_pause_fails`, `test_paused_remove_liquidity_still_allows_recovery` (confirms exit remains possible while paused), `test_swap_against_zero_liquidity_fails`, `test_remove_liquidity_on_zero_liquidity_fails`.
-
-## Property-based fuzzing
-
-A `proptest` block (around line 2757+) with property functions: `lp_share_accounting_stays_consistent`, `zero_liquidity_pool_rejects_add_below_minimum`, `large_liquidity_round_trip_conserves_shares`, `repeated_small_add_withdraw_cycles_do_not_leak_shares` — randomized operation sequences checked against invariants rather than fixed inputs.
-
-Run just this crate: `cargo test -p marketplace`.
+Dedicated tests confirm: same-timestamp swaps don't double-count into the TWAP; rate views correctly report warm-up state and zero out at maturity; and an idle gap exceeding `twap_window` correctly re-triggers warm-up on the next observation — directly testing the anti-manipulation warm-up-snap behavior described in [Pricing](/protocol/pricing#warm-up-state).

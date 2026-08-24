@@ -1,58 +1,45 @@
 ---
 title: "Testing Strategy"
-description: "What's actually tested, at a glance"
+description: "The layers of testing that actually exist, and the CI gates that enforce them."
 ---
 
-## Status board
+## Layers
 
-| Category | Status |
-| --- | --- |
-| Unit tests (per-contract) | ✓ Present for all 9 contracts + `pt_token`/`yt_token` |
-| Integration tests (`integration_tests` crate) | ✓ Present — e2e scenarios, regression suites M1–M5, fuzz, stress |
-| AMM regression tests | ✓ Extensive — bootstrap pricing, TWAP, YT derivation, liquidity fairness |
-| Property-based fuzzing | ✓ `marketplace` and `integration_tests` both carry `proptest` fuzzers |
-| Mock Blend pool tests | ✓ Extensive — including an adversarial `DishonestBlendPoolClient` |
-| Real Blend E2E tests | ⚠ **Not verified** — no test exercises a live, deployed Blend pool |
-| Mainnet E2E tests | ⚠ **Not verified** — no fork-testing infrastructure found |
-| CI enforcement | ⚠ **Not found** — no `.github/workflows` in this repository |
-
-## How tests are organized
-
-```text
-contracts/
-├── factory/src/test.rs
-├── sy_wrapper/src/test.rs, audit_tests.rs
-├── vault/src/lib.rs (inline #[cfg(test)])
-├── maturity_engine/src/lib.rs (inline)
-├── tokenizer/tokenizer/src/lib.rs (inline)
-├── tokenizer/pt_token/src/test.rs
-├── tokenizer/yt_token/src/test.rs
-├── marketplace/src/lib.rs (inline, incl. proptest)
-├── intent_engine/src/lib.rs (inline)
-├── rollover/src/test.rs, tests/e2e.rs
-└── integration_tests/src/
-    ├── e2e.rs, fuzz.rs, simulation.rs, stress.rs
-    ├── l1_regression.rs
-    ├── m1_production_bootstrap.rs, m1_regression.rs
-    ├── m2_regression.rs, m3_regression.rs, m5_regression.rs
-    ├── invariants.rs, mock_blend_pool.rs, framework.rs
+```mermaid
+flowchart LR
+    Unit["Unit tests<br/>#[cfg(test)] per crate"] --> Integ["Integration tests<br/>contracts/integration_tests/"]
+    Integ --> Manual["Manual live-testnet verification<br/>scripts/verify-testnet.ts"]
+    Unit -.all run against.-> Mock[MockBlendPool]
+    Integ -.all run against.-> Mock
 ```
 
-## Running the suite
+Everything in the two automated layers (unit, integration) runs against `blend-adapter::MockBlendPool`, an in-memory test double — not against a live Blend pool. Only the manual `verify-testnet.ts` script exercises real contracts on real Stellar Testnet. See [Blend Testing](/testing/blend-testing) for exactly what that does and doesn't prove.
 
-```bash
-cd contracts && cargo test
-```
+## What CI actually gates
 
-Per-crate: `cargo test -p sy_wrapper`, `cargo test -p marketplace`, etc. There is no documented CI workflow in this repository — `cargo test` is run manually per `README.md`'s Contributing section. See [Testing → Setup](/developers/testing) for the developer workflow.
+Verified directly against `.github/workflows/*.yml` at the current `master` HEAD:
 
-## What the M1–M5 regression suites cover
+| Workflow | Trigger | What it runs |
+|---|---|---|
+| `ci.yml` | every PR/push to `main`/`master`/`develop` | `cargo fmt --check`, `cargo clippy --all-targets --all-features`, `cargo test --workspace --all-features`, `cargo audit`, wasm32v1-none release build per contract, plus `tsc`/lint/vitest/build for `web`/`indexer`/`scripts` |
+| `protocol-integrity.yml` | PR/push touching `contracts/**` | `cargo test -p integration_tests` (matrixed by suite: PT/YT accounting, tokenization, untokenization, redemption, settlement, b_rate accounting, yield/APY, full invariant module), then a full `cargo test --workspace --all-features -- --nocapture` re-run with a NaN/Infinity accounting scan, plus targeted vitest for `protocolService.test.ts`/`yield.test.ts` |
+| `security.yml` | every PR/push, daily 03:17 UTC | gitleaks, a custom secret-pattern scan, `cargo audit`, unsafe-Rust detection, `npm audit` |
+| `deployment-validation.yml` | PR/push touching `scripts/deployments.*.json` or the deploy script, manual | Validates `scripts/deployments.{testnet,mainnet}.json` shape — **see the caveat in [Verification](/deployment/verification)** about what file this actually checks vs. what the current deploy script writes |
+| `verify-testnet.yml` | **manual `workflow_dispatch` only** | `npm run verify:testnet` against live Stellar Testnet, plus optional Playwright real-wallet/portfolio e2e |
+| `nightly.yml` | cron 02:00 UTC, manual | Reuses `protocol-integrity.yml` + `security.yml`, plus `verify:testnet` and a dependency scan |
+| `release-validation.yml` | GitHub Release created, manual | Every gate above plus `verify:testnet`; produces `release-validation.md` + `deployment-summary.md` |
 
-These names come directly from `contracts/integration_tests/src/` and correspond to historically-identified issues, now covered by regression tests:
+Required branch-protection status checks (per `.github/workflows/README.md`): `ci-gate`, `Protocol Integrity gate`, `Security gate`, `Deployment Validation gate`. **`verify-testnet` is not among the required merge gates** — live-network verification is not enforced automatically on every change.
 
-- **M1** — YT/PT pricing symmetry and exploit-reproduction scenarios (`test_m1_sell_yt_matches_complement_price`, `test_m1_exploit_reproduction_at_epoch_start`, `test_m1_repeat_attack`, `test_m1_large_capital_attack`).
-- **M2** — late-minter historical yield credit correctness (`test_m2_late_mint`, `test_m2_no_trapped_shares`, `test_m2_minimal_mint_rounding`).
-- **M3** — settlement correctness under adversarial timing (`test_m3_attacker_early_settlement`, `test_m3_h5_clamp_preserved`, `test_m3_original_attack_prevented`).
-- **M5** — liquidity/donation-attack invariants (`test_m5_donation_attack_impossible`, `test_m5_locked_liquidity_permanent`).
+## Property-based testing
 
-See dedicated pages for [Unit Tests](/testing/unit-tests), [Integration Tests](/testing/integration-tests), [AMM Tests](/testing/amm-tests), and [Blend Testing](/testing/blend-testing).
+The AMM's unit test module includes a `proptest!` block running 10,000 randomized cases, comparing on-chain state against an independent position model across random sequences of split/recombine/swap operations. The integration suite additionally has its own randomized test using a custom RNG (not `proptest`) covering cross-contract conservation properties.
+
+## Where to look next
+
+<CardGroup cols={2}>
+  <Card title="Unit Tests" href="/testing/unit-tests" />
+  <Card title="Integration Tests" href="/testing/integration-tests" />
+  <Card title="AMM Tests" href="/testing/amm-tests" />
+  <Card title="Blend Testing" href="/testing/blend-testing" />
+</CardGroup>

@@ -1,71 +1,45 @@
 ---
 title: "SDK"
-description: "The generated TypeScript contract bindings in packages/bindings/"
+description: "The generated TypeScript client bindings under packages/bindings."
 ---
 
-## What it is
+## What exists
 
-`packages/bindings/` contains one auto-generated TypeScript package per contract, produced by the Stellar CLI:
+`packages/bindings/` contains five packages, one per currently-deployed contract in the 6-crate architecture: `sy_wrapper`, `pt_token`, `yt_token`, `tokenizer`, `amm`. Each is a standalone TypeScript package (`package.json`, `tsconfig.json`, `src/`, `README.md`) generated directly from the deployed contract's interface — not hand-written.
+
+<Warning>
+There is no `marketplace`, `vault`, `factory`, `rollover`, or `intent_engine` bindings package — none of those contracts exist in the current architecture.
+</Warning>
+
+## How they're generated
+
+Per each package's own `README.md`, via the Stellar/Soroban CLI:
 
 ```bash
-stellar contract bindings typescript \
-  --id <contract-id> \
-  --network <network> \
-  --output-dir ./packages/bindings/<contract-name> \
-  --overwrite
+soroban contract bindings ts \
+  --rpc-url <RPC_URL> \
+  --network-passphrase "<NETWORK_PASSPHRASE>" \
+  --contract-id <CONTRACT_ID> \
+  --output-dir ./packages/bindings/<contract>
 ```
 
-This is run automatically as part of `scripts/deploy.ts` and `scripts/deploy_xlm_epoch.ts` after each deploy, so the bindings always reflect the currently-deployed contract's actual interface.
+The network passphrase and contract ID used at generation time are exported from each package's `src/index.ts` as a `networks` constant.
 
-## Packages
+## Package details
 
-`factory`, `sy_wrapper`, `vault`, `tokenizer`, `pt_token`, `yt_token`, `marketplace`, `intent_engine`, `rollover` — each with its own `package.json` (`version: 0.0.0`), depending on `@stellar/stellar-sdk@^14.5.0`.
+Each package's `package.json` `name` field is just the bare contract name (e.g. `amm`, `sy_wrapper`) — not namespaced under `@novaire/` or similar. Verified from `packages/bindings/amm/package.json`:
 
-<Note>
-  These packages are **not** wired in as npm workspace dependencies of `apps/web` — they're consumed via relative import paths (e.g. `../../../../packages/bindings/marketplace/src/index`), not a package name. Keep this in mind if you're used to workspace-resolved imports.
-</Note>
+- ESM (`"type": "module"`), built via `tsc` (`"build": "tsc"`)
+- Depends on `@stellar/stellar-sdk ^14.5.0` and `buffer 6.0.3`
+- Version pinned at `0.0.0` — not independently published/versioned yet
 
-## Shape of a generated client
+## Regenerating after a contract change
 
-Each `src/index.ts` exports:
+If a contract's public interface changes, regenerate its binding package using the command above with the newly deployed contract ID (see [Testnet Deployment](/deployment/testnet) for where that ID comes from), then rebuild:
 
-- `networks` — hardcoded `contractId` per network, e.g.:
-  ```ts
-  export const networks = {
-    testnet: {
-      networkPassphrase: "Test SDF Network ; September 2015",
-      contractId: "CCCMNVS2O5NXTMUQPOQEHO7NOYN5NBOYIZXYB4BXWZ6TKR43GDYOKD4V",
-    },
-  };
-  ```
-- Generated types (`DataKey`, per-contract metadata interfaces, error enums).
-- A `Client` class extending `ContractClient`, with one method per contract entry point, each returning an `AssembledTransaction`:
-  ```ts
-  deposit: (
-    { depositor, amount }: { depositor: string; amount: i128 },
-    options?: MethodOptions
-  ) => Promise<AssembledTransaction<Result<i128>>>;
-
-  metadata: (options?: MethodOptions) => Promise<AssembledTransaction<Result<VaultMetadata>>>;
-  ```
-
-## Using a binding
-
-```ts
-import { Client as VaultClient } from "../../packages/bindings/vault/src/index";
-
-const vault = new VaultClient({
-  contractId: "<deployed-vault-address>",
-  networkPassphrase: "Test SDF Network ; September 2015",
-  rpcUrl: process.env.NEXT_PUBLIC_RPC_URL,
-});
-
-const tx = await vault.deposit({ depositor: userAddress, amount: 100_0000000n });
-const result = await tx.signAndSend();
+```bash
+cd packages/bindings/<contract>
+npm run build
 ```
 
-`apps/web` consumes these bindings directly in `src/hooks/useTrade.ts`, `src/components/modals/MintModal.tsx`, `src/services/{portfolioService,protocolService,walletService,yieldService}.ts`. `apps/indexer` does **not** use `packages/bindings` — it talks to `@stellar/stellar-sdk` directly.
-
-## Reference
-
-See [Reference → SDK Reference](/reference/sdk-reference) for a fuller method listing per contract.
+<Card title="SDK Reference" href="/reference/sdk-reference">The interface surface each package exposes.</Card>

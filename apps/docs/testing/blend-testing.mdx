@@ -1,43 +1,38 @@
 ---
 title: "Blend Testing"
-description: "What's tested against Blend — and the one thing that isn't"
+description: "Mock Blend Tests vs. Real Blend E2E Tests — the distinction that matters most in this codebase."
 ---
 
 <Warning>
-  **Real Blend E2E: not verified.** No test in this repository exercises a real, deployed Blend Capital pool contract. Every Blend-facing test uses `MockBlendPool` or the adversarial `DishonestBlendPoolClient`. There is no fork-testing infrastructure. Do not cite the mock test suite below as evidence that the live Blend integration has been tested end-to-end.
+This is the single most important distinction to understand before trusting any claim about Blend-related correctness in this repository.
 </Warning>
 
-## Mock Blend tests
+## Mock Blend Tests — PASS
 
-`MockBlendPool` implementations exist in five places (four are near-identical copies embedded in each consuming contract's own test module, one is the shared fixture in `integration_tests`):
+**Every unit test and every integration test in this repository** (see [Unit Tests](/testing/unit-tests) and [Integration Tests](/testing/integration-tests)) runs against `blend-adapter::MockBlendPool` — an in-memory test double, gated behind `#[cfg(any(test, feature = "testutils"))]`, implementing the same `BlendPool` trait as the real client. It supports `set_b_rate`, `set_reserve_index`, `set_reserve_list`, `set_should_fail_withdraw` — i.e., tests can script exactly what "Blend" reports and how it fails, on demand, deterministically, with no network involved.
 
-- `contracts/sy_wrapper/src/test.rs`
-- `contracts/sy_wrapper/src/audit_tests.rs` (also defines `DishonestBlendPoolClient`)
-- `contracts/vault/src/lib.rs` (test module)
-- `contracts/tokenizer/tokenizer/src/lib.rs` (test module)
-- `contracts/intent_engine/src/lib.rs` (test module)
-- `contracts/rollover/tests/e2e.rs`
-- `contracts/integration_tests/src/mock_blend_pool.rs` (shared fixture)
+This is what proves: rate math correctness (`derived_exchange_rate`, `assets_from_b_tokens`), reserve-reindex recovery (`migrate_reserve_index_recovers_after_a_reindex` and its rejection-path siblings), withdrawal-failure handling (`redeem_surfaces_tolerated_withdrawal_failure`), and every cross-contract journey involving SY (all of `journey.rs`/`economics.rs`). Status: **PASS** — these run in the required CI gate (`ci.yml`, `protocol-integrity.yml`) on every PR.
 
-### What the mock tests actually prove
+## Real Blend E2E Tests — PARTIALLY TESTED
 
-| Test | Proves |
-| --- | --- |
-| `test_real_yield_backing` | `sy_wrapper`'s accounting correctly reflects yield reported by the mock pool |
-| `test_solvency_invariant_holds` | Total backing never falls short of tracked underlying, against the mock |
-| `test_yield_cannot_increase_without_underlying_increasing` | The exchange rate can't drift upward without the mock pool actually reporting more value |
-| `test_dishonest_pool_inflated_report_clamped_to_ten_percent_ratchet` | A pool lying about a large gain is clamped to the 10%-per-call ratchet |
-| `test_dishonest_pool_persistent_lying_still_bounded_per_call` | Repeated lying across multiple calls still can't exceed the per-call bound |
-| `test_dishonest_pool_underreport_does_not_decrease_rate` | A pool under-reporting doesn't cause the SY rate to fall (only `mark_loss` can) |
+There is exactly one thing in this repository that talks to a real Blend pool: `scripts/verify-testnet.ts`, run via `npm run verify:testnet`, against the real deployed Blend pool on Stellar Testnet (`blend_pool = CCEBVDYM32YNYCVNRXQKDFFPISJJCV557CDZEIRBEE4NCV4KHPQ44HGF`, per `deployments/testnet.toml`). It executes real signed transactions and reads real on-chain state.
 
-These tests are genuinely valuable — they prove `sy_wrapper`'s defenses against a **misbehaving** pool work as designed. They do not, and cannot, prove that the real Blend Capital pool's actual on-chain behavior matches the `Request`/`Positions` struct layout `sy_wrapper` assumes.
+Status: **PARTIALLY TESTED**, not **PASS** — this script exists and is wired into `.github/workflows/verify-testnet.yml` and `nightly.yml`/`release-validation.yml`, but:
 
-## Real Blend E2E tests
+- It runs on **manual `workflow_dispatch` only** for `verify-testnet.yml` — it is not part of the required PR merge gate.
+- No current-architecture run record (pass/fail log) for `verify-testnet.ts` was found anywhere in this repository at the time this documentation was prepared. Check the latest `verify-testnet.yml`/`nightly.yml` Actions run directly for the current status rather than assuming a result.
 
-None exist. Confirmed by searching the entire `contracts/` tree for `real_blend`, `RealBlend`, `mainnet`, and `fork` — no matches. There is no test that deploys against, or forks state from, an actual live Blend Capital pool contract.
+## What NOT to conclude
 
-## What this means for integrators and auditors
+- **Do not** treat `MockBlendPool` test coverage as evidence that the real Blend integration's ABI, edge cases, or failure modes are proven correct — the mock only proves Novaire's own logic is correct *given whatever the mock is told to report*.
+- **Do not** treat the existence of `verify-testnet.ts` as equivalent to a passing, current, CI-enforced real-Blend E2E suite — it is a manual/scheduled script without a confirmed current pass/fail record in this repository.
+- **Do not** assume real-Blend adversarial scenarios (a misbehaving or malicious pool) have been tested anywhere — `SECURITY.md`'s Remediation Roadmap explicitly lists "adversarial/out-of-bounds Blend `b_rate` test scenarios" as an outstanding item, not a completed one.
 
-- The `Request`/`Positions` struct layout `sy_wrapper` uses is asserted, in the code's own comments, to match Blend v2's real source — but this documentation rebuild did not independently re-verify that claim against Blend's actual source, and no automated test in this repo does either.
-- If Blend ever changes its `Request`/`Positions` XDR shape, or if the configured pool address doesn't actually implement the expected interface, `sy_wrapper`'s calls could fail or, worse, silently misinterpret returned data — the mock tests would not catch either scenario, since the mock is hand-written to match `sy_wrapper`'s own assumptions.
-- Anyone deploying an epoch is responsible for the manual verification steps in [Deployment → Verification](/deployment/verification) — no test suite substitutes for that.
+## Summary table
+
+| Test type | Runs against | Automated in CI merge gate? | Status |
+|---|---|---|---|
+| Unit tests | MockBlendPool | Yes (`ci.yml`) | PASS |
+| Integration tests | MockBlendPool | Yes (`protocol-integrity.yml`) | PASS |
+| `verify-testnet.ts` | Real Blend pool, real Stellar Testnet | No — manual dispatch / scheduled only | PARTIALLY TESTED |
+| Adversarial real-Blend scenarios | — | — | NOT IMPLEMENTED |

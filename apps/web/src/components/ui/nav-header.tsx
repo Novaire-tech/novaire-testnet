@@ -34,7 +34,7 @@ export default function NavHeader() {
               <Tab href="https://stellar.org/" external>
                 Ecosystem
               </Tab>
-              <Tab href={DOCS_URL} external={DOCS_URL.startsWith("http")}>
+              <Tab href={DOCS_URL} external>
                 Docs
               </Tab>
               <Tab href="/app">
@@ -78,7 +78,7 @@ export default function NavHeader() {
             <div className="flex flex-col gap-6 items-start flex-1 overflow-y-auto">
               {[
                 { label: 'Ecosystem', href: 'https://stellar.org/', external: true },
-                { label: 'Docs', href: DOCS_URL, external: DOCS_URL.startsWith('http') },
+                { label: 'Docs', href: DOCS_URL, external: true },
                 { label: 'Product', href: '/app' }
               ].map((item, idx) => (
                 <motion.div

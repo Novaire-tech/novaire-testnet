@@ -1,11 +1,12 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "maple",
+  "theme": "mint",
   "name": "Novaire Docs",
+  "description": "Technical documentation for the Novaire yield-tokenization protocol on Stellar/Soroban.",
   "colors": {
-    "primary": "#112a46",
-    "light": "#2454a6",
-    "dark": "#0a1a2e"
+    "primary": "#112A46",
+    "light": "#BEB7A7",
+    "dark": "#112A46"
   },
   "favicon": "/logo/logo.png",
   "logo": {
@@ -105,6 +106,12 @@
         ]
       }
     ]
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/Novaire-tech/novaire-testnet"
+    }
   },
   "footer": {
     "socials": {}

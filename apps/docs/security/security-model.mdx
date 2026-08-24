@@ -1,42 +1,41 @@
 ---
 title: "Security Model"
-description: "Authorization, admin privileges, and cross-contract trust — from SECURITY.md"
+description: "Authorization, admin privileges, and privileged operations — for the current 6-crate architecture only."
 ---
 
-<Info>
-  This page summarizes `SECURITY.md` and `SECURITY_AUDIT.md`, quoted with attribution. Read the source documents in the repository root for the full text.
-</Info>
+<Warning>
+Any document describing a `factory`, `vault`, `marketplace`, `intent_engine`, or `rollover` contract (including `transfer_admin`/multi-epoch admin flows attached to them) describes an architecture that does not exist in the current `contracts/` workspace. This page is sourced entirely from `SECURITY.md` and the live contract source at the current `master` HEAD.
+</Warning>
 
-## Philosophy (verbatim principles from SECURITY.md)
+## What admin actually controls
 
-- **Fail safe over fail permissive** — `checked_*` arithmetic throughout; release build compiled with `overflow-checks = true`.
-- **Invariants over trust** — every state-mutating function in the AMM, tokenizer, rollover, and maturity engine runs an explicit `assert_invariant()` post-condition before returning.
-- **Minimal privilege for cross-contract calls** — `intent_engine`/`rollover` use `authorize_as_current_contract` scoped to a single `(contract, function, args)` triple, no further sub-delegation.
-- **Liveness over convenience** — `remove_liquidity` and `exit_rollover` remain callable even while paused; an admin pause can never trap user funds.
-- **Single source of truth for time** — epoch state lives only in `maturity_engine`; every other contract queries it rather than keeping a local copy.
+Across all five deployed contracts, the admin address set at `initialize` has exactly one privileged capability beyond one-time setup: `sy-wrapper.migrate_reserve_index`.
 
-## Admin privileges
+| Contract | Admin-gated functions | Everything else |
+|---|---|---|
+| `sy-wrapper` | `migrate_reserve_index` | user-authorized (`deposit`, `redeem`, transfers) |
+| `tokenizer` | none beyond `initialize` | user-authorized (`split`, `recombine`, `redeem_at_maturity`, `claim_yield`) or permissionless (`observe_rate`, `freeze_maturity_rate`) |
+| `pt-token` | none beyond `initialize` | tokenizer-gated (`mint`), holder-authorized (`burn`, transfers) |
+| `yt-token` | none beyond `initialize` | tokenizer-gated (`mint`, `settle`, `consume`, `burn_settled`), holder-authorized (`burn`, transfers) |
+| `amm` | none beyond `initialize` | permissionless (`bump_ttl`, `bump_lp_ttl`), user-authorized (swaps, liquidity) |
 
-| Contract | Admin-gated operations |
-| --- | --- |
-| `factory` | `initialize`, `deploy_epoch`, `link_epochs` |
-| `sy_wrapper` | `mark_loss`, `harvest_yield`, `pause`/`unpause`, `transfer_admin` (two-step) |
-| `vault` | `pause`/`unpause`, `transfer_admin` (two-step) |
-| `marketplace` | `pause`/`unpause` |
-| `intent_engine` | `pause`/`unpause` |
-| `rollover` | `update_keeper`, `pause`/`unpause` |
-| `maturity_engine` | `open_epoch`, `archive_epoch` |
-| `pt_token` / `yt_token` | `set_tokenizer`/`set_sy_wrapper` (staged, two-step via `accept_*` since SEC-06), `transfer_admin` (two-step) |
+There is **no admin function anywhere in the current codebase** that can: move user funds, mint/burn tokens directly, change the SY exchange rate, change AMM pricing parameters post-deployment, or pause the protocol. This is confirmed directly in the contract source.
+
+## `migrate_reserve_index` is self-verifying, not a blank check
+
+Even the one privileged function is constrained: it re-derives the correct Blend reserve index itself from the pool's live state and cross-checks that the underlying asset identity still matches, rather than trusting a caller-supplied index. An admin cannot use this function to repoint `sy-wrapper` at a different asset or pool. See [Access Control](/security/access-control).
 
 ## Cross-contract trust
 
-`sy_wrapper` is the only contract with a trust dependency outside the Novaire protocol — the configured Blend Capital pool. Every other cross-contract call is between two Novaire contracts deployed and wired by the same `factory.deploy_epoch()` call, and `factory` cross-validates each contract's self-reported metadata against deployment parameters at wiring time, catching misconfiguration (wrong address in the wrong role) before an epoch goes live.
+Within Novaire's own contracts, cross-contract calls (tokenizer ↔ PT/YT, AMM ↔ tokenizer flash routes) are self-authorized by the calling contract (`authorize_as_current_contract`), not by asking the user to sign a second time — these are internal, same-deployment trust relationships, not external trust. The [integration test suite](/testing/integration-tests) specifically verifies these self-authorized calls don't widen what a user implicitly authorizes beyond their top-level signed action.
 
-## Token custody
+## The one real external trust boundary
 
-- `vault` and `sy_wrapper` custody underlying/SY shares.
-- `pt_token`/`yt_token` custody nothing themselves — they are balance ledgers, minted/burned exclusively by `tokenizer`.
-- `rollover` custodies matured PT on a user's behalf between registration and execution, with an explicit invariant (`assert_invariant`) that it never warehouses underlying between operations.
-- `marketplace` custodies PT, underlying, and YT reserves contributed by LPs.
+Everything above is internal to contracts Novaire deployed and controls together. The **one boundary that leaves that trust domain** is `sy-wrapper`'s dependency on the real Blend Capital pool — covered in depth in [Trust Boundaries](/security/trust-boundaries) and [Threat Model](/security/threat-model).
 
-See [Trust Boundaries](/security/trust-boundaries) for the full actor-by-actor breakdown, and [Access Control](/security/access-control) for the `require_auth()` pattern used throughout.
+<CardGroup cols={2}>
+  <Card title="Threat Model" href="/security/threat-model" />
+  <Card title="Trust Boundaries" href="/security/trust-boundaries" />
+  <Card title="Access Control" href="/security/access-control" />
+  <Card title="Known Findings" href="/security/known-findings" />
+</CardGroup>

@@ -1,66 +1,74 @@
 ---
 title: "System Architecture"
-description: "The full picture: contracts, off-chain tooling, and the app"
+description: "The current 6-crate, single-market architecture."
 ---
 
-Novaire has three layers: on-chain Soroban contracts, off-chain deployment/indexing tooling, and a Next.js application. This page covers all three; contract-level detail is in [Contract Architecture](/architecture/contract-architecture).
+<Warning>
+  Some documents historically associated with this repository (and earlier drafts of this documentation) describe a superseded 10-contract design — a `factory`, `vault`, `marketplace`, `maturity_engine`, `rollover`, and `intent_engine` alongside the tokenizer/PT/YT/SY-wrapper. **None of those six components exist in `contracts/` today.** This page — and everything else in this documentation site — describes only what is actually implemented in the current `contracts/` workspace, verified directly against source.
+</Warning>
+
+## The five deployed contracts (+ one library)
+
+| Crate | Deployed? | Role |
+|---|---|---|
+| `sy-wrapper` | Yes | Wraps a Blend Capital pool position into a fungible SY share token |
+| `blend-adapter` | **No — library only** | Shared Blend client bindings + pure rate math, used by `sy-wrapper` |
+| `tokenizer` | Yes | Splits SY into PT + YT, handles recombine/redeem/claim and maturity freeze |
+| `pt-token` | Yes | SEP-41 token, mint-gated to the tokenizer |
+| `yt-token` | Yes | SEP-41 token + per-holder yield-accrual ledger, mint/settle-gated to the tokenizer |
+| `amm` | Yes | PT/SY market with a time-decaying pricing curve; synthesizes SY/YT trades via flash routes through the tokenizer |
+
+There is **no factory, vault, marketplace, rollover, or intent-engine contract** in `contracts/`. This deployment is one market: one underlying asset, one maturity, one AMM.
+
+## Component diagram
+
+```mermaid
+flowchart TB
+    subgraph External
+        BP["Blend Capital Pool<br/>(real, testnet)"]
+    end
+    subgraph Novaire
+        SY["sy-wrapper<br/>SY shares"]
+        BA["blend-adapter<br/>(library, not deployed)"]
+        TOK["tokenizer<br/>split / recombine / redeem / claim"]
+        PT["pt-token"]
+        YT["yt-token"]
+        AMM["amm<br/>PT ⇄ SY curve, flash SY ⇄ YT"]
+    end
+    U((User))
+
+    U -->|deposit/redeem underlying| SY
+    SY -->|supply/withdraw via BlendPoolClient| BP
+    SY -.uses math from.-> BA
+    U -->|split/recombine/claim| TOK
+    TOK -->|escrows| SY
+    TOK -->|mint/burn| PT
+    TOK -->|mint/burn/settle| YT
+    U -->|swap/add-remove liquidity| AMM
+    AMM <--> PT
+    AMM <--> SY
+    AMM -.flash_split / flash_recombine.-> TOK
+```
 
 ## Layers
 
-```mermaid
-graph TD
-    subgraph "Application layer"
-        WEB[Next.js app — apps/web]
-        IDX[Indexer — apps/indexer]
-    end
-    subgraph "SDK layer"
-        SDK[packages/bindings — generated TS clients]
-    end
-    subgraph "On-chain layer — Soroban / Stellar"
-        F[factory]
-        SY[sy_wrapper]
-        V[vault]
-        T[tokenizer]
-        PT[pt_token]
-        YT[yt_token]
-        M[marketplace]
-        ME[maturity_engine]
-        IE[intent_engine]
-        R[rollover]
-    end
-    subgraph "External"
-        BP[(Blend Capital pool)]
-    end
+1. **Asset layer** — the real Blend USDC pool. Fully external, fully trusted (see [Trust Boundaries](/security/trust-boundaries)).
+2. **SY layer** (`sy-wrapper`) — standardizes the Blend position into a single fungible, transferable share token with a derived exchange rate.
+3. **Split layer** (`tokenizer` + `pt-token` + `yt-token`) — turns SY into a principal claim and a yield claim.
+4. **Market layer** (`amm`) — prices PT against SY, and synthesizes YT pricing via flash routes rather than a second curve.
 
-    WEB --> SDK
-    IDX --> SDK
-    SDK --> F
-    SDK --> SY
-    SDK --> V
-    SDK --> T
-    SDK --> M
-    SDK --> IE
-    SDK --> R
-    SY --> BP
-```
+## Where each responsibility actually lives
 
-- **On-chain layer** — 9 Soroban contracts (`factory`, `sy_wrapper`, `vault`, `tokenizer` + `pt_token`/`yt_token`, `marketplace`, `maturity_engine`, `intent_engine`, `rollover`), deployed and wired per-epoch by `factory`.
-- **SDK layer** — `packages/bindings/` contains one generated TypeScript package per contract, produced by `stellar contract bindings typescript` during deployment.
-- **Application layer** — `apps/web` (Next.js 16 frontend + a small set of API routes backed by Prisma/Postgres for off-chain indexing/caching) and `apps/indexer` (an event indexer using `@stellar/stellar-sdk` directly, not the generated bindings).
+- Rate derivation: `blend-adapter::derived_exchange_rate` (library function), called by `sy-wrapper`.
+- Face-amount conversion (SY ⇄ PT/YT face) at split time: `tokenizer::split`/`recombine`.
+- Yield accrual per holder: `yt-token`'s `Checkpoint`/`AccruedYield` storage, updated via `settle()`, callable only by the tokenizer.
+- Price discovery: entirely inside `amm` — no oracle, no external price feed.
 
-## Deployment model: epochs
+## Next
 
-Every fixed-term market is an **epoch** — a full set of freshly deployed `sy_wrapper`, `vault`, `pt_token`, `yt_token`, `tokenizer`, `marketplace`, `intent_engine`, and `rollover` instances, wired together in one atomic call: `factory.deploy_epoch(params)`. `factory` verifies the wiring is self-consistent post-init and records an `EpochRecord`. Epochs can be explicitly linked (`factory.link_epochs`) so `rollover` can discover the "next" epoch for a matured position.
-
-There is **no contract upgrade mechanism** — each epoch's contracts are immutable once deployed (confirmed in `SECURITY.md` and `docs/PROTOCOL_INVARIANTS.md`; note that `docs/architecture/ARCHITECTURE.md`'s mention of a future "DAO-governed proxy architecture" is explicitly aspirational, not current behavior).
-
-## Off-chain tooling
-
-| Tool | Purpose |
-| --- | --- |
-| `scripts/deploy.ts` | Full pipeline: build → upload → deploy → wire (`factory.deploy_epoch`) → generate bindings → bootstrap liquidity |
-| `scripts/deploy_xlm_epoch.ts` | Deploy a new epoch on top of an existing `factory` |
-| `scripts/bootstrap_liquidity.ts` | Seed initial `marketplace` liquidity |
-| `apps/indexer` | Off-chain event indexing into Postgres for the frontend |
-
-See [Deployment](/deployment/testnet) for the full pipeline walkthrough.
+<CardGroup cols={2}>
+  <Card title="Contract Architecture" href="/architecture/contract-architecture">Per-contract storage, functions, and events.</Card>
+  <Card title="Data Flow" href="/architecture/data-flow">Token and value flow through the system.</Card>
+  <Card title="Contract Dependencies" href="/architecture/contract-dependencies">Who calls whom.</Card>
+  <Card title="Transaction Lifecycle" href="/architecture/transaction-lifecycle">What happens inside a single call.</Card>
+</CardGroup>

@@ -1,64 +1,43 @@
 ---
 title: "Transaction Lifecycle"
-description: "The two intent_engine strategies, step by step"
+description: "What happens inside a single mutating call, end to end."
 ---
 
-`intent_engine` exists so a user submits one Soroban transaction instead of three-plus manual calls. It exposes exactly two strategies.
-
-## Fixed-yield intent
-
-`execute_fixed_yield_intent(user, usdc_amount, min_implied_rate, min_underlying_out, yt_sale_percentage)`
+Using `amm.swap_pt_for_sy` as the example — it touches the most moving parts (auth, cross-contract calls, curve math, reserve reconciliation, TWAP).
 
 <Steps>
-  <Step title="Rate gate">
-    Reads `marketplace.get_twap_rate_checked()` (reverts if the TWAP is older than `MAX_TWAP_AGE_LEDGERS`) and requires it to be at least `min_implied_rate` before doing anything else — this is the user's slippage/rate protection.
+  <Step title="Authorization">
+    `from.require_auth()` — the caller must have signed for this specific invocation (Soroban's auth framework, not a custom check).
   </Step>
-  <Step title="Deposit">
-    Calls `vault.deposit(user, usdc_amount)`, which forwards into `sy_wrapper`.
+  <Step title="Read live SY rate">
+    `sy_rate_or_panic()` calls `sy-wrapper.exchange_rate()` via `invoke_contract`. This is a live read, not cached — every swap re-prices against the current Blend-derived rate.
   </Step>
-  <Step title="Mint">
-    Calls `tokenizer.mint_pt_yt(user, sy_shares)` — mints PT and YT 1:1.
+  <Step title="Convert reserves to asset terms">
+    `total_asset = floor(state.total_sy * rate / WAD)`. All curve math from here operates in underlying-asset units, not raw SY shares.
   </Step>
-  <Step title="Sell part of the YT">
-    Sells `yt_sale_percentage`% of the newly minted YT into `marketplace` for underlying (`swap_yt_for_underlying`), subject to `min_underlying_out`.
+  <Step title="Recompute the rate anchor">
+    The curve recalibrates its anchor against the last recorded implied rate and the new time-to-expiry, so implied rate stays continuous as time passes even with no trades in between.
   </Step>
-  <Step title="Deliver">
-    Transfers the retained PT and the underlying proceeds to the user. Returns a `CumulativeIntentRecord`.
+  <Step title="Price the trade">
+    Solve the exchange rate at this trade size via the logit curve, apply the fee on the asset-denominated leg, convert back to SY units (floored on payout).
+  </Step>
+  <Step title="Bounds checks">
+    Reverts with `InsufficientLiquidity` if the computed `sy_out` is `<= 0` or `>= total_sy` (can never fully drain the pool). Reverts with `MarketProportionTooHigh` if the trade would push the PT proportion of the pool above 96%.
+  </Step>
+  <Step title="Move tokens">
+    Transfer PT from the trader into the pool, transfer SY from the pool to the trader (via `token::TokenClient`).
+  </Step>
+  <Step title="Reconcile reserves">
+    `reconcile_reserves()` re-reads the pool's actual on-chain PT/SY balances and overwrites `state.total_pt`/`state.total_sy` with those real values — the analytic values computed during pricing are a working intermediate, not the persisted source of truth.
+  </Step>
+  <Step title="Sync TWAP">
+    `sync_twap()` blends the new implied rate into the TWAP using an elapsed-time weight; if the gap since the last observation exceeds `twap_window`, it snaps to the latest observation and re-enters a warm-up period instead of trusting a stale average.
+  </Step>
+  <Step title="Emit event">
+    `Swap{trader, route: "pt_for_sy", amount_in, amount_out}`.
   </Step>
 </Steps>
 
-This is the "I want a fixed return" path: sell the yield exposure, keep the principal.
+## Why reconciliation matters
 
-## Yield-speculation intent
-
-`execute_yield_speculation_intent(user, usdc_amount, min_yt_out, min_underlying_out)`
-
-Same deposit → mint pipeline, but instead sells the **PT** leg into `marketplace` for underlying and keeps 100% of the YT. This is the "I want leveraged yield exposure" path — the user ends up holding only YT plus the proceeds from selling PT.
-
-## Rollover lifecycle
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Rollover
-    participant Tokenizer
-    participant Factory
-    participant IntentEngine as Intent Engine
-
-    User->>Rollover: register_rollover(pt_amount, epoch_maturity, min_rate_bps)
-    Note over Rollover: PT custodied by rollover contract
-    Note over Rollover: after maturity...
-    alt within grace period
-        Rollover->>Rollover: keeper.require_auth()
-    else grace period expired
-        Rollover->>Rollover: permissionless
-    end
-    Rollover->>Tokenizer: redeem_pt(pt_amount)
-    Rollover->>Factory: get_epoch_by_maturity / get_next_epoch
-    Rollover->>IntentEngine: execute_fixed_yield_intent(min_rate_bps floor)
-    Note over Rollover: re-registers new PT position for next epoch
-```
-
-`rollover.execute_rollover` diffs `CumulativeIntentRecord` before/after each call rather than reading it directly — `intent_engine` tracks a *lifetime* running total per caller, not a per-call delta, so a naive read would misattribute PT from other positions sharing the same intent engine.
-
-A user can `exit_rollover` at any time — even while the contract is paused — to prevent funds getting trapped.
+Every mutating AMM entrypoint ends by re-deriving `total_pt`/`total_sy` from real token balances rather than trusting the incrementally-updated analytic state. This means rounding dust from repeated swaps can't silently accumulate into a state/reality mismatch — the persisted reserves are always exactly what the pool actually holds.

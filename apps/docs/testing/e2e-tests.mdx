@@ -1,22 +1,29 @@
 ---
 title: "E2E Tests"
-description: "Full-lifecycle end-to-end tests"
+description: "What end-to-end coverage exists beyond contract-level tests."
 ---
 
-## `rollover/tests/e2e.rs`
+## Live-testnet verification: `scripts/verify-testnet.ts`
 
-`test_novaire_end_to_end_integration` — a full-lifecycle test exercising deposit → mint → trade → maturity → rollover through real (not mocked, aside from Blend) instances of every contract in the rollover chain: `tokenizer`, `vault`, `marketplace`, `intent_engine`, `factory`.
+The one true end-to-end test in this repository. Run manually via:
 
-## `integration_tests/src/e2e.rs`
+```bash
+npm run verify:testnet
+```
 
-`scenario_full_lifecycle` is the broadest single scenario: deposit, mint PT/YT, trade on `marketplace`, advance to maturity, settle, and redeem — all in one test, using the shared `framework.rs` harness. See [Integration Tests](/testing/integration-tests) for the full scenario list.
+Per its own header comment, this script creates real funded Stellar Testnet wallets, executes real signed transactions against the deployed Novaire contracts, reads balances directly from the ledger, and cross-checks two independently-implemented formulas (the on-chain contract math vs. a separate TypeScript reimplementation in `scripts/verify_testnet/expected.ts`) against what actually happened on-chain. No mocks, no CI/browser automation involved in the core script.
 
-## `integration_tests/src/simulation.rs`
+This is triggered automatically by `.github/workflows/verify-testnet.yml`, but only via manual `workflow_dispatch` — **it is not part of the required PR merge gate**. `nightly.yml` and `release-validation.yml` additionally run it on a cron/release trigger.
 
-`simulation_7_phase_protocol_lifecycle` runs a scripted seven-phase simulation across the protocol and calls `generate_simulation_report` to summarize the run — the closest thing in this repository to a "dry run of a real market's life," entirely within the Soroban test environment (no live network).
+**Current-architecture pass/fail status: NOT VERIFIED in this repository.** No current-run log/artifact for `verify-testnet.ts` against the present 6-crate deployment was found in the repository at the time this documentation was prepared — do not assume it currently passes without checking the latest Actions run for `verify-testnet.yml`/`nightly.yml` directly.
 
-<Warning>
-  All of the above run inside Soroban's local test SDK (`soroban_sdk::testutils`), not against a live testnet or mainnet RPC. "E2E" here means "full contract-call lifecycle within the test environment," not "against a live deployed network." There is no fork-testing or live-network E2E infrastructure in this repository.
-</Warning>
+## Optional real-wallet browser E2E
 
-Run: `cargo test -p integration_tests`, `cargo test -p rollover --test e2e`.
+`verify-testnet.yml` optionally runs a Playwright suite exercising a real wallet against the live frontend + live testnet contracts (`--project=real-wallet`, `--project=portfolio-e2e`, per that workflow). Not independently re-verified in depth for this documentation pass.
+
+## What is explicitly not covered
+
+- Mainnet E2E — not applicable, no mainnet deployment exists.
+- A dedicated real-Blend adversarial scenario (dishonest pool, extreme rate values) — not found anywhere in the repository, and explicitly listed as an outstanding item in `SECURITY.md`'s Remediation Roadmap.
+
+<Card title="Blend Testing" href="/testing/blend-testing">The mock-vs-real distinction, spelled out in full.</Card>

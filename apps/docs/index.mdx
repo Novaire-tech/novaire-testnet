@@ -1,75 +1,55 @@
 ---
-title: "Novaire Documentation"
+title: "Novaire Protocol Documentation"
 description: "Understand the protocol. Build integrations. Audit the contracts. Run the tests."
 ---
 
-<Warning>
-  Novaire is deployed and exercised on **Stellar Testnet only**. No independent, licensed security audit has been performed. Do not use with real funds. See [Security Status](/security/security-status).
-</Warning>
+<Note>
+  Novaire is deployed on **Stellar Testnet only**. There is no mainnet deployment and the protocol has not undergone an independent third-party security audit. See [Security Status](/security/security-status) before integrating.
+</Note>
 
-Novaire is an intent-based fixed-yield protocol on Stellar (Soroban). It wraps a yield-bearing underlying asset into a Standardized Yield (SY) position, splits that position into a Principal Token (PT) and a Yield Token (YT), and runs a time-decaying AMM so the market — not an oracle — prices the fixed rate.
-
-This is the technical documentation for the actual implementation: 9 Soroban contracts, a TypeScript SDK, and the off-chain tooling around them.
+Novaire is a yield-tokenization protocol built on Soroban that splits a yield-bearing position into a **Principal Token (PT)** and a **Yield Token (YT)**, and trades them against a purpose-built AMM. This site documents the system exactly as it is implemented today — a single-market, 6-crate architecture — not as it was originally designed or as it may become.
 
 <CardGroup cols={2}>
   <Card title="Architecture" icon="sitemap" href="/architecture/system-architecture">
-    How the 9 contracts are wired together, and what calls what.
+    How the SY Wrapper, Tokenizer, PT/YT tokens, and AMM fit together.
   </Card>
-  <Card title="Protocol" icon="layer-group" href="/protocol/sy">
-    SY, Blend integration, PT/YT, the AMM pricing curve, and settlement.
+  <Card title="Protocol" icon="function" href="/protocol/sy">
+    SY accounting, Blend integration, PT/YT lifecycle, AMM pricing curve.
   </Card>
   <Card title="Security" icon="shield-halved" href="/security/security-model">
-    Trust boundaries, threat model, and the actual findings register.
+    Trust boundaries, threat model, known risks, and current findings.
   </Card>
   <Card title="Testing" icon="flask" href="/testing/testing-strategy">
-    What's actually tested — unit, integration, regression, and what is not yet verified.
+    What is actually covered by unit tests, integration tests, and live-testnet verification.
   </Card>
   <Card title="Developers" icon="code" href="/developers/setup">
-    Clone, build, deploy to testnet, and run the contract test suite.
+    Clone, build, test, and run the protocol locally.
   </Card>
   <Card title="Deployment" icon="rocket" href="/deployment/testnet">
-    The real deployment pipeline, testnet state, and mainnet status.
+    How the current testnet deployment was produced and how to reproduce it.
   </Card>
-  <Card title="Reference" icon="book" href="/reference/glossary">
-    Contract interfaces, SDK bindings, configuration, and glossary.
+  <Card title="Reference" icon="book" href="/reference/contract-reference">
+    Contract interfaces, SDK bindings, constants, and glossary.
   </Card>
   <Card title="Quickstart" icon="bolt" href="/introduction/quickstart">
-    Get the protocol running locally in a few commands.
+    Get the workspace running end to end.
   </Card>
 </CardGroup>
 
 ## System at a glance
 
 ```mermaid
-graph LR
-    U([User / SDK]) --> IE(Intent Engine)
-    IE --> V(Vault)
-    V --> SY(SY Wrapper)
-    SY --> BP[(Blend Pool)]
-    IE --> T(Tokenizer)
-    T --> PT[PT Token]
-    T --> YT[YT Token]
-    PT --> M(Marketplace AMM)
-    YT --> M
-    T --> ME(Maturity Engine)
-    F(Factory) -.deploys & wires.-> V
-    F -.-> SY
-    F -.-> T
-    F -.-> M
-    F -.-> ME
-    R(Rollover) --> T
-    R --> IE
-    R --> F
+flowchart LR
+    U[User] --> SY[SY Wrapper]
+    SY -->|supplies/withdraws| BP[Blend Pool]
+    U --> TOK[Tokenizer]
+    SY <-->|escrow| TOK
+    TOK -->|mints/burns| PT[PT Token]
+    TOK -->|mints/burns| YT[YT Token]
+    U --> AMM[AMM]
+    PT <--> AMM
+    SY <--> AMM
+    AMM -.flash split/recombine.-> TOK
 ```
 
-Nine Soroban contracts, deployed and wired per epoch by `factory`: `sy_wrapper`, `vault`, `tokenizer` (plus `pt_token`/`yt_token`), `marketplace`, `maturity_engine`, `intent_engine`, and `rollover`. Full breakdown in [Contract Architecture](/architecture/contract-architecture).
-
-## Current implementation status
-
-| Area | Status |
-| --- | --- |
-| Testnet deployment | Deployed, exercised |
-| Mainnet deployment | Not verified as live — see [Mainnet](/deployment/mainnet) |
-| Independent security audit | Not performed — see [Security Status](/security/security-status) |
-| Real Blend pool integration (production code) | Implemented (real cross-contract calls) |
-| Real Blend pool integration (tested against live pool) | Not verified — only `MockBlendPool` used in tests |
+Five contracts are deployed per market (`sy-wrapper`, `tokenizer`, `pt-token`, `yt-token`, `amm`); `blend-adapter` is a shared library, not a deployed contract. There is no factory, vault, marketplace, rollover, or intent-engine contract in the current architecture — earlier design documents describing those components are superseded and are not reproduced here. See [System Architecture](/architecture/system-architecture) for the full breakdown.

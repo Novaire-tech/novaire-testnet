@@ -1,40 +1,35 @@
 ---
 title: "Integration Tests"
-description: "The integration_tests crate — which contracts are exercised together"
+description: "contracts/integration_tests/tests — cross-contract scenarios, all against MockBlendPool."
 ---
 
-`contracts/integration_tests/` is a dedicated workspace crate that wires together real instances of every contract (via a shared `framework.rs` harness and `mock_blend_pool.rs`) to test cross-contract behavior that no single contract's own unit tests can cover.
+Run with `cargo test -p integration_tests` from `contracts/`. All four files below wire multiple deployed contracts together in-process, but do so against `MockBlendPool` (or a locally-defined mock/rate-setter) — none of these hit a live Blend pool. See [Blend Testing](/testing/blend-testing).
 
-## Scenario coverage (`src/e2e.rs`)
+## `journey.rs` — full lifecycle wiring
 
-| Scenario | What it exercises |
-| --- | --- |
-| `scenario_simple_deposit` | Vault → SyWrapper deposit path |
-| `scenario_mint_pt_yt` | Vault → Tokenizer → PT/YT mint path |
-| `scenario_full_lifecycle` | Deposit → mint → trade → mature → settle → redeem, end to end |
-| `scenario_rollover_custody` | Rollover → Tokenizer → Factory → IntentEngine chain |
-| `scenario_pt_converges_near_maturity` | PT price approaching 1:1 as maturity nears |
-| `scenario_pt_yt_conservation_multi_user` | PT/YT supply conservation across multiple users |
-| `scenario_intent_engine_zero_balance` | IntentEngine behavior with no prior balance |
-| `scenario_forced_rollover_slippage_protection` | Rollover respects `min_rate_bps` even under forced conditions |
-| `scenario_h4_*` (6 scenarios) | YT transfer/yield-credit correctness across sequential and partial transfers |
+`split_then_recombine_preserves_sy`, `pt_redeems_one_to_one_after_maturity`, `amm_wires_to_the_same_market`, `amm_swap_round_trip_charges_fees`, `yt_flash_route_round_trips_through_the_tokenizer`, `flash_route_over_mint_dust_stays_a_matched_pair_and_never_panics`, `yt_flash_route_accepts_one_share_recombine_dust_window`.
 
-## Regression suites by historical finding
+These verify `sy-wrapper` → `tokenizer` → `pt-token`/`yt-token` → `amm` are correctly wired as one system, not just individually correct.
 
-- **L1** (`l1_regression.rs`): `test_l1_checkpoint_user_error_propagation`
-- **M1** (`m1_regression.rs`, `m1_production_bootstrap.rs`): YT/PT price-symmetry and exploit-reproduction — `test_m1_sell_yt_matches_complement_price`, `test_m1_no_virtual_pt_movement`, `test_m1_round_trip_no_free_profit`, `test_m1_repeat_attack`, `test_m1_large_capital_attack`, `test_m1_production_exploit_matrix`
-- **M2** (`m2_regression.rs`): late-minter yield credit — `test_m2_mint_at_genesis`, `test_m2_late_mint`, `test_m2_multiple_late_minters`, `test_m2_no_trapped_shares`, `test_m2_minimal_mint_rounding`
-- **M3** (`m3_regression.rs`): settlement timing — `test_m3_normal_settlement`, `test_m3_attacker_early_settlement`, `test_m3_h5_clamp_preserved`, `test_m3_permissionless_settlement`
-- **M5** (`m5_regression.rs`): liquidity/donation-attack invariants — `test_m5_first_liquidity_mint`, `test_m5_locked_liquidity_permanent`, `test_m5_donation_attack_impossible`
+## `economics.rs` — the largest suite
 
-## Fuzzing and stress
+Yield accrual/claim correctness, PT-vs-share redemption, escrow-covers-claims (`escrow_covers_outstanding_claims`), and — the largest cluster — **maturity-rate freezing under various orderings and timing**:
 
-- `fuzz.rs`: `fuzz_protocol_state_machine` — a `proptest` property test randomizing operation sequences across the whole wired protocol.
-- `simulation.rs`: `simulation_7_phase_protocol_lifecycle`, `generate_simulation_report` — a scripted multi-phase lifecycle simulation.
-- `stress.rs`: `stress_test_heavy_load`, `stress_flash_loan_twap_resistance`, `stress_tiny_swaps`, `stress_large_liquidity_add_remove`, `stress_consecutive_multi_user_mints`.
+- `redemption_uses_frozen_maturity_rate`
+- `direct_yt_transfer_is_observed_by_the_maturity_freeze`
+- `pt_redeem_and_yt_claim_use_one_frozen_rate_regardless_of_order`
+- `redeem_allowed_at_exact_maturity`
 
-## Shared invariant helpers
+Plus rate-regression handling, PT-senior/YT-subordinated claim tests, transfer-conserves-yield tests, and a randomized conservation test using a custom RNG (not `proptest`).
 
-`invariants.rs` defines named invariant checks (referenced throughout `docs/PROTOCOL_INVARIANTS.md` as `INV-1` through `INV-9`) used across the scenario and regression files, so the same solvency/consistency checks run after many different operation sequences rather than being re-implemented per test.
+## `auth_invariants.rs` — authorization scope
 
-Run the full crate: `cargo test -p integration_tests`.
+Inspects `env.auths()` traces to confirm the AMM's self-authorized flash-recombine route into the tokenizer requires only the user's top-level signature, pinned to specific arguments, and doesn't widen what the user implicitly authorized. See [Access Control](/security/access-control).
+
+## `blend_wrapper.rs` — Blend-adjacent recovery paths
+
+`blend_supply_rate_growth_yield_claim_and_withdraw_round_trip`, a reserve-index-move `#[should_panic]` test, `migrate_reserve_index_recovers_after_a_reindex`, `migrate_reserve_index_rejects_non_admin`, `migrate_reserve_index_rejects_when_underlying_absent`, `migrate_reserve_index_rejects_on_index_mismatch`, `redeem_surfaces_tolerated_withdrawal_failure` — all against `BlendFixture`/mock, not live Blend.
+
+## What this layer proves, precisely
+
+That the five deployed contracts, wired together exactly as they will be at deployment, behave correctly across realistic multi-step user journeys and adversarial-timing scenarios (rate regressions, freeze-timing edge cases) — under the assumption that Blend reports rates the way the mock does. It does not prove behavior against Blend's actual contract ABI or actual on-chain edge cases. See [Blend Testing](/testing/blend-testing) for that distinction in full.

@@ -1,51 +1,38 @@
 ---
 title: "Contract Dependencies"
-description: "The full cross-contract call graph"
+description: "Which contract calls which, and how."
 ---
 
 ```mermaid
-graph TD
-    Factory[factory] -->|deploys & initializes all of| SyWrapper[sy_wrapper]
-    Factory --> Vault[vault]
-    Factory --> Tokenizer[tokenizer]
-    Factory --> PtToken[pt_token]
-    Factory --> YtToken[yt_token]
-    Factory --> Marketplace[marketplace]
-    Factory --> MaturityEngine[maturity_engine]
-    Factory --> IntentEngine[intent_engine]
-    Factory --> Rollover[rollover]
-
-    Vault -->|deposit, withdraw| SyWrapper
-    SyWrapper -->|submit, get_positions| BlendPool[(Blend Pool)]
-
-    Tokenizer -->|transfer_shares, withdraw_for, balance_of| Vault
-    Tokenizer -->|get_exchange_rate, refresh_rate| SyWrapper
-    Tokenizer -->|mint, burn, balance, total_supply| PtToken
-    Tokenizer -->|mint, checkpoint_user, claimable_yield, etc.| YtToken
-    Tokenizer -->|live_state, settle_epoch| MaturityEngine
-
-    Marketplace -->|live_state| MaturityEngine
-    Marketplace -->|claim_yield| Tokenizer
-    Marketplace -->|transfer| PtToken
-    Marketplace -->|transfer| YtToken
-
-    IntentEngine -->|deposit, balance_of| Vault
-    IntentEngine -->|mint_pt_yt| Tokenizer
-    IntentEngine -->|swap_*, get_reserves, get_twap_rate_checked| Marketplace
-    IntentEngine -->|transfer| PtToken
-    IntentEngine -->|transfer| YtToken
-
-    Rollover -->|redeem_pt| Tokenizer
-    Rollover -->|get_epoch_by_maturity, get_next_epoch| Factory
-    Rollover -->|execute_fixed_yield_intent, get_user_intent| IntentEngine
-    Rollover -->|balance, transfer| PtToken
+graph LR
+    AMM[amm] -->|exchange_rate via invoke_contract| SY[sy-wrapper]
+    AMM -->|flash_split / flash_recombine, self-authorized| TOK[tokenizer]
+    AMM -->|TokenClient transfer| PT[pt-token]
+    AMM -->|TokenClient transfer| SY
+    TOK -->|mint/burn/burn_settled/settle/consume via invoke_contract, self-authorized| PT
+    TOK -->|mint/burn/burn_settled/settle/consume via invoke_contract, self-authorized| YT[yt-token]
+    TOK -->|TokenClient transfer + invoke_contract exchange_rate| SY
+    YT -->|invoke_contract exchange_rate| SY
+    YT -->|invoke_contract observe_rate/freeze_maturity_rate/maturity_rate| TOK
+    SY -->|BlendPoolClient: get_reserve_list/get_reserve/get_positions/submit| BP[(Blend Pool - external)]
+    SY -.pure math.-> BA[blend-adapter library]
 ```
 
-## Reading the graph
+## Call patterns worth knowing
 
-- **`factory`** is the only contract that touches all nine — every other edge is a runtime call between two already-deployed contracts.
-- **`maturity_engine`** has no outgoing edges to other Novaire contracts — it is a pure, dependency-free epoch clock that `tokenizer` and `marketplace` query, never the other way around.
-- **`sy_wrapper`** is the only contract with an edge leaving the protocol entirely, into the external Blend Capital pool. Every other yield-related computation elsewhere in the protocol is downstream of `sy_wrapper.get_exchange_rate()`.
-- **`intent_engine`** and **`rollover`** are the two "composing" contracts — they don't hold protocol state of their own beyond user-facing bookkeeping (`UserIntents`, `RolloverPositions`); they orchestrate calls into the others.
+- **`amm` → `tokenizer`** for flash routes is self-authorized (`authorize_as_current_contract`) rather than requiring the user to sign a second, separate authorization — the [auth invariant tests](/testing/integration-tests) specifically check that this doesn't widen what the user is implicitly authorizing beyond the top-level swap call.
+- **`tokenizer` → `pt-token`/`yt-token`** mint/burn calls are raw `env.invoke_contract` calls, not typed client calls, self-authorized the same way.
+- **`yt-token` → `tokenizer`** for `observe_rate`/`freeze_maturity_rate`/`maturity_rate` exists so that holder-direct paths (like a plain `transfer` or `burn` of YT) still settle yield through the same frozen-rate mechanism as tokenizer-mediated paths — a YT holder can never get a raw, unfrozen post-maturity rate by going around the tokenizer.
+- **`sy-wrapper` → Blend** is the only contract boundary that leaves the Novaire trust domain entirely. Every other cross-contract call in the diagram above is between contracts Novaire itself controls and initializes together.
+- **No contract calls `amm` from outside a user transaction** — the AMM is not itself a dependency of `sy-wrapper`, `tokenizer`, `pt-token`, or `yt-token`. It's a leaf consumer of all four.
 
-A cycle worth noting: `rollover → intent_engine → marketplace/tokenizer → maturity_engine`, and separately `rollover → factory` to discover the next epoch. `rollover` never calls `marketplace` directly — swaps only happen inside `intent_engine`.
+## Initialization order
+
+Because of the dependency graph above, contracts must be initialized in this order (matching both `contracts/scripts/deploy-testnet-resilient.sh` and `contracts/scripts/deploy-mainnet.sh`):
+
+1. `sy-wrapper` (needs the Blend pool + underlying asset addresses)
+2. `pt-token`, `yt-token` (each needs the tokenizer's address + `maturity`)
+3. `tokenizer` (needs `sy_token`, `pt_token`, `yt_token` addresses + `maturity`)
+4. `amm` (needs `pt_token`, `sy_token`, `yt_token`, `tokenizer` addresses + curve parameters)
+
+See [Testnet Deployment](/deployment/testnet) and [Mainnet Deployment](/deployment/mainnet) for the concrete deployment scripts that carry out this order.

@@ -1,76 +1,124 @@
 ---
 title: "AMM"
-description: "marketplace's YieldSpace-style time-decaying pricing curve"
+description: "The PT/SY pricing curve, reserve accounting, and flash-routed YT trading — in full detail."
 ---
 
-`marketplace` is a YieldSpace-style automated market maker for PT against the underlying asset, with YT priced off the same curve rather than through a second pool. This is the deepest technical section in these docs — every formula below is quoted directly from `contracts/marketplace/src/lib.rs`.
+<Info>This is the densest page in this documentation. It documents `contracts/amm/src/lib.rs` at the level of the actual formulas used, because simplifying them would make this page technically inaccurate.</Info>
 
-## The invariant
+## What kind of AMM this is
 
-```rust
-fn compute_a_pool(env, maturity, x, y) -> i128 {
-    // if matured: (x + y) * 1_000_000_000   — approximates a 1:1 constant-sum curve
-    // t_rem = maturity - current_ledger
-    // t_tot = maturity - created_ledger
-    // base_a = ((t_tot - t_rem) * 1_000_000) / t_rem
-    // a_pool = base_a * ((x + y) / 2) / 1_000_000
-}
-
-fn compute_k(a_pool, x, y) -> i128 {
-    // k = a_pool * (x + y) + x * y
-}
-
-fn get_y(a_pool, k, x_new) -> i128 {
-    // y_new = (k - a_pool * x_new) / (a_pool + x_new)
-}
-
-fn get_spot_price(a_pool, x, y) -> i128 {
-    // P = (a_pool + y) / (a_pool + x), scaled to 1e9
-}
-```
-
-`A_pool` is the curve's time-varying parameter: it grows from near-zero at epoch genesis (behaving like a constant-product curve, high price sensitivity to trade size) to a large value as maturity approaches (behaving like a constant-sum, 1:1 curve — the definition of "PT converges to par at maturity"). This is the standard Pendle/Notional-style time-decaying AMM invariant `k = A_pool*(x+y) + x*y`, where `x` = PT reserves and `y` = underlying reserves.
-
-<Frame caption="A_pool grows over the epoch's life, flattening the curve toward 1:1 as maturity approaches.">
-```mermaid
-graph LR
-    A["Epoch open<br/>A_pool ≈ 0<br/>constant-product-like"] --> B["Mid-epoch<br/>A_pool growing"] --> C["Maturity<br/>A_pool large<br/>constant-sum, 1:1"]
-```
-</Frame>
+A Notional Finance-style logit/"rate anchor" curve operating on **PT face value vs. underlying-asset value** — not raw SY shares, and not a plain constant-product `x*y=k` curve. All curve math happens in asset-denominated units; SY-share conversion happens only at the swap boundary.
 
 ## Units
 
-| Variable | Unit | Notes |
-| --- | --- | --- |
-| `PtReserves`, `UnderlyingReserves` | underlying-equivalent token units | Actual on-chain balances of PT/underlying held by `marketplace` |
-| `YtReserves` | YT token units | A separate one-way liquidity pool, not part of the `x,y` curve |
-| `a_pool`, `k` | 1e9-scaled fixed-point | Internal curve parameters, not directly meaningful outside `compute_*` |
-| `ImpliedRateTwap` | 1e9-scaled rate | EMA of the implied fixed rate, weighted `weight_old = 20` ledgers |
-| Swap fee | `SWAP_FEE_NUM/DEN = 997/1000` | 0.3%, applied on PT/underlying swaps |
+| Variable | Unit |
+|---|---|
+| `state.total_pt` | PT face units |
+| `state.total_sy` | SY share units |
+| `total_asset` (working value, not stored) | underlying-asset units, `= floor(total_sy * rate / WAD)` |
+| `state.last_ln_implied_rate`, `twap_ln_implied_rate` | WAD-scaled, natural log of the annualized implied rate |
+| `config.fee_bps` | basis points, `0–9999`, denominator `10_000` |
+| `config.scalar_root`, `initial_anchor` | WAD-scaled curve-shape parameters |
 
-## PT/underlying swaps
+## Constants
 
-`swap_underlying_for_pt` and `swap_pt_for_underlying` both: read current `a_pool` via `compute_a_pool`, compute `k`, solve `get_y` for the new reserve given the trade input net of the 0.3% fee, and update reserves. `assert_invariant()` runs after every state-mutating call, checking `PtReserves`/`UnderlyingReserves` against the contract's actual on-chain token balances.
+- `WAD = 10^18`
+- `BPS_DENOMINATOR = 10_000`
+- `IMPLIED_RATE_TIME = 365 days` (annualization basis)
+- `MINIMUM_LIQUIDITY = 1000` — burned on the first LP mint (Uniswap-style, prevents a degenerate near-zero-supply LP token)
+- `MAX_MARKET_PROPORTION = 96% of WAD` — a swap that would push PT's share of the pool above this reverts with `MarketProportionTooHigh`
+- `MAX_RESERVE_UNITS = WAD`, `MAX_SCALAR_ROOT = 10·WAD`, `MAX_ANCHOR = 2·WAD` — conservative input-bound caps; the source comment notes re-deriving the exact i128 overflow bound is still open work
 
-## YT pricing — a derived route, not a separate pool
+## Rate scalar and rate anchor
 
-YT does not have its own AMM curve. Instead, `marketplace` simulates what would happen if YT were sold or bought against the existing PT/underlying curve:
+The curve's steepness scales inversely with time to maturity:
 
-- `simulate_pt_sale_proceeds` / `net_cost_for_yt` — models a hypothetical PT sale to derive the equivalent cost of buying YT.
-- `solve_yt_out_for_underlying_in` — a **bisection search**, capped at `YT_PRICE_SEARCH_ITERS = 100` iterations, solving for how much YT a given underlying input buys.
-- `compute_yt_sell_proceeds` — the closed-form dual for selling YT back.
+```
+rate_scalar = scalar_root * IMPLIED_RATE_TIME / time_to_expiry
+```
 
-`YtReserves` is a real, separately-tracked balance — funded one-way via `add_yt_liquidity` — that YT buys/sells draw down or replenish, but the **price** always comes from the PT/underlying curve simulation, not from `YtReserves` itself acting as an AMM leg.
+The anchor recalibrates on every call so implied rate stays continuous as time passes with no trades in between:
 
-## TWAP and staleness
+```
+exchange_rate_from_rate = exp(last_ln_implied_rate * time_to_expiry / IMPLIED_RATE_TIME)
+```
+(must be `>= WAD`, else panics `ExchangeRateBelowOne` — see [Known Findings](/security/known-findings) for the investigation into this)
 
-`ImpliedRateTwap` is an EMA of the implied rate, updated on-swap. `get_twap_rate_checked()` reverts if the last update is older than `MAX_TWAP_AGE_LEDGERS = 200` ledgers — this is what `intent_engine` calls to gate its strategies against a stale or flash-loan-manipulated rate. See regression tests `test_6_flash_loan_twap_resistance` and `test_6b_h3_twap_temporal_ordering_regression` in [AMM Tests](/testing/amm-tests).
+```
+proportion      = total_pt * WAD / (total_pt + total_asset)
+ln_proportion   = ln(proportion / (1 - proportion))          // logit
+rate_anchor     = exchange_rate_from_rate - ln_proportion * WAD / rate_scalar
+```
 
-## Fees and liquidity
+## Exchange rate at a given trade size
 
-- Swap fee: 0.3% (`997/1000`), retained in reserves for LPs.
-- `MINIMUM_LIQUIDITY = 1000` — permanently locked on first `add_liquidity`, the standard donation-attack defense (see `test_m5_donation_attack_impossible`).
-- LP shares are tracked via `TotalLpShares` / `LpBalance(Address)`; `remove_liquidity` returns a `(pt, underlying, yt)` tuple.
-- `claim_amm_yield()` pulls accrued yield from `tokenizer` into `UnderlyingReserves`, benefiting LPs.
+```
+proportion    = (total_pt - net_pt_to_account) * WAD / (total_pt + total_asset)
+                // reverts MarketProportionTooHigh if > MAX_MARKET_PROPORTION
+ln_proportion = ln(proportion / (1 - proportion))
+exchange_rate = ln_proportion * WAD / rate_scalar + rate_anchor
+                // floored at WAD; reverts ExchangeRateBelowOne otherwise
+```
 
-See [Liquidity](/protocol/liquidity) and [Pricing](/protocol/pricing) for the LP and rate-discovery perspective on the same mechanics.
+## Implied rate
+
+```
+ln_implied_rate = ln(exchange_rate) * IMPLIED_RATE_TIME / time_to_expiry
+implied_rate_bps = ln_implied_rate * 10_000 / WAD
+```
+
+This is a **continuously-compounded annualized rate**, not a simple APY — treat `spot_apy()`/`twap_apy()` accordingly when displaying them.
+
+## PT → SY (exact-in)
+
+```
+exchange_rate       = get_exchange_rate(net_pt_to_account = -pt_in)
+pre_fee_asset_out   = pt_in * WAD / exchange_rate
+fee                 = pre_fee_asset_out * fee_bps / 10_000
+asset_out           = pre_fee_asset_out - fee
+sy_out              = floor(asset_out to SY units)
+```
+
+Reverts `InsufficientLiquidity` if `sy_out <= 0` or `sy_out >= total_sy` — the pool can never be fully drained by a single swap.
+
+## SY → PT (exact-in)
+
+PT-out is solved via **binary search** for the largest `pt_out` whose required SY cost — computed the same way as an exact-PT-out quote, with the fee added on the input side (`asset_in = pre_fee_asset_in + fee`, ceil-rounded) — fits within the SY provided.
+
+## SY → YT (exact-in)
+
+`solve_yt_out_for_sy_in` also binary-searches, this time for the largest `yt_out` whose PT-leg cost (via `try_exact_pt_in_sy_out`) leaves the buyer at or under the SY they provided — a candidate is only accepted if it fits within `sy_in`, so the result can be suboptimal for the buyer but is never unsafe for the pool.
+
+## Fee model
+
+A single `fee_bps` rate is charged on the **asset-denominated leg** of every PT⟷SY trade: subtracted from the output on exact-PT-in trades, added to the input on exact-PT-out trades. There is no separate protocol fee split documented in the current contract — all fee revenue accrues to the pool (and therefore to LPs) directly.
+
+## SY ⇄ YT: no separate curve
+
+`swap_sy_for_yt`/`swap_yt_for_sy` don't have their own pricing curve. They're synthesized by flash-splitting or flash-recombining PT/YT through the tokenizer within the same transaction, converting the curve's PT-face amounts to/from tokenizer SY-share amounts via ceil/floor-mirrored helpers that match the tokenizer's own rounding. This means YT price is **entirely derived** from the PT/SY curve plus the live SY rate — see [Data Flow](/architecture/data-flow) for the call sequence.
+
+## Reserve accounting: reconciliation, not pure tracking
+
+`state.total_pt`/`total_sy` are updated analytically mid-computation on every swap/liquidity call, but every mutating entrypoint ends by calling `reconcile_reserves()`, which re-reads the pool's actual on-chain PT/SY token balances and overwrites the stored state with those real values. **The persisted reserves are always exactly what the pool holds** — the analytic values are a working intermediate, never the source of truth, which guards against rounding-dust drift accumulating over many trades.
+
+## TWAP
+
+`sync_twap()` does an elapsed-time-weighted blend of `ln_implied_rate` into the TWAP (`weight = elapsed / twap_window`) — a single-step exponential-moving-average style blend, not a true cumulative-sum TWAP. If the gap since the last observation is `>= twap_window`, it **snaps to the latest observation and re-enters a warm-up period** (`warmup_until = now + twap_window`) rather than trusting a stale average — an explicit anti-manipulation measure against a long-idle-then-single-large-trade attack.
+
+## Rounding conventions
+
+| Direction | Rounding |
+|---|---|
+| SY paid out to a trader | floor |
+| SY charged to a trader | ceil |
+| LP mint amounts (first mint) | `isqrt(pt_in * sy_in)`, floor, minus `MINIMUM_LIQUIDITY` |
+| LP mint amounts (subsequent) | proportional, min of the two ratios; used token amounts rounded up to match the minted LP share |
+| `remove_liquidity` payouts | floored, pro-rata by LP share |
+
+## Liquidity
+
+Covered in full on the dedicated [Liquidity](/protocol/liquidity) page.
+
+## Transcendental math
+
+Soroban wasm forbids floating point, so `ln_wad`/`exp_wad` are custom fixed-point implementations using integer range-reduction plus a Taylor/atanh series.

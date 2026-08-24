@@ -1,52 +1,50 @@
 ---
 title: "Contracts"
-description: "Building, testing, and understanding individual contracts"
+description: "Working inside the contracts/ Rust workspace."
 ---
 
-## Workspace layout
-
-`contracts/Cargo.toml` defines a workspace of 11 crates: `factory`, `sy_wrapper`, `vault`, `tokenizer/tokenizer`, `tokenizer/pt_token`, `tokenizer/yt_token`, `marketplace`, `maturity_engine`, `intent_engine`, `rollover`, `integration_tests`.
-
-Release profile settings (`contracts/Cargo.toml`):
-
-```toml
-[profile.release]
-overflow-checks = true
-
-[profile.release-with-logs]
-debug-assertions = true
-```
-
-`overflow-checks = true` in the actual release profile means an unexpected overflow **aborts the transaction** in production, not just in debug builds — this is a deliberate "fail safe over fail permissive" choice per `SECURITY.md`.
-
-## Building
+## Build
 
 ```bash
 cd contracts
-stellar contract build
+cargo build --release --target wasm32v1-none
+# or, for the optimized/deployable artifacts:
+bash scripts/build-optimized-wasm.sh
 ```
 
-Builds every contract's WASM. `scripts/deploy.ts` runs this same command as part of its pipeline.
+<Info>The workspace targets `wasm32v1-none` (per `.github/workflows/ci.yml` and `contracts/scripts/build-optimized-wasm.sh`), not the older `wasm32-unknown-unknown` — some other repository docs outside `apps/docs` still reference the older target name.</Info>
 
-## Testing an individual contract
+## Test
 
 ```bash
-cargo test -p sy_wrapper
-cargo test -p marketplace
+cd contracts
+cargo fmt --all --check
+cargo clippy --all-targets --all-features --workspace -- -D warnings
+cargo test --workspace --all-features
+cargo audit --file Cargo.lock
 ```
 
-See [Testing](/developers/testing) for the full contract-level test workflow, and [Testing → Unit Tests](/testing/unit-tests) for what each suite proves.
+These are exactly the checks `ci.yml`'s `rust-fmt-clippy`/`rust-test`/`rust-audit` jobs run — reproducing them locally before opening a PR avoids surprises. See [Testing Strategy](/testing/testing-strategy).
 
-## Understanding a contract before modifying it
+## Workspace layout
 
-For each contract, read in this order:
+Six crates: `sy-wrapper`, `blend-adapter` (library, not deployed), `tokenizer`, `pt-token`, `yt-token`, `amm`, plus `shared/types` (shared trait definitions) and `integration_tests` (cross-contract test crate, not a deployable contract).
 
-1. Its entry in [Contract Architecture](/architecture/contract-architecture) for responsibility and admin surface.
-2. [Contract Dependencies](/architecture/contract-dependencies) for what it calls and what calls it.
-3. Its dedicated [Protocol](/protocol/sy) page if one exists (SY, PT, YT, AMM, Settlement).
-4. Its `src/lib.rs` `DataKey` enum — the fastest way to see everything a contract actually persists.
-5. Its test module — the fastest way to see the intended behavior under edge cases.
+## Making a contract change
 
-## Adding a new epoch's worth of contracts
+1. Edit the relevant crate under `contracts/<crate>/src/lib.rs`.
+2. Add/update unit tests in the same file's `#[cfg(test)] mod test`.
+3. If the change affects cross-contract behavior, add/update a test in `contracts/integration_tests/tests/`.
+4. Run `cargo test --workspace --all-features` locally.
+5. If the change affects a public interface, regenerate the corresponding TypeScript bindings in `packages/bindings/<contract>` — see [SDK](/developers/sdk).
+6. If deploying to testnet to validate, see [Testnet Deployment](/deployment/testnet).
 
-New epochs are deployed via `factory.deploy_epoch()`, not by hand-deploying and wiring each contract. See [Deployment → Testnet](/deployment/testnet) for the exact pipeline (`scripts/deploy.ts`, `scripts/deploy_xlm_epoch.ts`).
+## Float usage check
+
+`contracts/scripts/check-wasm-floats.sh` checks the compiled wasm for floating-point instructions — Soroban wasm forbids floats, which is why the AMM's transcendental math (`ln_wad`/`exp_wad`) is implemented as fixed-point integer arithmetic rather than using `f64`. Run this after any change touching AMM math.
+
+## cargo-audit exceptions
+
+`contracts/.cargo/audit.toml` ignores one advisory (`RUSTSEC-2024-0436`, an unmaintained `paste` crate pulled in transitively via `soroban-env-host`) and disables failing on the yanked `spin 0.9.8` crate (also transitive, via `soroban-wasmi`) — both documented in that file as unavoidable given the pinned `soroban-sdk = "=26.1.0"` version, not overlooked.
+
+<Card title="Next: Testing" href="/developers/testing" />

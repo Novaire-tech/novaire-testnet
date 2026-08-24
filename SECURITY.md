@@ -1,175 +1,316 @@
 # Security Policy
 
-Novaire is a yield-tokenization protocol built on Soroban (Stellar smart contracts): users deposit an underlying asset, which is supplied to a Blend Capital lending pool and split into Principal Tokens (PT) and Yield Tokens (YT), tradable on a time-decay AMM until maturity. This document describes our security model, trust assumptions, known risks, and how to report vulnerabilities.
+## Security Overview
 
-This protocol is currently deployed on **testnet only**. Treat all funds and deployments as experimental.
+Novaire is a yield-tokenization protocol on Soroban (Stellar smart contracts). Users deposit an underlying asset, which is supplied into a Blend Capital lending pool through an SY wrapper, split into Principal Tokens (PT) and Yield Tokens (YT), and traded on a time-decay AMM until maturity.
 
-> **Note on this revision:** this document was rewritten after a full re-audit of the current codebase found significant drift from the previous version — several mechanisms described below (pause, permissionless loss-marking, two-step admin transfer, a runtime invariant check on every call, a rate-of-change ratchet, sy-wrapper dead-shares) had been removed or never shipped in the current contracts. This revision describes only what the code actually enforces today.
+**Status: testnet only. Not audited in its current form. Not mainnet-ready.** Treat all deployments and funds as experimental.
 
----
+This document was rewritten from a line-by-line read of the current contract sources (`contracts/{sy-wrapper,blend-adapter,tokenizer,amm,pt-token,yt-token,shared}/src/lib.rs`), the integration suite (`contracts/integration_tests/tests/`), and `contracts/scripts/deploy-mainnet.sh`. Every claim below is intended to be traceable to code. Where a property is believed true but not proven by a test, it is labeled **UNVERIFIED** or **OPEN** — never "fixed".
 
-## Security Philosophy
+Hard facts, stated up front:
 
-- **Fail safe over fail permissive.** Arithmetic uses `checked_*` operations throughout, and the release build is compiled with `overflow-checks = true`, so an unexpected overflow aborts the transaction rather than silently corrupting state.
-- **Minimal privilege for cross-contract calls.** Where one contract must move funds through another on a user's behalf, authorization is granted narrowly via `authorize_as_current_contract` scoped to a single `(contract, function, args)` triple with no further sub-delegation.
-- **Single source of truth for time.** Maturity is stored in each contract's config and checked against the ledger timestamp; no separate maturity engine contract exists.
-- **Fail-closed accounting under shortfall.** The tokenizer never assumes principal is fully backed; PT claims are senior to YT claims, and any shortfall is applied pro-rata against YT/surplus before it can touch PT. See "Economic Security."
-
----
-
-## Threat Model Summary
-
-**In scope / defended against:**
-- Unauthorized fund movement (every fund-moving call requires `require_auth()` from the fund owner).
-- Integer overflow/underflow (checked arithmetic + overflow-checked release builds).
-- First-depositor share-inflation attacks on the **AMM** (permanently locked minimum LP shares on first deposit — see below for the sy-wrapper caveat).
-- TWAP/flash-loan price manipulation within a single transaction (pre-trade price recorded before reserve mutation; dedicated regression tests).
-- Storage archival/rent expiry for user-facing balance data (persistent storage TTL extended on every access, in all contracts).
-- Manual/admin manipulation of the SY exchange rate — no such function exists; the rate is derived purely from the Blend pool's reported position.
-
-**Explicitly out of scope / accepted trust:**
-- **The external yield source (Blend Capital pool).** `sy-wrapper` fully trusts the pool's reported position value as the basis for the protocol's exchange rate, with **no on-chain bound on the rate's magnitude or rate of change**. A compromised or buggy pool is a systemic risk to the whole protocol and flows through to the SY rate unbounded. See "Known Risks" below.
-- **The protocol admin key(s).** Admin authority exists in every contract but, as currently implemented, is limited to one-time initialization parameters and a small number of config/recovery entry points (see "Access Control") — it cannot move user funds, mint/burn tokens, or change the exchange-rate logic. See "Trust Assumptions."
-- **Off-chain infrastructure** (RPC providers, frontends) is not covered by this policy; report issues with those to their respective operators.
+- **No external security audit covers the current architecture.** `SECURITY_AUDIT.md` audits a superseded 10-contract design and is explicitly marked as such at its top. It must not be used to assess today's system.
+- **There is no pause, circuit breaker, emergency withdrawal, or upgrade mechanism in any contract.** Verified: no `update_current_contract_wasm`, no pause flag, no `set_admin`/`transfer_admin` exists anywhere in `contracts/*/src/lib.rs`.
+- **Admin is a single key per contract, set once at `initialize`.** No multisig, no timelock, no rotation.
+- **Real Blend integration is wired but only mock-tested in CI.** All Rust tests run against `MockBlendPool` (`blend-adapter/src/lib.rs::testutils`). Only `scripts/verify-testnet.ts` scenario F touches a real testnet Blend pool.
 
 ---
 
-## Trust Assumptions
+## Architecture (current — 6 contracts)
 
-| Actor | Trusted for | Not trusted for |
+| Contract | Role | Custodies funds? |
 |---|---|---|
-| Protocol admin | One-time initialization parameters; `sy-wrapper`'s `migrate_reserve_index` recovery path | Moving user funds, minting/burning tokens, setting/overriding the SY exchange rate, pausing the protocol (no such function exists) |
-| External yield source (Blend Capital) | Reporting accurate position/supply values | Fully solvent, un-hacked, honest reporting is *assumed*, not verified on-chain — there is currently no rate-of-change bound or independent cross-check |
-| Any user | Only their own funds, gated by `require_auth()` | Anyone else's balances or positions |
+| `sy-wrapper` | Wraps a Blend plain-supply position into SEP-41 SY shares; sole exchange-rate source | Yes (underlying in transit, bTokens at Blend) |
+| `tokenizer` | Splits SY into equal-face PT/YT; holds SY escrow; settlement and yield claims | Yes (escrowed SY) |
+| `pt-token` | Principal claim token (SEP-41); mint/burn gated to `tokenizer` | No (ledger only) |
+| `yt-token` | Yield claim token (SEP-41) with settle/consume ledger; mint/burn gated to `tokenizer` | No (ledger only) |
+| `amm` | Time-decay AMM: PT↔SY direct, SY↔YT flash-routed through the tokenizer; TWAP | Yes (reserves) |
+| `blend-adapter` | Library crate: Blend pool client bindings, rate math, `MockBlendPool` test double | N/A — not deployed |
+
+`contracts/shared/types` is a 50-line trait crate (`StandardizedYield`). `contracts/integration_tests` is test-only.
+
+Dependency graph:
+
+```
+sy-wrapper ──(BlendPoolClient: get_reserve_list/get_reserve/get_positions/submit)──▶ Blend pool
+tokenizer  ──▶ sy-wrapper (exchange_rate), pt-token (mint/burn), yt-token (mint/burn/settle/consume)
+amm        ──▶ sy-wrapper (exchange_rate), pt-token, yt-token, tokenizer (flash split/recombine)
+```
+
+No factory, no vault, no marketplace, no maturity_engine, no rollover, no intent_engine. Each market is a fresh, immutable deployment.
+
+> **SUPERSEDED AUDIT.** `SECURITY_AUDIT.md` (dated 2026-08-07) reviewed the prior 10-contract architecture — factory, vault, marketplace, maturity_engine, rollover, intent_engine, tokenizer, pt_token, yt_token, sy_wrapper — replaced on 2026-08-13. Several of its positive findings (locked minimum liquidity in the SY wrapper, two-step admin transfer, runtime `assert_invariant` post-conditions, a 10%-per-call rate ratchet, admin pause) describe mechanisms that **do not exist in the current contracts**. The current 6-contract architecture has received **no external audit of any kind**.
+
+---
+
+## Trust Model
+
+| Actor | Trusted for | Explicitly NOT trusted / not verified on-chain |
+|---|---|---|
+| Blend Capital pool (external) | Solvency; honest `get_positions`, `get_reserve.data.b_rate`, and `submit` behavior | Nothing about the pool is validated beyond a reserve-index and decimals cross-check. There is no bound on the magnitude or rate of change of `b_rate`. A wrong or malicious value flows straight into the SY rate on the next read. |
+| Protocol admin (single key per contract) | Passing correct one-time init parameters (pool address, maturity, AMM curve params); `sy-wrapper::migrate_reserve_index` recovery | Cannot move user funds, mint/burn tokens, set the exchange rate, or pause anything — no such entry points exist |
+| Underlying token issuer (SAC / SEP-41 asset) | Not freezing or clawing back protocol-held balances | No on-chain mitigation exists for issuer clawback/authorization revocation |
+| Users | Their own funds only, gated by `require_auth()` | Anything belonging to anyone else |
+| Off-chain infra (RPC, frontend, `scripts/`) | Nothing security-relevant | Out of scope of this policy |
 
 ---
 
 ## Access Control
 
-Every fund-moving entry point in every contract was verified to require `require_auth()` from the relevant party (depositor, withdrawer, redeemer). Notable patterns:
+Every entry point that moves funds or is privileged, across all six contracts.
 
-- **No admin transfer/reassignment functions exist.** There is no `transfer_admin`/`accept_admin`, no `set_tokenizer`, and no `set_sy_wrapper` in the current code. Whatever authority relationships (e.g. tokenizer as the sole minter/burner for `pt-token`/`yt-token`) are established at initialization are immutable for the life of the deployed contract.
-- **Mint/burn authority is fixed at init.** `pt-token` and `yt-token` gate mint/burn to a single configured `tokenizer` address checked via `require_auth()`; there is no runtime path to change which address holds that authority.
-- **`sy-wrapper.pool` is fixed at `initialize_blend`** with no rotation function — see "Deployment Verification" below.
-- **Intentionally permissionless functions**: rate/state "crank" reads that only surface real on-chain state and cannot be abused to move funds — e.g. `observe_rate` / `freeze_maturity_rate` (tokenizer) and AMM swap/liquidity entry points (individually user-gated by `require_auth()`, not admin-gated, by design — this is a permissionless AMM).
-- **`migrate_reserve_index`** (sy-wrapper) is the one remaining admin-gated, state-changing recovery function; it re-points the wrapper at a corrected Blend reserve index and cross-checks the new index against the pool before accepting it. It cannot set an arbitrary exchange rate or move user funds.
+| Contract | Function | Moves funds? | Auth mechanism | Privileged? | Status |
+|---|---|---|---|---|---|
+| sy-wrapper | `initialize_blend` | No | `admin.require_auth()` + `AlreadyInitialized` guard | Yes (one-shot) | OK |
+| sy-wrapper | `migrate_reserve_index` | No | `admin.require_auth()` + `admin == config.admin` | Yes | OK — re-derives index from pool, cannot point at a different asset |
+| sy-wrapper | `deposit` | Yes | `from.require_auth()` | No | OK |
+| sy-wrapper | `redeem` | Yes | `from.require_auth()` | No | OK |
+| sy-wrapper | `transfer` / `transfer_from` / `approve` | Yes (shares) | `from` / `spender.require_auth()` + allowance | No | OK |
+| sy-wrapper | (internal) `push_underlying`, `blend_submit` | Yes | `authorize_as_current_contract` scoped to one `(contract, fn, args)` triple | N/A | OK |
+| tokenizer | `initialize` | No | `admin.require_auth()` + one-shot guard | Yes | OK |
+| tokenizer | `split` | Yes | `from.require_auth()` | No | OK |
+| tokenizer | `recombine` | Yes | `from.require_auth()` | No | OK |
+| tokenizer | `redeem_at_maturity` | Yes | `from.require_auth()` + `require_matured` | No | OK |
+| tokenizer | `claim_yield` | Yes | `holder.require_auth()` | No | OK |
+| tokenizer | `observe_rate` / `freeze_maturity_rate` | No | None — permissionless by design | No | OK — read-and-record only; freeze is idempotent and uses the last pre-maturity observation |
+| pt-token | `initialize` | No | `admin.require_auth()` + one-shot guard | Yes | OK |
+| pt-token | `mint` | No (supply) | `config.tokenizer.require_auth()` | Yes (tokenizer only) | OK — fixed at init, no rotation |
+| pt-token | `burn` / `burn_from` | No (supply) | `from` / `spender.require_auth()` | No | OK |
+| pt-token | `transfer` / `transfer_from` / `approve` | Yes | `from` / `spender.require_auth()` | No | OK |
+| yt-token | `initialize` | No | `admin.require_auth()` + one-shot guard | Yes | OK |
+| yt-token | `mint` | No (supply) | `config.tokenizer.require_auth()` | Yes | OK |
+| yt-token | `settle` / `consume` / `burn_settled` | No (ledger) | `config.tokenizer.require_auth()` | Yes | OK — tokenizer calls these via scoped `authorize_as_current_contract` |
+| yt-token | `burn` / `burn_from` / `transfer` / `transfer_from` / `approve` | Yes | `from` / `spender.require_auth()` | No | OK |
+| amm | `initialize` | No | `admin.require_auth()` + one-shot guard + bounds checks on maturity/scalar/anchor/fee/TWAP window | Yes | OK |
+| amm | `swap_pt_for_sy`, `swap_sy_for_pt`, `swap_sy_for_yt`, `swap_yt_for_sy` | Yes | `from.require_auth()` | No (permissionless AMM) | OK |
+| amm | `add_liquidity` / `remove_liquidity` | Yes | `from.require_auth()` | No | OK |
+| amm | (internal) flash split/recombine, pool transfers | Yes | `authorize_as_current_contract` with exact args | N/A | OK — arg-pinning asserted in `auth_invariants.rs` |
+| blend-adapter | — | — | Library only, not deployed | — | N/A |
+
+Auth evidence: `integration_tests/tests/auth_invariants.rs::flash_route_top_level_auth_is_arg_pinned` (auth entries carry exact `sy_in`/`min_yt_out`; every authorized transfer amount is concrete and positive) and `::flash_route_user_only_signs_the_swap` (user signs only the top-level swap plus its funding transfer; the AMM self-scopes every sub-call).
+
+No missing `require_auth()` was found on any fund-moving or privileged entry point.
 
 ---
 
-## Oracle Security
+## Admin Model
 
-The protocol has two internal price/rate sources, both on-chain and derived from real reserve state (no external price feed dependency for AMM pricing):
+**Admin is a single `Address` per contract, supplied at `initialize` and never changeable.** `contracts/scripts/deploy-mainnet.sh` (lines 185–198) passes `--admin "$DEPLOYER_ADDRESS"` — a single `stellar keys` identity — to all five deployed contracts. There is **no multisig, no timelock, no two-step transfer, and no rotation path**. If the key is lost, `migrate_reserve_index` becomes permanently unavailable; if it is compromised, the blast radius is the list below.
 
-1. **AMM implied rate / TWAP** (`amm`): a time-weighted log-implied-rate accumulator. The pre-trade implied rate is recorded *before* reserve state is mutated by the same transaction, closing a same-block manipulation window. A `twap_warming_up()` accessor surfaces whether the window has enough history yet.
-2. **SY exchange rate** (`sy-wrapper`): derived directly from the external yield source's reported position value (Blend's `b_rate` applied to the wrapper's own `b_token` balance) plus idle balance. There is currently **no monotonicity guarantee and no rate-of-change bound** — a single anomalous value reported by Blend flows through to the SY rate on the very next read. See "Known Risks."
+**Admin can:**
+- Set every one-time init parameter: the Blend `pool` address, `underlying`, `maturity`, `tokenizer`/`sy_token` wiring, AMM `scalar_root`, `initial_anchor`, `fee_bps`, `twap_window`.
+- Call `sy-wrapper::migrate_reserve_index`, which re-derives the reserve index from the pool's own reserve list, cross-checks it against `get_reserve(underlying).config.index`, and requires decimals to still match. It cannot aim the wrapper at a different asset.
+
+**Admin cannot:**
+- Move, freeze, or seize any user funds.
+- Mint or burn SY, PT, or YT (mint/burn are gated to the `tokenizer` address, fixed at init).
+- Set or override the SY exchange rate — no setter exists anywhere.
+- Pause, halt, or rate-limit any operation — no such function exists.
+- Upgrade or replace contract code — no `update_current_contract_wasm` call exists.
+- Change fees, the maturity, the AMM curve, or the wired contract addresses after init.
+- Transfer or renounce admin rights.
+
+Note that the *deployer key*, before initialization completes, controls which addresses get wired together. A market is only trustworthy if its full init transcript is verified.
+
+---
+
+## External Dependencies
+
+### REAL BLEND INTEGRATION (in the deployed code path)
+
+`contracts/blend-adapter/src/lib.rs` defines a hand-written `#[contractclient] BlendPoolClient` with four calls: `get_reserve_list`, `get_reserve`, `get_positions`, `submit`. It is hand-written rather than imported because `blend-contract-sdk` pins Soroban SDK 25 while Novaire is on 26.1.
+
+- The pool address is supplied by the deployer at `initialize_blend` and **stored immutably**. Init validates only that `underlying` appears in the pool's reserve list, that the pool's own `get_reserve(underlying).config.index` agrees with that position, and that reserve decimals equal 7. **No on-chain check can distinguish a genuine Blend pool from a convincing fake** — this is entirely an operational deploy-time concern.
+- Assets under management are read live on every rate call: `blend_assets_under_management` reads `get_positions(self).supply[reserve_index]` and multiplies by `get_reserve(underlying).data.b_rate / 1e12` (`assets_from_b_tokens`). It traps with `InvalidBlendReserve` if the pool has since moved the underlying to a different reserve index — fail-closed, recoverable only by `migrate_reserve_index`.
+- The exchange rate is `aum * WAD / sy_supply` (`derived_exchange_rate`), returning `WAD` when supply is zero. **There is no bound on the value, no monotonicity enforcement, no rate-of-change limiter, and no independent cross-check.** The adapter's doc comment asserts monotonicity "under normal operation" — that is an assumption about Blend, not an enforced invariant.
+- Deposits use plain `Supply` (request type 0), not `SupplyCollateral`, so the position is never seizable in a Blend liquidation. Withdrawals use `try_submit` so a failing Blend withdraw reverts before any share is burned (`sy-wrapper` line ~520).
+
+### MockBlendPool — TEST INFRASTRUCTURE ONLY
+
+`blend-adapter/src/lib.rs::testutils::MockBlendPool` is an in-memory double compiled only under `#[cfg(any(test, feature = "testutils"))]`. It exposes unrestricted `set_b_rate`, `set_reserve_index`, `set_reserve_list`, `set_should_fail_withdraw` with **no authorization at all** — appropriate for a test double, catastrophic if ever deployed. It is not in the mainnet deploy script's contract list (`sy_wrapper pt_token yt_token tokenizer amm`).
+
+**Every Rust unit and integration test in this repo runs against MockBlendPool.** Any claim that Blend integration is "verified" refers to mock behavior unless it names `scripts/verify-testnet.ts`.
 
 ---
 
 ## Economic Security
 
-- **First-depositor / share-inflation attack:**
-  - `amm`: mitigated via `MINIMUM_LIQUIDITY` — a fixed amount of LP shares permanently unminted (locked) on the first liquidity provision, the standard "dead shares" pattern.
-  - `sy-wrapper`: **no equivalent dead-shares mechanism exists.** Shares are minted as a plain ratio (`assets_credited * WAD / rate`) with no minimum lock on first deposit. The classic ERC-4626 inflation attack (attacker deposits a trivial amount, then donates directly to the vault's tracked assets to inflate the rate before a victim deposits, rounding the victim's shares to zero) requires a way to inflate the wrapper's tracked AUM *without* depositing through the wrapper. Because AUM is computed from the wrapper's own `b_token` balance at the pool's `b_rate` rather than a raw, externally-toppable balance, a third party cannot directly donate to inflate it — but this has **not** been proven with a dedicated regression test in the current suite. Treat as unconfirmed-low until such a test exists (see Remediation Roadmap).
-- **PT/YT solvency model:** the tokenizer does **not** assume PT principal is unconditionally backed. On `recombine` / `redeem_at_maturity`, PT claims are senior: any shortfall between escrowed SY value and PT face value is absorbed pro-rata by YT holders' surplus claim first. `claim_yield` reserves the senior PT claim before allowing YT to draw down surplus, so YT cannot be paid out in a way that leaves PT under-collateralized by the escrowed balance at that moment.
-- **Maturity-rate freeze:** the tokenizer freezes the observed exchange rate at maturity (`freeze_maturity_rate` / `MaturityRate`) so that post-maturity Blend rate movement cannot leak into or out of matured PT/YT redemption value.
-- **Fee model:** a flat fee (configurable at deploy, default 0.3%) on PT/SY swaps; YT pricing (derived via flash-recombine against the same curve) uses the same fee structure.
-- **AMM bounds:** market proportion, scalar root, anchor, and reserve size are all bounds-checked at initialization and on every trade (`MAX_MARKET_PROPORTION`, `MAX_RESERVE_UNITS`, `MAX_SCALAR_ROOT`, `MAX_ANCHOR`), preventing degenerate or unbounded curve configurations.
+### SY exchange rate
+Derived only from the Blend position: `assets_from_b_tokens(b_tokens, b_rate) * WAD / total_shares`. No admin setter exists (confirmed by the absence of `set_exchange_rate` from `SyWrapperClient`; the sy-wrapper test module notes it would not compile if one existed). Deposits are priced at the **pre-deposit** rate and mint against the *actual* AUM increase after Blend's bToken rounding, so a deposit cannot dilute the rate.
+
+### First-depositor / inflation attack
+
+- **`amm`: MITIGATED.** `MINIMUM_LIQUIDITY = 1_000` LP shares are permanently unminted on the first `add_liquidity` (`amm/src/lib.rs` lines 587–609), the standard dead-shares pattern. Covered by tests asserting the seed mints `sqrt(pt*sy) - MINIMUM_LIQUIDITY`.
+- **`sy-wrapper`: OPEN.** There is **no minimum liquidity lock, no dead shares, and no virtual-share offset.** Shares are `assets_credited * WAD / exchange_rate`, and `exchange_rate` bootstraps to `WAD` only while supply is zero. **No regression test for a donation/inflation attack exists.** The previous revision of this document argued the attack is closed because AUM is read from the wrapper's own bToken position rather than a donatable token balance. **That argument is not sound as written**: Blend's `submit` credits the `from` address's supply position, so a third party paying their own underlying into the pool on behalf of the wrapper's address would raise the wrapper's bToken balance — and therefore its AUM and rate — without minting any SY. Whether real Blend permits a non-authorizing `from` on a supply request is a property of Blend, not of this repo, and **has not been verified here against the real pool contract**. Until it is, treat sy-wrapper first-depositor inflation as **OPEN**, not mitigated.
+
+### AMM: SY shares vs. underlying asset units
+
+The curve prices PT face against **asset** units while reserves are held in **SY shares**. The current code converts at the boundary:
+
+- `precompute_or_panic` (line ~890) computes `total_asset = sy_to_asset(state.total_sy, rate)` with the live SY rate read from the SY contract (`sy_rate_or_panic`, the same entry point the tokenizer prices with), floor-rounded.
+- Trade math converts back with `asset_to_sy_down` when paying out and `asset_to_sy_up` when charging in (lines ~930–1070), i.e. rounding always favors the pool.
+- `apply_exact_*_trade` recomputes the observed implied rate from `sy_to_asset(state.total_sy, comp.rate)`, not raw shares.
+- Flash routes convert with `shares_in_for_face_up` / `shares_out_for_face_down`, ceil/floor matched to the tokenizer's own flooring.
+
+**Evidence this is exercised at a non-unit rate:** `integration_tests/tests/journey.rs::flash_route_over_mint_dust_stays_a_matched_pair_and_never_panics` sweeps ~220 rate/trade-size combinations with the pool-derived rate moved above `WAD`, asserting the buyer receives exactly `yt_out` and `amm.reserve_sy() == sy.balance(&amm)` throughout; `::yt_flash_route_accepts_one_share_recombine_dust_window` does the same at three rate deltas. **Status: MOCK-TESTED as correct on the trade path.**
+
+**Residual, OPEN:** the *seeding* path still conflates the two units. In `add_liquidity`, when `state.total_lp == 0`, the initial `last_ln_implied_rate` is computed as `get_ln_implied_rate_or_panic(env, state.total_pt, state.total_sy, ...)` (`amm/src/lib.rs` lines 598–605) — passing raw SY shares into the `total_asset` parameter, with no `sy_to_asset` conversion. Every other call site converts. A market seeded when the SY rate has already accrued above `WAD` therefore starts from a mispriced implied rate and anchor. No test covers this: every AMM test seeds liquidity while the rate is still `WAD`, and the `proptest` fuzzer runs entirely at `WAD`. **Severity P2, status OPEN.**
+
+### PT/YT invariants (tokenizer)
+- `split` mints equal PT and YT face `= floor(sy_amount * rate / WAD)` and escrows the SY. Collateral-neutral by construction; deliberately not gated on solvency (matching Pendle's `_mintPY`).
+- `recombine` and `redeem_at_maturity` cap the payout at `min(full, escrow_shares * pt_amount / pt_supply)` — a pro-rata haircut under shortfall rather than a first-come drain.
+- `claim_yield` is **PT-senior**: it pays `min(owed, max(0, escrow_shares - ceil(pt_supply * WAD / rate)))`, reserving full PT face (rounded up) before YT may draw. Unpaid yield stays banked in the YT ledger, never lost, never overpaid.
+- Post-maturity redemption uses a frozen rate — the last rate observed **at or before** maturity (`effective_rate`), never a live post-maturity read, so freeze timing cannot move value between PT and YT.
+- Rate reads on the tokenizer path use 256-bit intermediates (`mul_div_floor`/`mul_div_ceil` over `I256`) so `pt_supply * WAD` cannot spuriously overflow.
 
 ---
 
-## Storage Security
+## Threat Model
 
-Soroban contracts pay ongoing "rent" to keep storage entries alive; an unrefreshed entry can archive and become temporarily inaccessible. Our policy:
+Trust boundaries along the value path.
 
-- All persistent storage holding user balances/positions is TTL-extended on every read and every write, verified across all contracts.
-- Instance storage (admin, config, global counters) is extended on every meaningful call via a shared `bump_instance_ttl` helper.
+**1. User → sy-wrapper**
+Trusted party: none (user is adversarial). Attacker capability: arbitrary deposit/redeem/transfer sizes and ordering. Protected asset: other users' SY shares and principal accounting. Mitigation: `require_auth()` on every path; positive-amount checks; balance checks; principal moved pro-rata on transfer; deposits priced pre-deposit against actual credited AUM. Residual risk: **first-depositor inflation is OPEN** (no minimum-liquidity lock, no regression test).
 
----
+**2. sy-wrapper → Blend pool**
+Trusted party: Blend, fully. Attacker capability: a compromised, buggy, or insolvent pool can report any `b_rate`/position, or fail withdrawals. Protected asset: all underlying in the protocol, and the rate every PT/YT valuation derives from. Mitigation: reserve-index/decimals cross-check; plain-supply (non-collateral) position; fail-closed `InvalidBlendReserve` trap on reindex; `try_submit` so a failed withdraw burns no shares. Residual risk: **unbounded** — no magnitude bound, no rate-of-change limiter, no independent oracle, no pool rotation, and the pool address is only as good as the deploy-time check.
 
-## Protocol Invariants
+**3. sy-wrapper → tokenizer (PT/YT)**
+Trusted party: the SY contract's `exchange_rate`. Attacker capability: exploit a rate move between quote and execution, or drain escrow ahead of other holders. Protected asset: escrowed SY backing PT face. Mitigation: pro-rata escrow cap on both exit paths; PT-senior surplus cap on `claim_yield`; maturity-rate freeze from a pre-maturity observation. Residual risk: `recombine` has **no on-chain `min_sy_out`** — slippage from a rate move must be bounded client-side; the pre-maturity observation tail is credited conservatively to PT.
 
-The authoritative, code-referenced invariant list lives in [`docs/protocol/CONTRACTS.md`](docs/protocol/CONTRACTS.md). These invariants are exercised by the test suite (unit, integration, and — for the AMM — property-based fuzzing); they are **not** re-asserted as a runtime post-condition inside the deployed contract logic itself (see "Known Risks" — there is no equivalent to a runtime `assert_invariant` call on the hot path today):
+**4. tokenizer → PT/YT tokens**
+Trusted party: the `tokenizer` address recorded at init. Attacker capability: forge a mint/burn/settle. Protected asset: PT/YT supply integrity. Mitigation: `config.tokenizer.require_auth()` on `mint`, `settle`, `consume`, `burn_settled`; the tokenizer authorizes those calls with exact arguments via `authorize_as_current_contract`. Residual risk: a misconfigured `tokenizer` address at init is unrecoverable — there is no `set_tokenizer`.
 
-- Tokenizer: PT claims are senior to YT claims; any shortfall is absorbed pro-rata by YT before PT; PT/YT minted in equal face amounts.
-- AMM: reserves are never one-sided; `MINIMUM_LIQUIDITY` LP shares are permanently locked from the first deposit; on-chain token balances are always ≥ tracked reserves in the property-fuzzer model.
+**5. PT/YT → AMM**
+Trusted party: none. Attacker capability: sandwiching, flash-loan style single-transaction manipulation, degenerate curve inputs, dust farming on the flash route. Protected asset: LP reserves. Mitigation: bounds checks (`MAX_RESERVE_UNITS`, `MAX_SCALAR_ROOT`, `MAX_ANCHOR`, fee range) at init and per trade; slippage floors on all four swaps; `MINIMUM_LIQUIDITY` dead shares; rounding always in the pool's favor; over-minted flash dust retained as a matched, recombinable PT/YT pair. Residual risk: **market-seed implied rate is computed in the wrong units (P2, OPEN)**; `reconcile_reserves` sets reserves from live token balances, so a direct token donation to the pool address shifts reserves without a corresponding implied-rate update — economic impact **UNVERIFIED**.
 
----
-
-## Emergency Controls
-
-**There is currently no pause mechanism, circuit breaker, or emergency-halt capability of any kind in any contract.** Deposits, swaps, mints, and redemptions cannot be paused by the admin or by any automated trigger. If a critical bug or a Blend-side incident is discovered post-deployment, the only mitigation available is off-chain (frontend takedown, public advisory) — there is no on-chain lever to stop new activity against an already-deployed market.
-
-This is a deliberate simplification relative to an earlier design that included admin-gated pause and a permissionless, decrease-only loss-marking function; both were removed and are not present in the current contracts. Reintroducing an incident-response lever (or formally re-affirming its absence as an accepted trade-off) is tracked in the Remediation Roadmap below.
+**6. AMM/tokenizer → Settlement (maturity)**
+Trusted party: whoever pokes `observe_rate` before maturity (permissionless). Attacker capability: withhold observations so the frozen rate is stale, or race the first post-maturity call. Protected asset: the split of terminal value between PT and YT. Mitigation: freeze uses the last at-or-before-maturity observation, is idempotent, and `claim_yield` establishes the same rate before settling YT, so ordering cannot change outcomes (`economics.rs::pt_redeem_and_yt_claim_use_one_frozen_rate_regardless_of_order`). Residual risk: an unobserved tail between the last observation and maturity is resolved in PT's favor; YT holders must poke `observe_rate` to close it.
 
 ---
 
-## Upgrade Strategy
+## Security Controls (present in code)
 
-Each market's contract set is deployed fresh (there is no factory). Contracts are immutable once deployed, and protocol evolution happens by deploying a new market's contract set. A new maturity or a new underlying is a fresh deployment, not an upgrade.
+- `require_auth()` on every fund-moving and privileged entry point (table above).
+- Cross-contract authorization narrowly scoped via `authorize_as_current_contract` to a single `(contract, function, exact args)` triple with empty `sub_invocations`, in `sy-wrapper`, `tokenizer`, and `amm`.
+- Checked arithmetic throughout (`checked_*` helpers that trap with `MathOverflow`); 256-bit intermediates in the tokenizer; `overflow-checks` enabled for release builds.
+- One-shot `AlreadyInitialized` guards on all five deployed contracts; `NotInitialized` traps on every public path of `sy-wrapper` before config exists.
+- Fail-closed Blend reserve validation (index + decimals) at init, at every AUM read, and at migration.
+- Tolerated Blend withdraw (`try_submit`) that reverts before burning shares.
+- AMM input bounds: reserve size, scalar root, anchor, fee bps, TWAP window, plus `ExchangeRateBelowOne` rejection before any implied-rate write.
+- Slippage floors (`min_*_out`) on all four AMM swaps and on `remove_liquidity`.
+- `MINIMUM_LIQUIDITY` dead shares in the AMM.
+- Pro-rata escrow cap and PT-senior yield subordination in the tokenizer.
+- Maturity-rate freeze from a pre-maturity observation.
+- Storage TTL extension: persistent balance/principal/LP entries bumped on write, instance entries bumped via `bump_instance_ttl`, temporary allowance entries extended to cover their requested expiration.
+
+**Not present:** pause, circuit breaker, emergency withdrawal, upgradeability, admin transfer, rate-of-change limiter, oracle sanity bounds, multisig, timelock, per-block or per-user rate limits, deposit caps.
+
+---
+
+## Testing & Verification
+
+| Area | Label | Evidence |
+|---|---|---|
+| Authorization / arg-pinning on the flash route | **TESTED** | `auth_invariants.rs` (2 tests) |
+| Admin gating of `migrate_reserve_index` | **TESTED** | `sy-wrapper` unit test + `blend_wrapper.rs` (non-admin, absent underlying, index mismatch) |
+| SY deposit/redeem/transfer, principal accounting, allowance TTL | **MOCK-TESTED** | `sy-wrapper/src/lib.rs` tests against `MockBlendPool` |
+| Blend rate propagation, reindex trap, reindex recovery, tolerated withdraw failure | **MOCK-TESTED** | `blend_wrapper.rs` (5 tests) |
+| Blend rate math (`b_rate` scaling, derived rate, monotonic-under-growth, overflow) | **TESTED** (pure functions) | `blend-adapter` unit tests |
+| Real Blend pool behavior end-to-end | **TESTNET-VERIFIED (partial, single scenario)** | `scripts/verify-testnet.ts` scenario F "Blend rate propagation (real pool)"; skips if the reserve is disabled. No mainnet verification. |
+| PT/YT economics: yield accrual, frozen maturity rate, ordering independence, rate-regression haircut, PT-senior subordination, banked-yield recovery, conservation under random sequences | **MOCK-TESTED** | `economics.rs` (~20 tests incl. a seeded randomized conservation test) |
+| AMM swaps, fees, LP mint/burn, slippage, minimum liquidity, TTL, reserve reconciliation | **TESTED** | `amm/src/lib.rs` test module |
+| AMM PT/YT/SY invariants under randomized op sequences | **TESTED (at SY rate = WAD only)** | `proptest!` 10,000 cases; the fuzzer never moves the SY rate |
+| AMM unit correctness (SY shares vs. asset) on the **trade** path at rate > WAD | **MOCK-TESTED** | `journey.rs` dust sweeps across ~220 rate/size combinations |
+| AMM unit correctness on the **market-seed** path at rate > WAD | **NOT TESTED** | See finding N-01 |
+| sy-wrapper first-depositor / donation inflation attack | **NOT TESTED** | No such test exists in the repo |
+| Adversarial Blend: out-of-bounds, decreasing, or hostile `b_rate` | **NOT TESTED** | Only benign growth and two overflow cases are exercised |
+| Underlying-issuer clawback / authorization revocation | **NOT TESTED** | — |
+| Mainnet deployment | **NOT PERFORMED** | `deploy-mainnet.sh` simulates by default; requires `--execute-mainnet` |
+| External security audit of the current architecture | **NONE** | `SECURITY_AUDIT.md` covers the superseded 10-contract design |
 
 ---
 
 ## Known Risks
 
-1. **External yield-source trust, currently unbounded.** The protocol's core exchange rate is fully dependent on the correctness and honesty of an external Blend Capital lending pool contract, with no on-chain rate-of-change limiter today (a previous design included one; it is not present in the current `sy-wrapper`). A single bad or malicious `b_rate` report from Blend flows directly into the SY exchange rate on the next read, with no dampening. This is an inherent risk of any yield-wrapping design, currently **unmitigated on-chain**. Users should understand that PT/YT value ultimately depends on a third-party contract outside this repository. `sy-wrapper`'s `pool` address is set once at `initialize_blend` with no rotation function, so the correctness of this trust boundary hinges entirely on the `pool` address passed at deploy time being the genuine, official Blend Capital pool — see "Deployment Verification" below.
-
-2. **No emergency pause.** See "Emergency Controls" above — there is no way to halt an already-deployed market on-chain if an issue is found.
-
-3. **sy-wrapper first-depositor inflation attack — likely but not conclusively mitigated.** See "Economic Security" above. AUM is derived from the wrapper's own `b_token` position rather than a directly-donatable balance, which likely closes the classic attack path, but this has not been proven by a dedicated test.
-
-4. **No independent oracle verification.** The SY exchange rate derives entirely from Blend's self-reported `b_rate` with no on-chain cross-check against an independent price source.
-
-5. **Single-key admin, narrow but nonzero blast radius.** Admin authority is a single `Address` per contract with no multisig or timelock. Its current on-chain capability is limited (see "Access Control") but a compromised key could still, e.g., call `migrate_reserve_index` on `sy-wrapper` with an incorrect (though pool-cross-checked) reserve index.
-
----
-
-### Deployment Verification (required before every deploy)
-
-Because `sy-wrapper`'s `pool` address is set once at `initialize_blend` and cannot be rotated, a wrong or malicious address wired in at deploy time is **not** caught by any on-chain validation beyond a reserve-index/decimals consistency check against that pool. Whoever deploys MUST, before submitting the transaction:
-
-- [ ] Confirm the `pool` address matches the official Blend Capital pool listed in Blend's own deployment registry/docs for the target network (mainnet vs. testnet), not a value copied from a prior deployment, a fork, or an unverified third-party source.
-- [ ] Confirm the underlying asset accepted by that pool matches `params.underlying` for this market.
-- [ ] Record the verified `pool` address (and the source used to verify it) alongside the market's deployment record for later audit.
-
-This is an operational step, not a code-enforceable one — no on-chain check can distinguish a genuine Blend pool address from a convincing fake at deploy time.
+1. **Unbounded trust in the external Blend pool.** No magnitude bound, no rate-of-change limiter, no independent oracle cross-check, no pool rotation. A single bad `b_rate` reaches the SY rate on the next read. **Unmitigated on-chain.**
+2. **No emergency controls of any kind.** No pause, no circuit breaker, no emergency withdrawal, no upgrade. If a critical bug is found post-deployment, there is no on-chain lever — only off-chain communication and frontend takedown, which do not stop on-chain activity.
+3. **sy-wrapper first-depositor inflation: OPEN.** No dead shares, no virtual shares, no regression test. The prior "likely mitigated" reasoning is not sound (see Economic Security).
+4. **AMM market-seed unit conflation: OPEN (P2).** Raw SY shares passed where asset units are expected, at first `add_liquidity` only.
+5. **Single-key admin, no timelock, no rotation, no recovery.** Key loss permanently disables `migrate_reserve_index`, the only recovery path from a Blend reindex.
+6. **Pool address is immutable and unverifiable on-chain.** A wrong or hostile address wired at deploy time is permanent.
+7. **`recombine` has no on-chain `min_sy_out`.** A rate move between quote and execution changes the share count returned; callers must bound this client-side.
+8. **Direct token donations to the AMM change reserves.** `reconcile_reserves` reads live balances; economic effect **UNVERIFIED**.
+9. **`MockBlendPool` has no authorization on its setters.** Test-only and excluded from the deploy list, but it must never be built into a deployed artifact.
+10. **No external audit of the current architecture.**
 
 ---
 
-## Security Note: ExchangeRateBelowOne
+## Security Findings
 
-`ExchangeRateBelowOne` is an intentional AMM invariant. Trades that would
-produce an exchange rate below `WAD` are reverted before the resulting
-`last_ln_implied_rate` can be persisted.
+| ID | Severity | Component | Finding | Status |
+|---|---|---|---|---|
+| N-01 | P2 | amm | First `add_liquidity` computes the initial `last_ln_implied_rate` from raw `state.total_sy` instead of `sy_to_asset(total_sy, rate)` (lines 598–605); every other call site converts. A market seeded at SY rate > WAD starts from a mispriced anchor. | **OPEN** — no test covers seeding at a non-unit rate |
+| N-02 | P1 | sy-wrapper | No first-depositor protection: no minimum-liquidity lock, no dead shares, no virtual-share offset, and no donation/inflation regression test. Prior "mitigated" reasoning depends on unverified Blend `submit` semantics for a third-party `from`. | **OPEN / UNVERIFIED** |
+| N-03 | P1 | sy-wrapper / blend-adapter | SY exchange rate has no magnitude bound, no rate-of-change limiter, and no independent cross-check; a hostile or buggy `b_rate` propagates immediately. No adversarial `b_rate` test exists. | **OPEN — accepted design trade-off, unmitigated** |
+| N-04 | P1 | all | No pause, circuit breaker, emergency withdrawal, or upgrade mechanism exists anywhere. | **OPEN — by design; no incident-response lever** |
+| N-05 | P2 | all | Admin is a single key per contract with no multisig, timelock, transfer, or rotation. | **OPEN** |
+| N-06 | P2 | sy-wrapper | Blend `pool` address is immutable after `initialize_blend`, and no on-chain check can distinguish a genuine pool from a fake. | **OPEN — operational control only** |
+| N-07 | P3 | tokenizer | `recombine` accepts no `min_sy_out`; rate drift between quote and execution changes the share count. Documented in-code as deliberate. | **OPEN — accepted, client-side mitigation required** |
+| N-08 | P3 | amm | `reconcile_reserves` derives reserves from live token balances, so an unsolicited token transfer to the pool shifts reserves without an implied-rate update. | **UNVERIFIED** |
+| N-09 | P3 | blend-adapter | `MockBlendPool` exposes unauthenticated `set_b_rate` / `set_reserve_index` / `set_reserve_list`. Gated behind `#[cfg(any(test, feature = "testutils"))]` and absent from the deploy list. | **MITIGATED by build gating — verify no release artifact enables `testutils`** |
+| N-10 | INFO | repo | `SECURITY_AUDIT.md` covers the superseded 10-contract architecture; its positive findings (dead shares in SY, two-step admin, runtime invariants, rate ratchet, pause) do not apply to current code. | **DOCUMENTED — marked superseded in both files** |
+| N-11 | INFO | amm | The `proptest` invariant fuzzer runs entirely at SY rate = WAD, so it cannot detect SY-vs-asset unit errors. | **OPEN — coverage gap** |
+| N-12 | INFO | all | No mitigation or detection for underlying-issuer clawback / authorization revocation on protocol-held balances. | **OPEN — accepted** |
 
-The transaction is atomic, so the failed trade leaves the pool state unchanged
-and the market remains usable.
-
-A previously reported concern was that this error could persist an invalid
-market state and cause a trading DoS. It was investigated against the current
-source (`contracts/amm/src/lib.rs`) and the deployed testnet WASM. Multiple
-oversized-trade, boundary, repeated-swap, and near-expiry scenarios were
-reproduced. In every case the triggering transaction reverted atomically and
-subsequent quotes remained functional; the live testnet market was also
-queried directly and confirmed healthy.
-
-No alternate state-write path or separate AMM implementation was found.
-
-**Disposition:** Not reproducible in the current implementation or deployment.
-No protocol change required. On-chain history beyond the RPC retention window
-was not inspected — a specific transaction hash or ledger sequence would be
-required to investigate any future claim of a historical incident.
+Findings from earlier revisions that were re-verified and remain closed: the AMM `ExchangeRateBelowOne` "trading DoS" report is not reproducible — the check runs before `last_ln_implied_rate` is persisted, so the failing trade reverts atomically and leaves market state unchanged. No alternate state-write path or second AMM implementation exists in the current source.
 
 ---
 
-## Testing Strategy
+## Mainnet Readiness — Security Considerations
 
-- Unit and integration tests exist per-contract under `contracts/*/src/test.rs`, plus `contracts/integration_tests/` for cross-contract invariants, economics, and regression suites.
-- `amm` additionally carries a `proptest`-based property fuzzer exercising AMM invariants under randomized operation sequences.
-- Known gaps: no dedicated sy-wrapper donation/inflation-attack regression test (see Known Risks #3); no adversarial/dishonest-yield-source test scenarios for an out-of-bounds or decreasing Blend `b_rate`.
+**This protocol is not ready for mainnet, and this document makes no claim of mainnet readiness.** Items that must be resolved or explicitly, publicly accepted first:
+
+1. Obtain an external security audit of the **current 6-contract architecture**. None exists.
+2. Resolve or formally accept **N-01** (AMM seed-path unit conflation) — this one is a code fix, not a documentation decision.
+3. Close **N-02** with a real donation/inflation regression test, or add a minimum-liquidity lock to `sy-wrapper`.
+4. Decide, publicly, on **N-03** (unbounded Blend trust) and **N-04** (no emergency controls): implement a mitigation or record them as permanent accepted trade-offs with user-facing disclosure.
+5. Decide on **N-05**: move admin to a multisig or timelocked account, or document the single-key model as accepted.
+6. Execute the pre-deploy verification checklist below and publish the transcript.
+7. Add adversarial Blend tests (out-of-bounds, decreasing, and hostile `b_rate`).
+8. Replace the placeholder security contact below with a monitored address and publish a PGP key.
+
+### Pre-deploy verification (required for every deployment)
+
+- [ ] Confirm the `BLEND_POOL` address matches the official Blend Capital pool in Blend's own registry for the target network — not copied from a prior deployment, a fork, or a third party.
+- [ ] Confirm the pool's reserve for `UNDERLYING_ID` is enabled, has 7 decimals, and matches the intended asset.
+- [ ] Confirm `MATURITY`, `SCALAR_ROOT`, `INITIAL_ANCHOR`, `FEE_BPS`, `TWAP_WINDOW` — all immutable after init.
+- [ ] Confirm the admin address, and that whoever controls it accepts the single-key model (or has moved it to a multisig account first).
+- [ ] Verify the deployed WASM hashes against a reproducible build, and confirm no artifact was built with the `testutils` feature.
+- [ ] Confirm every contract's init succeeded with the intended wiring **before** any user funds enter — the `tokenizer` address in PT/YT is unchangeable.
+- [ ] Seed AMM liquidity being aware of finding N-01 while it remains open.
+- [ ] Record the full init transcript alongside the deployment record.
+
+`deploy-mainnet.sh` helps here: it simulates by default, requires `--execute-mainnet`, validates the network passphrase against the real mainnet passphrase, refuses testnet-looking network names, and requires every economic parameter to be supplied explicitly with no fallback defaults.
 
 ---
 
-## Vulnerability Reporting
+## Incident Response
+
+The honest position: **there are no on-chain incident-response mechanisms.** No pause, no emergency withdrawal, no upgrade, no admin fund recovery.
+
+What actually exists:
+
+- **Detection:** contract events (`Deposit`, `Redeem`, `ReserveMigrated`, `Split`, `Recombine`, `RedeemAtMaturity`, `ClaimYield`) can be monitored off-chain. No automated monitoring or alerting is claimed here.
+- **Fail-closed traps:** several classes of anomaly halt themselves — `InvalidBlendReserve` on a Blend reindex bricks all rate reads (and therefore deposits, splits, recombines) until an admin migration; `MathOverflow`, `ExchangeRateBelowOne`, and `InsufficientLiquidity` revert the offending transaction atomically. These are self-protective traps, not an operator-controlled kill switch.
+- **The one admin lever:** `sy-wrapper::migrate_reserve_index`, which only recovers from a Blend reindex.
+- **Off-chain response only:** public advisory, frontend takedown, direct communication. **None of these stop on-chain activity against a deployed market.** Users can always exit through the normal paths as long as the Blend pool is functioning.
+- **New markets:** because contracts are immutable and each market is a fresh deployment, remediation of a code defect means deploying a new market — existing markets cannot be fixed in place.
+
+---
+
+## Responsible Disclosure
 
 If you discover a security vulnerability in this protocol, **please do not open a public GitHub issue.**
 
@@ -191,50 +332,3 @@ If you discover a security vulnerability in this protocol, **please do not open 
 - **Informational** — code quality, documentation, or centralization observations with no direct exploit path.
 
 **Disclosure timeline:** we ask reporters to give us 90 days from acknowledgment before any public disclosure, or until a fix is shipped, whichever is sooner. We will keep you updated on remediation progress throughout.
-
----
-
-## Remediation Roadmap
-
-All items below are **outstanding** as of this document's publication.
-
-### Critical
-- [ ] None identified.
-
-### High
-- [ ] None identified.
-
-### Medium
-- [ ] Decide whether to reintroduce an emergency pause mechanism (or formally accept its absence as a permanent design trade-off) before mainnet.
-- [ ] Decide whether to reintroduce a rate-of-change bound on the SY exchange rate (or formally accept unbounded Blend trust as a permanent design trade-off) before mainnet.
-- [ ] Add a dedicated sy-wrapper first-depositor donation/inflation-attack regression test to conclusively confirm or refute the risk noted above.
-
-### Low / Best Practices / Informational
-- [ ] Replace the placeholder security contact email and PGP key above before mainnet launch.
-- [ ] Consider multisig or timelock for the remaining admin surface (`migrate_reserve_index`, market deployment parameters), even though current blast radius is narrow.
-- [ ] Align `soroban-sdk` dependency versions across all workspace crates.
-- [ ] Add adversarial/out-of-bounds Blend `b_rate` test scenarios to `sy-wrapper`'s test suite.
-
----
-
-## Current Architecture (6 Contracts)
-
-| Contract | Role | Custodies Funds? |
-|---|---|---|
-| `sy-wrapper` | Wraps Blend position into ERC-4626-style SY shares; exchange rate oracle | Yes |
-| `tokenizer` | Splits SY into equal-face PT/YT; holds escrow; settles yield/redemptions | Yes (escrowed SY) |
-| `pt-token` | Fixed-principal claim token (SEP-41), mint/burn gated to tokenizer | No (ledger only) |
-| `yt-token` | Variable-yield claim token (SEP-41), checkpoint/accrual, mint/burn gated to tokenizer | No (ledger only) |
-| `amm` | Time-decay AMM (PT↔SY direct, SY↔YT flash-routed via tokenizer); TWAP | Yes (reserves) |
-| `blend-adapter` | Library crate: rate derivation math + Blend pool client trait | N/A (not deployed) |
-
-**Dependency graph:**
-```
-sy-wrapper ──(reads via BlendPoolClient)──▶ Blend Capital Pool
-tokenizer ──▶ sy-wrapper (exchange_rate)
-tokenizer ──▶ pt-token (mint/burn)
-tokenizer ──▶ yt-token (mint/burn/settle/consume)
-amm ──▶ pt-token / sy-wrapper / yt-token / tokenizer (flash split/recombine)
-```
-
-No factory, no vault, no marketplace, no maturity_engine, no rollover, no intent_engine.

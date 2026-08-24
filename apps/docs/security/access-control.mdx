@@ -1,39 +1,44 @@
 ---
 title: "Access Control"
-description: "require_auth() patterns and privileged operations"
+description: "Exactly who can call what, per contract."
 ---
 
-## Verified pattern
+## Authorization patterns used
 
-Per `SECURITY.md`: every fund-moving entry point in every contract was verified to require `require_auth()` from the relevant party (depositor, withdrawer, redeemer, or admin as appropriate).
+| Pattern | Meaning | Where used |
+|---|---|---|
+| `require_auth()` on a user address | Caller must have signed for this specific invocation | All user-initiated actions: `deposit`, `redeem`, `split`, `recombine`, `swap_*`, `add/remove_liquidity`, `burn`, `transfer` |
+| `require_auth()` on `config.tokenizer` | Only the tokenizer contract can call | `pt-token.mint`; `yt-token.mint`/`settle`/`consume`/`burn_settled` |
+| `require_auth()` on `config.admin` | Only the admin address can call | `sy-wrapper.migrate_reserve_index`; every contract's `initialize` |
+| Permissionless (no auth check) | Anyone can call | `tokenizer.observe_rate`, `tokenizer.freeze_maturity_rate`, `amm.bump_ttl`, `amm.bump_lp_ttl`, all `quote_*`/read-only accessors |
+| Self-authorized cross-contract call | The calling contract authorizes the sub-call on its own behalf, not the user | AMM's flash routes into the tokenizer; tokenizer's mint/burn calls into PT/YT |
 
-## Two-step admin transfer
+## Per-contract table
 
-`transfer_admin` / `accept_admin` is used in `vault`, `sy_wrapper`, `pt_token`, and `yt_token` — prevents an admin from bricking a contract by transferring to an unreachable or mistyped address. The new admin must sign `accept_admin` themselves before the transfer takes effect.
+| Contract | Function | Authorization |
+|---|---|---|
+| `sy-wrapper` | `initialize_blend` | admin |
+| `sy-wrapper` | `migrate_reserve_index` | admin (self-verifying — see below) |
+| `sy-wrapper` | `deposit`, `redeem` | the depositor/redeemer |
+| `sy-wrapper` | `transfer`, `approve` | the token holder |
+| `tokenizer` | `initialize` | admin |
+| `tokenizer` | `split`, `recombine`, `redeem_at_maturity`, `claim_yield` | the acting holder |
+| `tokenizer` | `observe_rate`, `freeze_maturity_rate` | none (permissionless) |
+| `pt-token` | `initialize` | admin |
+| `pt-token` | `mint` | tokenizer only |
+| `pt-token` | `burn` | the token holder |
+| `pt-token` | `burn_from` | an approved spender |
+| `yt-token` | `initialize` | admin |
+| `yt-token` | `mint`, `settle`, `consume`, `burn_settled` | tokenizer only |
+| `yt-token` | `burn` | the token holder (self-settles via the tokenizer first) |
+| `amm` | `initialize` | admin |
+| `amm` | `swap_*`, `add_liquidity`, `remove_liquidity` | the acting trader/LP |
+| `amm` | `bump_ttl`, `bump_lp_ttl` | none (permissionless keepers) |
 
-## Authority reassignment (`pt_token`/`yt_token`)
+## Why `migrate_reserve_index` is safe despite being admin-only
 
-`set_tokenizer` (both tokens) and `set_sy_wrapper` (`yt_token`) reassign which contract is allowed to mint/burn. As of **SEC-06 (fixed)**, these are staged two-step operations — `set_tokenizer`/`set_sy_wrapper` stage a pending address, and a separate `accept_tokenizer`/`accept_sy_wrapper` call from the new address confirms it. Prior to this fix, reassignment took effect immediately on a single admin signature — a real centralization risk if the admin key was compromised, which the roadmap fix addressed.
+It's the single most security-relevant admin function in the system, so it's worth being explicit: the function does not trust an admin-supplied reserve index. It re-derives the correct index from the Blend pool's live reserve list and verifies the underlying asset identity still matches before accepting the migration. An admin (or a compromised admin key) cannot use this function to redirect `sy-wrapper` at a different pool or asset — it can only be used to correctly recover from a real Blend-side re-indexing event. This function's test coverage (including its rejection paths for non-admin callers, missing underlying, and index mismatches) is in [Integration Tests](/testing/integration-tests).
 
-## Intentionally permissionless functions
+## Auth-widening tests
 
-These are permissionless **by design**, because the operation is either bounded/self-limiting or a pure "crank" that only reads/pushes real on-chain state:
-
-| Function | Contract | Why it's safe to leave open |
-| --- | --- | --- |
-| `settle_epoch` | `maturity_engine`, `tokenizer` | Only advances state once the maturity ledger has genuinely passed; a liveness guarantee |
-| `refresh_rate` | `sy_wrapper` | Rate-of-change limited (10%/call ratchet) |
-| `refresh_yield_index` | `tokenizer` | Monotonic-only |
-| `claim_amm_yield` | `marketplace` | Can only pull the marketplace's own legitimately-claimable yield |
-| `execute_rollover` | `rollover` | Only after the keeper's grace period expires — a liveness guarantee, not an open door |
-
-## Privileged operations register
-
-See [Security Model](/security/security-model) for the full admin-operation table by contract. The two centralization points worth calling out explicitly:
-
-1. **Single-key admin** across every contract — no multisig or timelock as of this documentation.
-2. **`blend_pool` address is unrotatable** in `sy_wrapper` — see [Trust Boundaries](/security/trust-boundaries).
-
-## Authorization tests
-
-`test_unauthorized_pause_fails` (marketplace), `test_execute_rollover_keeper_vs_permissionless_boundary` (rollover — verified via `env.auths()` inspection at, before, and after the exact grace-period boundary), `test_admin_transfer_two_step` / `test_new_admin_can_pause_after_acceptance` (pt_token/yt_token), `test_tokenizer_transfer_two_step` / `test_new_tokenizer_can_mint_after_acceptance` (pt_token/yt_token).
+The integration suite includes dedicated tests that inspect `env.auths()` traces to confirm the AMM's self-authorized flash routes into the tokenizer don't silently require or grant more authorization than the user's single top-level signed swap call. This is a meaningful check for a system with self-authorized internal cross-contract calls: it verifies those internal calls can't be exploited to make a user's signature cover more than they intended.

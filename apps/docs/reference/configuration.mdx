@@ -1,36 +1,42 @@
 ---
-title: "Configuration"
-description: "Every environment variable in .env.example"
+title: "Configuration Reference"
+description: "Every environment variable and deployment-time parameter, in one place."
 ---
 
-| Variable | Used by | Purpose |
-| --- | --- | --- |
-| `NETWORK` | deploy scripts | `testnet` (default) or `mainnet` |
-| `RPC_URL` | deploy scripts | Soroban RPC endpoint; defaults based on `NETWORK` |
-| `NETWORK_PASSPHRASE` | deploy scripts | Overrides network passphrase; defaults based on `NETWORK` |
-| `ADMIN_SECRET` | deploy/bootstrap scripts | Secret key used to build/upload/deploy/initialize contracts |
-| `KEEPER_SECRET` | deploy scripts | Secret key registered as the protocol keeper |
-| `BOOTSTRAP_AMOUNT` | `bootstrap_liquidity.ts` | Amount used to seed initial vault/marketplace liquidity |
-| `SKIP_BOOTSTRAP` | `deploy.ts` | If set, skips the liquidity bootstrap step |
-| `BLEND_POOL` | `deploy.ts`, `deploy_xlm_epoch.ts` | Configured Blend Capital pool address for the new epoch — see [Verification](/deployment/verification) |
-| `MATURITY_LEDGERS` | `deploy_xlm_epoch.ts` | Overrides the default ≈30-day testnet epoch length |
-| `NEXT_PUBLIC_RPC_URL` | `apps/web` | Soroban RPC endpoint the browser client talks to |
-| `NEXT_PUBLIC_NETWORK` | `apps/web` | Network label surfaced to the client |
-| `NEXT_PUBLIC_NETWORK_PASSPHRASE` | `apps/web` | Passphrase for client-side transaction building |
-| `DATABASE_URL` | Prisma, `apps/web`, `apps/indexer` | Postgres connection string |
-| `DATABASE_URL_UNPOOLED` | Prisma migrations | Unpooled Postgres connection string |
+## Environment variables (`.env.example`)
 
-<Warning>
-  `ADMIN_SECRET` and `KEEPER_SECRET` are raw Stellar secret keys. Never commit `.env` or reuse a funded mainnet key for testnet development.
-</Warning>
+| Variable | Required for | Notes |
+|---|---|---|
+| `NETWORK` | contracts/deploy scripts | `testnet` (default) or `mainnet` |
+| `RPC_URL` | contracts/deploy scripts | Soroban RPC endpoint |
+| `NETWORK_PASSPHRASE` | contracts/deploy scripts | Stellar network passphrase |
+| `BOOTSTRAP_AMOUNT` | testnet deploy | Liquidity seed amount |
+| `SKIP_BOOTSTRAP` | testnet deploy | Skip liquidity seeding |
+| `NEXT_PUBLIC_RPC_URL` | frontend | Client-exposed RPC endpoint |
+| `NEXT_PUBLIC_NETWORK` | frontend | Client-exposed network name |
+| `NEXT_PUBLIC_NETWORK_PASSPHRASE` | frontend | Client-exposed passphrase |
+| `NEXT_PUBLIC_DOCS_URL` | frontend | Mintlify documentation URL — used by the Navbar Docs link, Hero "Read more", and JoinIn's Docs link |
+| `DATABASE_URL` | indexer/Prisma only | Postgres (Neon) |
+| `DATABASE_URL_UNPOOLED` | indexer/Prisma only | Postgres direct connection |
 
-## Contract-level configuration (set at deploy time, not via env)
+## Mainnet-only required variables (`deploy-mainnet.sh`, no defaults)
 
-| Parameter | Where it's set |
-| --- | --- |
-| `maturity_ledger` | Computed at deploy time from `MATURITY_LEDGERS` or a hardcoded default |
-| `underlying_token` | Native XLM SAC unless already configured |
-| `grace_period_ledgers` | Hardcoded `1000` in deploy scripts |
-| `blend_pool` | `BLEND_POOL` env var, passed into `factory.deploy_epoch()` |
+`UNDERLYING_ID`, `BLEND_POOL`, `MATURITY`, `SCALAR_ROOT`, `INITIAL_ANCHOR`, `FEE_BPS`, `TWAP_WINDOW` — see [Mainnet Deployment](/deployment/mainnet).
 
-See [Deployment → Configuration](/deployment/configuration) for how these compose into a full epoch deployment.
+## Curve/deployment parameters
+
+Set once at `amm.initialize` and `tokenizer.initialize` — see [Deployment Configuration](/deployment/configuration) for the current testnet values and [AMM](/protocol/amm#constants) for what each one controls.
+
+## Fixed protocol constants (not configurable per-deployment)
+
+| Constant | Value | Where |
+|---|---|---|
+| `WAD` | `10^18` | all contracts |
+| `BLEND_SCALAR_12` | `10^12` | `blend-adapter` |
+| `BPS_DENOMINATOR` | `10_000` | `amm` |
+| `IMPLIED_RATE_TIME` | `365 days` | `amm` |
+| `MINIMUM_LIQUIDITY` | `1000` | `amm` |
+| `MAX_MARKET_PROPORTION` | `96%` of WAD | `amm` |
+| Token decimals | `7` | `sy-wrapper`, `pt-token`, `yt-token`, matches underlying |
+
+<Card title="Reference: Contracts" href="/reference/contract-reference" />

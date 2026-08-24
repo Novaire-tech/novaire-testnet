@@ -1,43 +1,44 @@
 ---
 title: "Testing"
-description: "The developer workflow for running the contract test suite"
+description: "How to run each layer of the test suite locally."
 ---
 
-## Run everything
+## Contract tests
 
 ```bash
-cd contracts && cargo test
+npm run contracts:test          # cargo test --workspace, from contracts/
+cd contracts && cargo test -p integration_tests   # just the cross-contract suite
 ```
 
-## Run one contract
+## Frontend / script tests
 
 ```bash
-cargo test -p sy_wrapper
-cargo test -p marketplace
-cargo test -p tokenizer
+npm run test:scripts            # vitest, standalone scripts/ workspace
 ```
 
-`SECURITY.md` itself cites `cargo test -p intent_engine -p sy_wrapper` and `cargo test -p sy_wrapper` as the pattern used during its own review.
+`apps/web` and `apps/indexer` each have their own test setups reachable via their workspace (`npm run <cmd> -w web` / `-w indexer`) — not surfaced as root-level scripts beyond `lint`/`build`/`dev`/`start`.
 
-## Run the integration/regression crate
+## Live testnet verification
 
 ```bash
-cargo test -p integration_tests
+npm run verify:testnet          # tsx scripts/verify-testnet.ts
 ```
 
-Covers the M1–M5 regression suites, fuzzing, stress tests, and full-lifecycle scenarios — see [Integration Tests](/testing/integration-tests).
+<Warning>
+This creates real funded testnet wallets and submits real signed transactions. It is not a mock and not free of real (testnet) network interaction. See [E2E Tests](/testing/e2e-tests) and [Blend Testing](/testing/blend-testing) for what it does and doesn't prove, and its current CI gating status.
+</Warning>
 
-## Run the rollover E2E test
+## Reproducing CI locally
 
 ```bash
-cargo test -p rollover --test e2e
+cd contracts
+cargo fmt --all --check
+cargo clippy --all-targets --all-features --workspace -- -D warnings
+cargo test --workspace --all-features
+cargo audit --file Cargo.lock
+cargo build --release --target wasm32v1-none
 ```
 
-## What you won't get from `cargo test`
+This matches `ci.yml`'s `rust-fmt-clippy`/`rust-test`/`rust-audit`/`rust-build` jobs.
 
-- No real Blend Capital pool interaction is exercised — everything runs against `MockBlendPool`. See [Blend Testing](/testing/blend-testing).
-- No CI runs this automatically today — there's no `.github/workflows` in this repository. Run the suite manually before submitting changes, per `README.md`'s Contributing section.
-
-## Debugging a failing test
-
-Soroban tests print detailed panic/assertion output including the failing `assert_invariant()` condition when one fires. Start from the specific test name, find it in the file list in [Unit Tests](/testing/unit-tests) or [Integration Tests](/testing/integration-tests), and read the corresponding contract's `DataKey` storage layout and the function under test together — most invariant failures trace back to a state transition the test intentionally forces (e.g. a dishonest mock pool, a spam-repeated call, or an out-of-order settlement).
+<Card title="Debugging" href="/developers/debugging">What to do when a test or transaction fails.</Card>

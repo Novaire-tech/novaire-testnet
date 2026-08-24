@@ -1,36 +1,43 @@
 ---
 title: "Troubleshooting"
-description: "Common operational issues, from README.md and repository structure"
+description: "Common errors and what they mean."
 ---
 
-<AccordionGroup>
-  <Accordion title="stellar CLI missing / wrong CLI installed">
-    `scripts/deploy.ts` and `deploy_xlm_epoch.ts` require the `stellar` CLI (not the deprecated `soroban` CLI used by legacy `scripts/initialize.ts`). Install/update the Stellar CLI before running any deploy script.
-  </Accordion>
-  <Accordion title="wasm32 target missing">
-    Contract builds require the `wasm32-unknown-unknown` Rust target: `rustup target add wasm32-unknown-unknown`.
-  </Accordion>
-  <Accordion title="Friendbot funding errors">
-    Testnet/futurenet deploy flows auto-fund accounts via Friendbot. If funding fails, Friendbot may be rate-limited or temporarily down — retry, or fund the admin/keeper account manually via the Stellar Laboratory.
-  </Accordion>
-  <Accordion title="Missing environment variables">
-    Re-check `.env` against `.env.example` — see [Reference → Configuration](/reference/configuration) for the full variable list and what each is for.
-  </Accordion>
-  <Accordion title="Deploy script retry behavior">
-    `deploy.ts`/`deploy_xlm_epoch.ts` are idempotent against `scripts/deployments.<network>.json` — re-running after a partial failure skips any contract already uploaded/deployed rather than re-deploying from scratch.
-  </Accordion>
-  <Accordion title="Stale frontend prices">
-    `apps/web` reads cached price/TVL data through its own API routes backed by Prisma/Postgres, updated by `apps/indexer`. If prices look stale, check the indexer is running and `DATABASE_URL` is correctly configured.
-  </Accordion>
-  <Accordion title="Prisma client errors">
-    `apps/web`'s build runs `prisma generate --schema=../../prisma/schema.prisma` — the schema lives at the repo root, not inside `apps/web`. Confirm `DATABASE_URL`/`DATABASE_URL_UNPOOLED` are set before running Prisma commands.
-  </Accordion>
-  <Accordion title="Local file-based state has no access control">
-    `registered_users.json` and the local SQLite/Postgres dev database are unauthenticated by design — local/testnet development only, per `README.md`'s Known Limitations section.
-  </Accordion>
-  <Accordion title="No public SDK/API for third-party integration yet">
-    Per `README.md`'s FAQ: there is currently no formally published, versioned public API for third-party integration beyond using `packages/bindings` directly against your own deployed or the recorded testnet addresses.
-  </Accordion>
-</AccordionGroup>
+## Contract panics
 
-If your issue isn't covered here, check `README.md`'s own Troubleshooting and FAQ sections, which this page summarizes but doesn't fully replace.
+| Panic | Meaning | Where |
+|---|---|---|
+| `InvalidBlendReserve` | The Blend pool's live reserve index no longer matches what `sy-wrapper` has stored — a Blend-side reindex happened | `sy-wrapper`; recover via `migrate_reserve_index`, see [Access Control](/security/access-control) |
+| `ExchangeRateBelowOne` | The curve computed an asset-per-PT-face rate below 1.0, which shouldn't happen under normal operation | `amm`; see [Known Findings](/security/known-findings) for the one investigated report of this |
+| `MarketProportionTooHigh` | A trade would push PT's share of the pool above the 96% cap | `amm`; this is a guard rail, reduce trade size |
+| `InsufficientLiquidity` | Computed output is `<= 0` or would fully drain the reserve | `amm` |
+
+## "Why did my deposit mint fewer SY shares than I expected?"
+
+Shares are minted against the actual AUM delta observed *after* the Blend `submit` call, not the raw amount you transferred — bToken rounding on Blend's side can cause a small difference. See [Data Flow](/architecture/data-flow#deposit--sy).
+
+## "Why didn't my PT redeem for the full face amount at maturity?"
+
+If the SY escrow backing outstanding PT is short of what a full payout to every holder would require (e.g. after a rate regression), payouts are capped pro-rata across all PT holders rather than paid first-come-first-served. This is by design — see [Settlement](/protocol/settlement#why-the-pro-rata-cap-exists).
+
+## "Why is my YT claim smaller than the accrued amount shown?"
+
+YT's yield claim is subordinated to PT's principal claim on the shared SY escrow — you only get paid out of whatever surplus exists beyond the PT-senior reservation. Unpaid amounts remain banked and can be claimed later once more surplus exists. See [YT](/protocol/yt#claiming-yield).
+
+## `cargo test` failing locally but passing in CI (or vice versa)
+
+Confirm you're running the exact CI command set: `cargo fmt --all --check && cargo clippy --all-targets --all-features --workspace -- -D warnings && cargo test --workspace --all-features`. See [Testing](/developers/testing#reproducing-ci-locally).
+
+## Wasm build fails referencing `wasm32-unknown-unknown`
+
+The current workspace targets `wasm32v1-none` (per `.github/workflows/ci.yml` and `contracts/scripts/build-optimized-wasm.sh`). If a local script or note still references `wasm32-unknown-unknown`, install both targets (`rustup target add wasm32v1-none wasm32-unknown-unknown`) and prefer `wasm32v1-none` to match CI.
+
+## `packages/bindings/marketplace` doesn't exist
+
+No such package exists in the current 6-crate architecture. Use one of the five packages that actually exist: `sy_wrapper`, `pt_token`, `yt_token`, `tokenizer`, `amm`. See [SDK](/developers/sdk).
+
+## Deployment Validation gate passes but seems to check nothing
+
+It currently does check nothing meaningful for the real deployment record — see the documented gap in [Verification](/deployment/verification#ci-s-own-deployment-validation-a-known-gap).
+
+<Card title="Debugging" href="/developers/debugging">Deeper diagnostic flows with exact file paths.</Card>

@@ -1,76 +1,91 @@
 ---
 title: "Data Flow"
-description: "How value and state move through the protocol"
+description: "How value and tokens move through the system."
 ---
 
-## Deposit → SY → PT/YT
+## Deposit → SY
 
 ```mermaid
 sequenceDiagram
-    participant User
-    participant Vault
-    participant SyWrapper
-    participant BlendPool as Blend Pool
-    participant Tokenizer
-    participant PtToken as PT Token
-    participant YtToken as YT Token
+    participant U as User
+    participant SY as sy-wrapper
+    participant BP as Blend Pool
 
-    User->>Vault: deposit(amount)
-    Vault->>SyWrapper: deposit(amount)
-    SyWrapper->>BlendPool: submit(SUPPLY request)
-    SyWrapper-->>Vault: SY shares minted
-    Vault-->>User: vault shares
-    User->>Tokenizer: mint_pt_yt(sy_shares)
-    Tokenizer->>Vault: transfer_shares
-    Tokenizer->>PtToken: mint(user, amount)
-    Tokenizer->>YtToken: mint(user, amount)
+    U->>SY: deposit(from, amount)
+    SY->>BP: submit (REQUEST_SUPPLY)
+    BP-->>SY: bTokens credited
+    SY->>SY: mint shares against actual post-Blend AUM delta
+    SY-->>U: SY shares
 ```
 
-`sy_wrapper`'s exchange rate (`TotalUnderlying * 1e9 / TotalShares`) only ratchets upward, and only when `refresh_rate()` observes the Blend pool's reported value has genuinely grown — capped at 10% per call as a defense against a compromised or lying pool. See [SY](/protocol/sy).
+Shares are minted against the *actual* AUM delta observed after the Blend call, not the raw transferred amount — this avoids rate dilution from bToken rounding (`sy-wrapper/src/lib.rs`).
 
-## PT/YT trading
+## Split → PT + YT
 
 ```mermaid
 sequenceDiagram
-    participant Trader
-    participant Marketplace
-    participant PtToken as PT Token
-    participant Underlying
+    participant U as User
+    participant TOK as tokenizer
+    participant SY as sy-wrapper
+    participant PT as pt-token
+    participant YT as yt-token
 
-    Trader->>Marketplace: swap_underlying_for_pt(amount_in)
-    Marketplace->>Marketplace: compute_a_pool, compute_k, get_y
-    Marketplace->>Underlying: transfer_from(trader)
-    Marketplace->>PtToken: transfer(trader)
-    Marketplace-->>Trader: pt_out
+    U->>TOK: split(from, sy_amount)
+    TOK->>SY: transfer sy_amount into escrow
+    TOK->>TOK: face = floor(sy_amount * rate / WAD)
+    TOK->>PT: mint(from, face)
+    TOK->>YT: mint(from, face)
 ```
 
-YT trades are priced off the same PT/underlying curve via a virtual-sale simulation rather than against a separate reserve — see [AMM](/protocol/amm).
+No solvency gate at mint — this is a deliberate Pendle-style design (see [Trust Boundaries](/security/trust-boundaries)), not a missing check.
 
-## Settlement → redemption
+## Swap (PT → SY, through the AMM)
 
 ```mermaid
 sequenceDiagram
-    participant Anyone
-    participant MaturityEngine as Maturity Engine
-    participant Tokenizer
-    participant PtHolder as PT Holder
+    participant U as User
+    participant AMM as amm
+    participant SY as sy-wrapper
 
-    Anyone->>MaturityEngine: settle_epoch(epoch_id)
-    Note over Tokenizer: settle_epoch() freezes SettlementExchangeRate
-    PtHolder->>Tokenizer: redeem_pt(pt_amount)
-    Tokenizer->>Tokenizer: burn PT, release underlying via Vault/SyWrapper
-    Tokenizer-->>PtHolder: underlying
+    U->>AMM: swap_pt_for_sy(from, pt_in, min_sy_out)
+    AMM->>SY: exchange_rate()
+    AMM->>AMM: compute exchange_rate via rate-anchor curve
+    AMM->>AMM: pre_fee_asset_out, fee, asset_out
+    AMM->>AMM: convert asset_out to SY (floor)
+    AMM-->>U: sy_out
+    AMM->>AMM: reconcile_reserves() against real token balances
 ```
 
-`settle_epoch()` on both `maturity_engine` and `tokenizer` is **permissionless** — anyone can trigger it once the maturity ledger has passed, so settlement doesn't depend on a keeper being online.
+## SY ⇄ YT (flash-routed)
 
-## State that lives where
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant AMM as amm
+    participant TOK as tokenizer
 
-| State | Owner contract | Notes |
-| --- | --- | --- |
-| SY exchange rate | `sy_wrapper` | 1e9-scaled, ratchets up only |
-| Vault share balances | `vault` | Per-user, 1:1 with deposited SY shares |
-| Epoch lifecycle state | `maturity_engine` | Canonical; other contracts query `live_state()` |
-| PT/YT total supply, settlement rate | `tokenizer` | `SettlementExchangeRate` frozen at settlement |
-| AMM reserves, TWAP | `marketplace` | `PtReserves`, `UnderlyingReserves`, `YtReserves`, `ImpliedRateTwap` |
-| Rollover positions | `rollover` | `RolloverPosition` per user, independent of `intent_engine`'s lifetime totals |
+    U->>AMM: swap_sy_for_yt(from, sy_in, min_yt_out)
+    AMM->>TOK: flash_split (self-authorized, single tx)
+    TOK-->>AMM: PT + YT face
+    AMM->>AMM: sell the PT leg into the PT/SY curve
+    AMM-->>U: YT out
+```
+
+There is no independent YT pricing curve — every SY⇄YT trade is a same-transaction flash split/recombine through the tokenizer plus a PT/SY curve trade. This is why YT price is fully derived from the PT curve and the live SY rate, not set independently. See [Pricing](/protocol/pricing).
+
+## Settlement at maturity
+
+```mermaid
+sequenceDiagram
+    participant Anyone as Anyone (permissionless)
+    participant TOK as tokenizer
+    participant U as PT/YT Holder
+
+    Anyone->>TOK: freeze_maturity_rate()
+    TOK->>TOK: MaturityRate = effective_rate() (idempotent)
+    U->>TOK: redeem_at_maturity(from, pt_amount)
+    TOK->>TOK: sy_out = pro-rata capped payout at MaturityRate
+    TOK-->>U: sy_out
+```
+
+See [Settlement](/protocol/settlement) for the exact pro-rata cap formula and what happens under a rate regression.

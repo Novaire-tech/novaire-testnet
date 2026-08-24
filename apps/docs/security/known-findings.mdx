@@ -1,53 +1,55 @@
 ---
 title: "Known Findings"
-description: "The SEC-01 through SEC-14 findings register, as tracked in SECURITY.md's Remediation Roadmap"
+description: "What was found, by whom, and its current status — with architecture context."
 ---
 
 <Warning>
-  No independent, licensed third-party security audit has been performed. `SECURITY_AUDIT.md` is explicit that it "was produced by AI-assisted code review, not a licensed security firm, and should not be treated as a substitute for one." Treat every "Fixed" status below as self-reported by the repository, not independently re-verified line-by-line as part of this documentation rebuild.
+The only findings table in this repository (`SECURITY_AUDIT.md`) is explicitly marked in that file as covering a **superseded architecture** and is **self-described as produced by AI-assisted code review, not a licensed security firm** — it is not an independent third-party audit. The current 6-crate architecture has no equivalent IDed findings table; `SECURITY.md` describes its risks as prose and an explicit Remediation Roadmap (see [Threat Model](/security/threat-model)), not as severity-rated findings. Both are reproduced below for completeness, clearly labeled.
 </Warning>
 
-## Findings register
+## Superseded audit findings (`SECURITY_AUDIT.md`)
 
-Source: `SECURITY.md` → Remediation Roadmap (the more recently updated of the two source documents — see note below).
+| ID | Severity | Status |
+|---|---|---|
+| SEC-01 | Low | Fixed |
+| SEC-02 | Low | Fixed |
+| SEC-03 | Low | Open (recommendation, no "Fixed" tag in source) |
+| SEC-04 | Low | Open |
+| SEC-05 | Low | Open |
+| SEC-06 | Low | Open |
+| SEC-07 | Low | Open |
+| SEC-08 | Informational | Fixed |
+| SEC-09 | Informational | Fixed |
+| SEC-10 | Low | Open |
+| SEC-11 | Informational | Fixed |
+| SEC-12 | Informational | Fixed |
+| SEC-13 | Informational | Fixed |
+| SEC-14 | Informational | Fixed |
 
-| ID | Severity | Component | Finding | Status |
-| --- | --- | --- | --- | --- |
-| SEC-01 | Low–Medium | `intent_engine` | Rate gate used the unstaleness-checked TWAP accessor instead of `get_twap_rate_checked()` | Fixed |
-| SEC-02 | Low | `sy_wrapper` | No `extend_ttl` calls anywhere in the contract | Fixed |
-| SEC-03 | Low | `tokenizer` | Raw division instead of `checked_div` in `claim_yield`/`redeem_pt` settlement math | Fixed |
-| SEC-04 | Low | `intent_engine` | Raw multiply/divide instead of `checked_*` in YT-sale-percentage calculation | Fixed |
-| SEC-05 | Low | `tokenizer` | `record_surplus_baseline_pub` not restricted to the registered YtToken | Fixed |
-| SEC-06 | Low | `pt_token` / `yt_token` | `set_tokenizer`/`set_sy_wrapper` took effect immediately on one signature (centralization risk) | Fixed — now two-step (`accept_tokenizer`/`accept_sy_wrapper`) |
-| SEC-07 | Low | `sy_wrapper` | Instance-storage TTL bump relied on incidental calls rather than a shared helper | Fixed |
-| SEC-08 | Informational | `rollover` | Silent `max(0, …)` floors masked potential anomalies instead of erroring | Fixed |
-| SEC-09 | Informational | `rollover` | Missing test for keeper-vs-permissionless access-control boundary | Fixed — `test_execute_rollover_keeper_vs_permissionless_boundary` added |
-| SEC-10 | Informational | `factory` / `sy_wrapper` | Yield-source (Blend pool) trust assumption not documented | Documented — remains a required manual operational step, not code-enforceable |
-| SEC-11 | Informational | `sy_wrapper` | `deposit` didn't mirror `withdraw`'s commit-before-external-call ordering | Fixed |
-| SEC-12 | Informational | `intent_engine` | Unused `_maturity_ledger` parameter | Fixed |
-| SEC-13 | Informational | `yt_token` | `add_accrued_yield` didn't explicitly handle zero amount | Fixed |
-| SEC-14 | Informational | `pt_token` / `yt_token` | Zero dedicated unit tests for these contracts | Fixed — test suites added |
+No Critical or High severity findings are recorded. **This table describes an earlier architecture** — do not treat "Fixed" here as confirmation that an equivalent issue was assessed against the current 6-crate code; the current `SECURITY.md` describes a different admin surface than what some of these findings (e.g. SEC-06, which concerned an admin-transfer-style function) assume.
 
-**Outstanding, not yet fixed:**
+## Current architecture — Remediation Roadmap (`SECURITY.md`)
 
-| Item | Status |
-| --- | --- |
-| Security contact email/PGP key in `SECURITY.md` | Placeholder — "replace with a monitored address before mainnet" |
-| Independent third-party audit | Not performed |
-| TWAP staleness guard wired into every consumer | Partial — `intent_engine` uses the checked variant; not confirmed for every other consumer (see `SECURITY.md`'s Oracle Security section) |
+`SECURITY.md`'s own Remediation Roadmap, verified directly from source:
 
-## No Critical or High severity findings
+| Priority | Item | Status |
+|---|---|---|
+| Critical | — | **None identified** |
+| High | — | **None identified** |
+| Medium | Decide whether to reintroduce an emergency pause mechanism, or formally accept its absence | Outstanding |
+| Medium | Decide whether to reintroduce a rate-of-change bound on the SY exchange rate, or formally accept unbounded Blend trust | Outstanding |
+| Medium | Add a dedicated sy-wrapper first-depositor donation/inflation-attack regression test | Outstanding |
+| Low | Replace the placeholder security contact email/PGP key before mainnet | Outstanding |
+| Low | Consider multisig/timelock for the remaining admin surface | Outstanding |
+| Low | Align `soroban-sdk` dependency versions across workspace crates | Outstanding |
+| Low | Add adversarial/out-of-bounds Blend `b_rate` test scenarios | Outstanding |
 
-Per `SECURITY_AUDIT.md`: "No Critical or High severity findings were confirmed. 14 findings were confirmed, all Low/Informational, plus one process-level finding." `SECURITY.md`'s Remediation Roadmap independently states the same under its Critical/High sections: "None identified."
+Separately, `SECURITY.md`'s "Security Note: ExchangeRateBelowOne" documents one specific concern that was investigated and closed: **not reproducible in the current implementation or deployment, no protocol change required** — a self-conducted, in-repo investigation, not a third-party-verified finding.
 
-## A note on document consistency
+## What has not happened
 
-`SECURITY_AUDIT.md` (the original audit document, dated against commit `881fc15`) lists SEC-03 through SEC-07 without explicit "Fixed" tags in its own findings table. `SECURITY.md`'s Remediation Roadmap — which is structured specifically as a living roadmap and marks all of SEC-01 through SEC-07 as fixed with file citations — appears to be the more recently maintained source of truth. This documentation follows `SECURITY.md`'s roadmap status. If you are relying on this for a security decision, cross-check both documents and the cited files directly rather than this summary alone.
+- No independent third-party security audit of the current architecture is recorded anywhere in this repository.
+- No bug bounty program is referenced.
+- No published, monitored security contact exists yet (`SECURITY.md` explicitly lists this as an outstanding Low-priority item).
 
-## Severity scale (shared by both documents)
-
-- **Critical** — direct, unconditional loss or freezing of user funds, or minting/redeeming outside protocol rules.
-- **High** — fund loss achievable under plausible conditions, or breaks a core invariant.
-- **Medium** — fund loss only under narrow/unlikely conditions.
-- **Low** — fails safe, narrow theoretical exposure, or defense-in-depth gap.
-- **Informational** — code quality, documentation, or centralization observation with no direct exploit path.
+<Card title="Security Status" href="/security/security-status">The condensed status view.</Card>

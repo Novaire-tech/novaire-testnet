@@ -1,38 +1,32 @@
 ---
 title: "Verification"
-description: "Post-deployment checks — including the one that must be done manually"
+description: "Post-deployment checks — including one CI gate that doesn't check what you'd expect."
 ---
 
-## What Factory verifies automatically
+## Automated post-deployment check
 
-`factory.deploy_epoch()` cross-validates every contract's self-reported metadata against the deployment parameters before considering the epoch live — this catches misconfigured wiring (wrong address assigned to the wrong role) at deploy time. `deploy_xlm_epoch.ts` additionally runs an explicit post-deploy check via `epoch_count()`/`get_epoch()` to confirm the new epoch is wired to the newly-deployed `tokenizer`.
+```bash
+npm run verify:testnet
+```
 
-## What Factory cannot verify — the Blend pool address
+Runs `scripts/verify-testnet.ts` against whatever is currently recorded in `deployments/testnet.toml` — real wallets, real signed transactions, real balance reads, cross-checked against an independent TypeScript reimplementation of the pricing formulas. This is the closest thing this repository has to a post-deployment smoke test. See [E2E Tests](/testing/e2e-tests) for exactly what it does and doesn't currently prove.
+
+## Manual checks worth doing after any deploy
+
+- Confirm `deployments/testnet.toml`'s `[contracts]` addresses match what you expect to have just deployed (the deploy script writes this automatically, but verify it wasn't a stale/partial resume).
+- Confirm `apps/web/src/config/deployments.testnet.json` and `apps/web/.env.local` were updated to match — the frontend reads from these, not from `deployments/testnet.toml` directly.
+- Confirm `initialize_blend` on `sy-wrapper` picked up the correct Blend pool reserve index for the underlying asset (a mismatch here would trigger `InvalidBlendReserve` on the first real rate read — see [Debugging](/developers/debugging)).
+- Confirm the AMM's curve parameters (`scalar_root`, `initial_anchor`, `fee_bps`, `twap_window`) match what was intended — these are set once at `initialize` and cannot be changed afterward (see [Security Model](/security/security-model)).
+- **Manually verify the Blend pool address** against Blend's own published pool registry before treating any deployment as production-ready — per `SECURITY.md`'s Deployment Verification checklist, this is explicitly not code-enforceable.
+
+## CI's own deployment validation — a known gap
+
+`.github/workflows/deployment-validation.yml` is a required status check (`Deployment Validation gate`). Its `validate-deployment-files` job runs `node .github/scripts/validate-deployment.mjs` against `scripts/deployments.testnet.json` and `scripts/deployments.mainnet.json`, but **only if those files exist** (`hashFiles(...) != ''`).
 
 <Warning>
-  This is the single most important manual step in the entire deployment process, per `SECURITY.md`. It is explicitly **not code-enforceable** — no on-chain check can distinguish a genuine Blend pool address from a convincing fake.
+Neither file currently exists in this repository. The current deploy script (`contracts/scripts/deploy-testnet-resilient.sh`) writes deployment records to `deployments/testnet.toml` and `apps/web/src/config/deployments.testnet.json` — a different path than what `deployment-validation.yml` checks. This means `deployment-validation.yml`'s manifest-shape check is currently a silent no-op on every run: the `hashFiles` guard is false, so the validation step never executes, and the job still reports success. **The current, real `deployments/testnet.toml` is not validated by CI at all.**
 </Warning>
 
-Before submitting any `factory.deploy_epoch()` transaction, whoever deploys must, per `SECURITY.md`'s "Deployment Verification" checklist:
+This doesn't block anything today (the job passes regardless), but it means the "Deployment Validation gate" required check is not actually validating the deployment record you'd expect it to. The workflow's `validate-required-secrets` job (checking for `TESTNET_RPC`/`NETWORK_PASSPHRASE` presence) is unaffected and still runs normally.
 
-- [ ] Confirm the `blend_pool` address matches the official Blend Capital pool listed in Blend's own deployment registry/docs for the target network (mainnet vs. testnet) — not a value copied from a prior epoch, a fork, or an unverified third-party source.
-- [ ] Confirm the underlying asset accepted by that pool matches `params.underlying_token` for this epoch.
-- [ ] Record the verified `blend_pool` address (and the source used to verify it) alongside the epoch's deployment record for later audit.
-
-`sy_wrapper`'s `YieldSource` is set once at `initialize()` with no rotation function — get this wrong, and there is no way to fix it short of deploying a new epoch entirely.
-
-## Post-deployment checks
-
-| Check | How |
-| --- | --- |
-| Epoch wiring is self-consistent | Automatic — `factory.deploy_epoch()` reverts if metadata doesn't cross-validate |
-| Blend pool address is genuine | **Manual** — see checklist above |
-| Bindings reflect the deployed contracts | Automatic — regenerated from the just-deployed contract IDs every run |
-| Liquidity was bootstrapped | Check `marketplace.get_reserves()` is non-zero, or that `SKIP_BOOTSTRAP` wasn't set |
-| Epoch is queryable | `factory.get_epoch(epoch_id)`, `factory.latest_epoch()` |
-
-## Verifying an existing deployment as a third party
-
-1. Read `scripts/deployments.<network>.json` for the recorded addresses.
-2. Query `factory.get_epoch(epoch_id)` directly to confirm the on-chain wiring matches the recorded addresses.
-3. Independently verify `sy_wrapper`'s configured `YieldSource` against Blend Capital's own published pool registry — do not trust the deployment file alone. See [Mainnet](/deployment/mainnet) for why this matters concretely.
+<Card title="Troubleshooting" href="/reference/troubleshooting">Common failure modes and what they mean.</Card>
