@@ -455,8 +455,11 @@ impl StandardizedYield for SyWrapper {
         // mint against the actual AUM increase after Blend's bToken rounding,
         // not the requested transfer amount. This prevents a new deposit from
         // lowering the rate by creating more SY than the credited position backs.
-        let exchange_rate = <Self as StandardizedYield>::exchange_rate(env);
         let aum_before = blend_assets_under_management(env, &config);
+        let exchange_rate = match derived_exchange_rate(aum_before, Self::read_total_supply(env)) {
+            Some(value) => value,
+            None => panic_with_error!(env, Error::MathOverflow),
+        };
 
         pull_underlying(env, &config.underlying, &from, amount);
         blend_submit(env, &config, REQUEST_SUPPLY, amount, false);

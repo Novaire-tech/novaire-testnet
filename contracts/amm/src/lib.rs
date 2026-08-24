@@ -161,6 +161,24 @@ fn settle_and_record(env: &Env, config: &Config, state: &mut State, observed_ln_
     write_state(env, state);
 }
 
+/// Same bookkeeping as `settle_and_record`, but skips the `balance()` reads
+/// in `reconcile_reserves`. Only valid for a plain PT<->SY trade: `state`
+/// entering this call must already reflect the exact PT/SY deltas that were
+/// just moved (no flash split/recombine dust, no third-party token transfer,
+/// no rebasing/fee-on-transfer token). `swap_sy_for_yt`/`swap_yt_for_sy` mint
+/// dust via `flash_split`/`flash_recombine` and must keep using
+/// `settle_and_record`.
+#[inline(never)]
+fn settle_and_record_without_reconcile(
+    env: &Env,
+    config: &Config,
+    state: &mut State,
+    observed_ln_rate: i128,
+) {
+    sync_twap(env, config, state, observed_ln_rate);
+    write_state(env, state);
+}
+
 #[contract]
 pub struct AmmMarket;
 
@@ -456,7 +474,13 @@ impl Market for AmmMarket {
             apply_exact_pt_in_trade_or_panic(env, &config, &mut state, &comp, pt_in, min_sy_out);
         transfer_into_pool(env, &config.pt_token, &from, pt_in);
         transfer_out_of_pool(env, &config.sy_token, &from, sy_out);
-        settle_and_record(env, &config, &mut state, observed_ln_rate);
+        // Plain PT->SY trade: the PT/SY transfers above move exactly pt_in
+        // and sy_out (both tokens' `transfer` moves the exact amount, no
+        // fee/rebase), matching the state deltas already applied above
+        // exactly. No flash split/recombine dust is possible on this path,
+        // so the post-trade balance() reads in reconcile_reserves are
+        // redundant.
+        settle_and_record_without_reconcile(env, &config, &mut state, observed_ln_rate);
 
         sy_out
     }
@@ -465,16 +489,20 @@ impl Market for AmmMarket {
         from.require_auth();
         let (config, mut state, comp) = load_live_market_or_panic(env, sy_in);
 
-        let pt_out = exact_sy_in_pt_out_or_panic(env, &config, &state, &comp, sy_in);
+        let (pt_out, required_sy) =
+            exact_sy_in_pt_out_with_cost_or_panic(env, &config, &state, &comp, sy_in);
         if pt_out < min_pt_out {
             panic_with_error!(env, Error::SlippageExceeded);
         }
 
-        let observed_ln_rate =
-            apply_exact_sy_in_trade_or_panic(env, &config, &mut state, &comp, sy_in, pt_out);
+        let observed_ln_rate = apply_exact_sy_in_trade_with_required_sy_or_panic(
+            env, &mut state, &comp, sy_in, pt_out, required_sy,
+        );
         transfer_into_pool(env, &config.sy_token, &from, sy_in);
         transfer_out_of_pool(env, &config.pt_token, &from, pt_out);
-        settle_and_record(env, &config, &mut state, observed_ln_rate);
+        // Plain SY->PT trade: same reasoning as swap_pt_for_sy above, so the
+        // reconcile's balance() reads can be skipped.
+        settle_and_record_without_reconcile(env, &config, &mut state, observed_ln_rate);
 
         pt_out
     }
@@ -487,16 +515,21 @@ impl Market for AmmMarket {
         // mints face = shares * rate / WAD. Every conversion between the two
         // unit systems happens here at the flash boundary, using the same rate
         // source the tokenizer reads (the SY contract's exchange_rate).
-        let rate = sy_rate_or_panic(env, &config);
-        let yt_out = solve_yt_out_for_sy_in(env, &config, &state, &comp, sy_in, rate);
+        // `comp.rate` was already read from the same source while precomputing
+        // the market state above, so reuse it instead of a second cross-contract call.
+        let rate = comp.rate;
+        let (yt_out, sy_paid) =
+            solve_yt_out_for_sy_in_with_cost(env, &config, &state, &comp, sy_in, rate);
         if yt_out < min_yt_out {
             panic_with_error!(env, Error::SlippageExceeded);
         }
 
         // The pool keeps the PT the split mints, so the curve moves as if it
         // bought `yt_out` PT; `sy_funded` is the SY the curve pays for that PT.
+        // `sy_paid` was already computed for this exact (state, comp, yt_out)
+        // by the solver above, so reuse it instead of recomputing.
         let (sy_funded, observed_ln_rate) =
-            apply_exact_pt_in_trade_or_panic(env, &config, &mut state, &comp, yt_out, 0);
+            apply_exact_pt_in_trade_with_sy_out_or_panic(env, &mut state, &comp, yt_out, sy_paid, 0);
 
         // Shares to split, rounded UP so the tokenizer's floored face mint is
         // at least `yt_out`, the amount the curve accounted for and the buyer
@@ -538,7 +571,9 @@ impl Market for AmmMarket {
 
         // Curve amounts are PT face; the recombine returns SY shares. Convert
         // at the flash boundary with the tokenizer's own rate source.
-        let rate = sy_rate_or_panic(env, &config);
+        // `comp.rate` was already read from the same source while precomputing
+        // the market state above, so reuse it instead of a second cross-contract call.
+        let rate = comp.rate;
         let sy_cost = exact_pt_out_sy_in_or_panic(env, &config, &state, &comp, yt_in);
         // SY shares the recombine of `yt_in` face returns, floored exactly like
         // the tokenizer floors, so the payout budget never exceeds what will
@@ -553,8 +588,11 @@ impl Market for AmmMarket {
         }
 
         // The pool sold `yt_in` PT for `sy_cost` SY into the recombine.
-        let observed_ln_rate =
-            apply_exact_sy_in_trade_or_panic(env, &config, &mut state, &comp, sy_cost, yt_in);
+        // `sy_cost` is already the required-SY value for this exact
+        // (state, comp, yt_in), so reuse it instead of recomputing.
+        let observed_ln_rate = apply_exact_sy_in_trade_with_required_sy_or_panic(
+            env, &mut state, &comp, sy_cost, yt_in, sy_cost,
+        );
 
         // Take the seller's YT, recombine pool PT + seller YT into SY, pay the
         // seller, and keep the spread.
@@ -950,6 +988,21 @@ fn apply_exact_pt_in_trade_or_panic(
     min_sy_out: i128,
 ) -> (i128, i128) {
     let sy_out = exact_pt_in_sy_out_or_panic(env, config, state, comp, pt_in);
+    apply_exact_pt_in_trade_with_sy_out_or_panic(env, state, comp, pt_in, sy_out, min_sy_out)
+}
+
+/// Core of `apply_exact_pt_in_trade_or_panic`, taking an already-computed
+/// `sy_out` instead of recomputing it. `sy_out` must have been derived from
+/// the same (state, comp, pt_in) the caller is about to apply; state must not
+/// have changed in between.
+fn apply_exact_pt_in_trade_with_sy_out_or_panic(
+    env: &Env,
+    state: &mut State,
+    comp: &Precompute,
+    pt_in: i128,
+    sy_out: i128,
+    min_sy_out: i128,
+) -> (i128, i128) {
     if sy_out < min_sy_out {
         panic_with_error!(env, Error::SlippageExceeded);
     }
@@ -976,15 +1029,31 @@ fn exact_sy_in_pt_out_or_panic(
     comp: &Precompute,
     sy_in: i128,
 ) -> i128 {
+    exact_sy_in_pt_out_with_cost_or_panic(env, config, state, comp, sy_in).0
+}
+
+/// Same solve as `exact_sy_in_pt_out_or_panic`, but also returns the winning
+/// candidate's `required_sy` so callers that already need it (trade
+/// application) can reuse it instead of recomputing via
+/// `exact_pt_out_sy_in_or_panic` on the same (state, comp, pt_out) inputs.
+fn exact_sy_in_pt_out_with_cost_or_panic(
+    env: &Env,
+    config: &Config,
+    state: &State,
+    comp: &Precompute,
+    sy_in: i128,
+) -> (i128, i128) {
     let mut low = 1;
     let mut high = checked_sub(env, state.total_pt, 1);
     let mut best = 0;
+    let mut best_required_sy = 0;
 
     while low <= high {
         let mid = low + ((high - low) / 2);
         match try_exact_pt_out_sy_in(env, config, state, comp, mid) {
             Some(required_sy) if required_sy <= sy_in => {
                 best = mid;
+                best_required_sy = required_sy;
                 low = mid + 1;
             }
             Some(_) | None => {
@@ -997,18 +1066,21 @@ fn exact_sy_in_pt_out_or_panic(
         panic_with_error!(env, Error::TradeNotFound);
     }
 
-    best
+    (best, best_required_sy)
 }
 
-fn apply_exact_sy_in_trade_or_panic(
+/// Core of the exact-SY-in trade application, taking an already-computed
+/// `required_sy` instead of recomputing it. `required_sy` must have been
+/// derived from the same (state, comp, pt_out) the caller is about to apply;
+/// state must not have changed in between.
+fn apply_exact_sy_in_trade_with_required_sy_or_panic(
     env: &Env,
-    _config: &Config,
     state: &mut State,
     comp: &Precompute,
     sy_in: i128,
     pt_out: i128,
+    required_sy: i128,
 ) -> i128 {
-    let required_sy = exact_pt_out_sy_in_or_panic(env, _config, state, comp, pt_out);
     if required_sy > sy_in {
         panic_with_error!(env, Error::SlippageExceeded);
     }
@@ -1117,18 +1189,36 @@ fn solve_yt_out_for_sy_in(
     sy_in: i128,
     rate: i128,
 ) -> i128 {
+    solve_yt_out_for_sy_in_with_cost(env, config, state, comp, sy_in, rate).0
+}
+
+/// Same solve as `solve_yt_out_for_sy_in`, but also returns the winning
+/// candidate's `sy_paid` (the curve-side proceeds of selling the PT leg) so
+/// callers that go on to apply the PT-in trade can reuse it instead of
+/// recomputing via `exact_pt_in_sy_out_or_panic` on the same (state, comp,
+/// yt_out) inputs.
+fn solve_yt_out_for_sy_in_with_cost(
+    env: &Env,
+    config: &Config,
+    state: &State,
+    comp: &Precompute,
+    sy_in: i128,
+    rate: i128,
+) -> (i128, i128) {
     let mut low = 1;
     // The largest face any split could mint from the buyer's SY plus the whole
     // SY reserve, converted from shares to face at the rate.
     let max_shares = checked_add(env, sy_in, state.total_sy);
     let mut high = mul_div_down_or_panic(env, max_shares, rate, WAD);
     let mut best = 0;
+    let mut best_sy_paid = 0;
     while low <= high {
         let mid = low + ((high - low) / 2);
         let shares_needed = shares_in_for_face_up(env, mid, rate);
         match try_exact_pt_in_sy_out(env, config, state, comp, mid) {
             Some(sy_paid) if shares_needed > sy_paid && (shares_needed - sy_paid) <= sy_in => {
                 best = mid;
+                best_sy_paid = sy_paid;
                 low = mid + 1;
             }
             _ => {
@@ -1139,7 +1229,7 @@ fn solve_yt_out_for_sy_in(
     if best <= 0 {
         panic_with_error!(env, Error::TradeNotFound);
     }
-    best
+    (best, best_sy_paid)
 }
 
 /// Reads the SY exchange rate (asset per share, WAD scaled) from the SY token,
