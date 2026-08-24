@@ -1,0 +1,76 @@
+---
+title: "Contract Reference"
+description: "Public entry points for every contract"
+---
+
+<Tabs>
+  <Tab title="factory">
+    - `initialize(admin, protocol_version)` — admin
+    - `deploy_epoch(params: DeployEpochParams) -> u32` — admin
+    - `link_epochs(current_epoch_id, next_epoch_id)` — admin
+    - `get_epoch(epoch_id)`, `latest_epoch()`, `epoch_count()`, `protocol_version()`, `get_epoch_by_maturity(maturity_ledger)`, `get_next_epoch(current_epoch_id)`
+  </Tab>
+  <Tab title="sy_wrapper">
+    - `initialize(admin, underlying, yield_source)`
+    - `deposit(from, amount) -> i128`, `withdraw(from, shares) -> i128`
+    - `refresh_rate()` — permissionless
+    - `mark_loss() -> i128`, `harvest_yield()` — admin
+    - `pause()`/`unpause()`, `transfer_admin`/`accept_admin` — admin
+    - `get_exchange_rate()`, `preview_deposit`, `preview_withdraw`, `total_shares()`, `underlying_asset()`, `version()`
+  </Tab>
+  <Tab title="vault">
+    - `initialize(admin, sy_wrapper, underlying)`
+    - `deposit(depositor, amount) -> i128`, `withdraw(withdrawer, shares) -> i128`
+    - `transfer_shares(from, to, amount)`, `withdraw_for(withdrawer, receiver, shares) -> i128`
+    - `pause()`/`unpause()`, `transfer_admin`/`accept_admin` — admin
+    - `metadata()`, `is_paused()`, `balance_of(user)`, `total_vault_shares()`, `get_sy_wrapper()`
+  </Tab>
+  <Tab title="maturity_engine">
+    - `initialize(admin)`
+    - `open_epoch(maturity_ledger) -> u32` — admin
+    - `settle_epoch(epoch_id)` — permissionless
+    - `archive_epoch(epoch_id)` — admin
+    - `get_epoch(epoch_id)`, `live_state(epoch_id) -> u32`, `current_epoch()`, `next_epoch()`, `epoch_history(epoch_id)`, `total_epochs()`, `protocol_status()`, `time_to_maturity()`, `is_active()`, `is_settled()`
+  </Tab>
+  <Tab title="tokenizer">
+    - `initialize(...)`
+    - `mint_pt_yt(user, sy_shares) -> (i128, i128)`
+    - `claim_yield(user) -> i128`
+    - `settle_epoch()` — permissionless
+    - `redeem_pt(user, pt_amount) -> i128`
+    - `get_epoch_state()`, `version()`, `metadata()`, `get_surplus_snapshot()`, `preview_yield_index()`, `refresh_yield_index()` — permissionless
+    - `record_surplus_baseline_pub()` — restricted to registered YtToken (`require_auth`)
+  </Tab>
+  <Tab title="pt_token / yt_token">
+    - `mint(to, amount)`, `burn(from, amount)` — restricted to `tokenizer`
+    - `transfer`, `approve`, `transfer_from`, `balance`, `total_supply`, `allowance`
+    - `pause()`/`unpause()`, `transfer_admin`/`accept_admin` — admin
+    - `set_tokenizer`/`accept_tokenizer`, (`yt_token` only) `set_sy_wrapper`/`accept_sy_wrapper` — two-step
+    - `name()`, `symbol()`, `decimals()`
+    - `yt_token` only: `update_yield_index`, `checkpoint_user`, `claimable_yield`, `reset_claimable`, `add_accrued_yield`, `get_yield_index`, `is_expired`
+  </Tab>
+  <Tab title="marketplace">
+    - `initialize(...)`
+    - `add_liquidity(provider, pt_amount, underlying_amount) -> i128`, `add_yt_liquidity(provider, yt_amount) -> i128`, `remove_liquidity(provider, lp_shares) -> (i128,i128,i128)`
+    - `swap_underlying_for_pt`, `swap_pt_for_underlying`, `swap_underlying_for_yt`, `swap_yt_for_underlying`
+    - `claim_amm_yield() -> i128` — permissionless
+    - `get_pt_price()`, `get_yt_price()`, `get_twap_rate()`, `get_twap_rate_checked()`, `get_twap_age()`, `quote_underlying_for_yt`, `quote_yt_for_underlying`, `get_reserves()`
+    - `pause()`/`unpause()`, `is_paused()` — admin
+  </Tab>
+  <Tab title="intent_engine">
+    - `execute_fixed_yield_intent(user, usdc_amount, min_implied_rate, min_underlying_out, yt_sale_percentage) -> CumulativeIntentRecord`
+    - `execute_yield_speculation_intent(user, usdc_amount, min_yt_out, min_underlying_out) -> i128`
+    - `get_current_best_rate()`, `get_user_intent(user)`
+    - `pause()`/`unpause()` — admin
+  </Tab>
+  <Tab title="rollover">
+    - `initialize(admin, tokenizer, vault, marketplace, intent_engine, keeper, pt_token, underlying_token, factory, grace_period_ledgers)`
+    - `register_rollover(user, pt_amount, current_epoch_maturity, min_rate_bps, min_underlying_out)`
+    - `execute_rollover(user)` — keeper-gated during grace period, permissionless after
+    - `exit_rollover(user)` — always callable, even while paused
+    - `get_position(user)`, `total_pt_held()`
+    - `update_keeper(new_keeper)`, `pause()`/`unpause()` — admin
+  </Tab>
+</Tabs>
+
+For full parameter types and return-type detail, read the corresponding `packages/bindings/<contract>/src/index.ts`, which is generated directly from the deployed contract's interface — it is more precise than any hand-maintained reference.

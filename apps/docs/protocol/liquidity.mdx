@@ -1,0 +1,27 @@
+---
+title: "Liquidity"
+description: "Providing and removing liquidity on marketplace"
+---
+
+## Adding liquidity
+
+`add_liquidity(provider, pt_amount, underlying_amount) -> i128` deposits both legs proportionally into `PtReserves`/`UnderlyingReserves` and mints LP shares. The very first `add_liquidity` call on a fresh pool permanently locks `MINIMUM_LIQUIDITY = 1000` units — never redeemable by anyone — which is the standard defense against a donation/inflation attack on share pricing (see `test_m5_donation_attack_impossible`, `test_m5_locked_liquidity_permanent`, and `test_first_add_liquidity_at_minimum_liquidity_boundary_rejected`).
+
+`add_yt_liquidity(provider, yt_amount) -> i128` is a **separate, one-way** contribution into `YtReserves` — it does not mint the same LP share class as `add_liquidity`, since YT is priced off the PT/underlying curve rather than against its own reserve (see [AMM](/protocol/amm)).
+
+## Removing liquidity
+
+`remove_liquidity(provider, lp_shares) -> (i128, i128, i128)` burns LP shares and returns a `(pt, underlying, yt)` tuple proportional to the pool's current reserves. Tested for correctness even while the contract is paused (`test_paused_remove_liquidity_still_allows_recovery`) — LPs can always exit, matching the same "no trapped funds" philosophy as `pt_token`'s pause-bypassing transfers and `rollover.exit_rollover`.
+
+## Fairness across multiple LPs
+
+`test_c1_multiple_lps_yt_swap_fairness` and `test_c1_lp_withdrawal_after_yt_swap` specifically test that a YT swap happening between two LPs' deposits doesn't let one LP capture value that should be shared proportionally. `large_liquidity_round_trip_conserves_shares` (a `proptest` property) fuzzes add/remove cycles to confirm share accounting never leaks value.
+
+## What LPs earn
+
+- The 0.3% swap fee on every PT/underlying trade, retained in reserves.
+- A share of yield pulled from `tokenizer` via `claim_amm_yield()`, which routes into `UnderlyingReserves`.
+
+## Reserve consistency
+
+`assert_invariant()` runs after every liquidity or swap operation and checks tracked reserves against the contract's actual on-chain PT/underlying/YT token balances — any divergence would fail the transaction rather than silently corrupt state.

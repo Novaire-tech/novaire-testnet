@@ -1,0 +1,24 @@
+---
+title: "SDK Reference"
+description: "Generated TypeScript client packages"
+---
+
+Every package in `packages/bindings/` follows the same shape — see [Developers → SDK](/developers/sdk) for the full walkthrough. This page is a quick index.
+
+| Package | Wraps contract | Notable exports |
+| --- | --- | --- |
+| `packages/bindings/factory` | `factory` | `deploy_epoch`, `get_epoch`, `link_epochs` |
+| `packages/bindings/sy_wrapper` | `sy_wrapper` | `deposit`, `withdraw`, `get_exchange_rate` |
+| `packages/bindings/vault` | `vault` | `deposit`, `withdraw`, `metadata`, `balance_of` |
+| `packages/bindings/tokenizer` | `tokenizer` | `mint_pt_yt`, `redeem_pt`, `claim_yield` |
+| `packages/bindings/pt_token` | `pt_token` | `transfer`, `balance`, `approve` |
+| `packages/bindings/yt_token` | `yt_token` | `transfer`, `claimable_yield`, `checkpoint_user` |
+| `packages/bindings/marketplace` | `marketplace` | `swap_*`, `add_liquidity`, `get_reserves`, `get_twap_rate_checked` |
+| `packages/bindings/intent_engine` | `intent_engine` | `execute_fixed_yield_intent`, `execute_yield_speculation_intent` |
+| `packages/bindings/rollover` | `rollover` | `register_rollover`, `execute_rollover`, `exit_rollover` |
+
+Each package re-exports `@stellar/stellar-sdk` and `@stellar/stellar-sdk/contract`/`rpc`, so you rarely need a separate direct dependency on the Stellar SDK when working with a single contract.
+
+Every method returns a `Promise<AssembledTransaction<Result<T>>>` — call `.signAndSend()` (or inspect/simulate first) rather than expecting a plain resolved value, matching the standard Soroban CLI-generated client pattern.
+
+See [Contract Reference](/reference/contract-reference) for the underlying contract methods each binding wraps.

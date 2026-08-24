@@ -1,0 +1,43 @@
+---
+title: "Blend Testing"
+description: "What's tested against Blend — and the one thing that isn't"
+---
+
+<Warning>
+  **Real Blend E2E: not verified.** No test in this repository exercises a real, deployed Blend Capital pool contract. Every Blend-facing test uses `MockBlendPool` or the adversarial `DishonestBlendPoolClient`. There is no fork-testing infrastructure. Do not cite the mock test suite below as evidence that the live Blend integration has been tested end-to-end.
+</Warning>
+
+## Mock Blend tests
+
+`MockBlendPool` implementations exist in five places (four are near-identical copies embedded in each consuming contract's own test module, one is the shared fixture in `integration_tests`):
+
+- `contracts/sy_wrapper/src/test.rs`
+- `contracts/sy_wrapper/src/audit_tests.rs` (also defines `DishonestBlendPoolClient`)
+- `contracts/vault/src/lib.rs` (test module)
+- `contracts/tokenizer/tokenizer/src/lib.rs` (test module)
+- `contracts/intent_engine/src/lib.rs` (test module)
+- `contracts/rollover/tests/e2e.rs`
+- `contracts/integration_tests/src/mock_blend_pool.rs` (shared fixture)
+
+### What the mock tests actually prove
+
+| Test | Proves |
+| --- | --- |
+| `test_real_yield_backing` | `sy_wrapper`'s accounting correctly reflects yield reported by the mock pool |
+| `test_solvency_invariant_holds` | Total backing never falls short of tracked underlying, against the mock |
+| `test_yield_cannot_increase_without_underlying_increasing` | The exchange rate can't drift upward without the mock pool actually reporting more value |
+| `test_dishonest_pool_inflated_report_clamped_to_ten_percent_ratchet` | A pool lying about a large gain is clamped to the 10%-per-call ratchet |
+| `test_dishonest_pool_persistent_lying_still_bounded_per_call` | Repeated lying across multiple calls still can't exceed the per-call bound |
+| `test_dishonest_pool_underreport_does_not_decrease_rate` | A pool under-reporting doesn't cause the SY rate to fall (only `mark_loss` can) |
+
+These tests are genuinely valuable — they prove `sy_wrapper`'s defenses against a **misbehaving** pool work as designed. They do not, and cannot, prove that the real Blend Capital pool's actual on-chain behavior matches the `Request`/`Positions` struct layout `sy_wrapper` assumes.
+
+## Real Blend E2E tests
+
+None exist. Confirmed by searching the entire `contracts/` tree for `real_blend`, `RealBlend`, `mainnet`, and `fork` — no matches. There is no test that deploys against, or forks state from, an actual live Blend Capital pool contract.
+
+## What this means for integrators and auditors
+
+- The `Request`/`Positions` struct layout `sy_wrapper` uses is asserted, in the code's own comments, to match Blend v2's real source — but this documentation rebuild did not independently re-verify that claim against Blend's actual source, and no automated test in this repo does either.
+- If Blend ever changes its `Request`/`Positions` XDR shape, or if the configured pool address doesn't actually implement the expected interface, `sy_wrapper`'s calls could fail or, worse, silently misinterpret returned data — the mock tests would not catch either scenario, since the mock is hand-written to match `sy_wrapper`'s own assumptions.
+- Anyone deploying an epoch is responsible for the manual verification steps in [Deployment → Verification](/deployment/verification) — no test suite substitutes for that.

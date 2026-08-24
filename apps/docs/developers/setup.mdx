@@ -1,0 +1,54 @@
+---
+title: "Setup"
+description: "Prerequisites and installation"
+---
+
+## Prerequisites
+
+- Node.js (for the npm-workspaces monorepo — `apps/web`, `apps/indexer`, `packages/bindings`, root scripts)
+- Rust toolchain with the `wasm32` target (for building the 9 Soroban contracts under `contracts/`)
+- The `stellar` CLI (used by `scripts/deploy.ts` for `contract build`/`upload`/`deploy`/`bindings typescript` — note this is the `stellar` CLI, not the deprecated `soroban` CLI that `scripts/initialize.ts` uses)
+- A Postgres database (for `prisma/schema.prisma`, shared by `apps/web` and `apps/indexer`)
+
+## Clone and install
+
+```bash
+git clone <repository-url>
+cd novaire-testnet
+npm install
+```
+
+This is a plain npm-workspaces monorepo (`"workspaces": ["apps/*", "packages/*"]` in the root `package.json` — no Turborepo despite the folder layout resembling one).
+
+## Environment configuration
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Purpose |
+| --- | --- |
+| `NETWORK` | `testnet` (default) or `mainnet` |
+| `RPC_URL` | Soroban RPC endpoint; defaults based on `NETWORK` if unset |
+| `NETWORK_PASSPHRASE` | Overrides network passphrase; defaults based on `NETWORK` |
+| `ADMIN_SECRET` | Secret key used to build/upload/deploy/initialize contracts |
+| `KEEPER_SECRET` | Secret key registered as the protocol keeper |
+| `BOOTSTRAP_AMOUNT` | Amount used to seed initial vault/marketplace liquidity |
+| `SKIP_BOOTSTRAP` | If set, skips the liquidity bootstrap step |
+| `NEXT_PUBLIC_RPC_URL` | Soroban RPC endpoint the browser client talks to |
+| `NEXT_PUBLIC_NETWORK` | Network label surfaced to the client |
+| `NEXT_PUBLIC_NETWORK_PASSPHRASE` | Passphrase for client-side transaction building |
+| `DATABASE_URL` | Postgres connection string, shared by Prisma/`apps/web`/`apps/indexer` |
+| `DATABASE_URL_UNPOOLED` | Unpooled Postgres connection string for migrations |
+
+<Warning>
+  Never commit `.env` or reuse a funded mainnet key for testnet development — `.env.example`'s own header comment says exactly this.
+</Warning>
+
+## Verify the toolchain
+
+```bash
+cd contracts && cargo test
+```
+
+If this passes, your Rust/Soroban toolchain is correctly set up. See [Testing](/developers/testing) for the full test workflow.

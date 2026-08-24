@@ -1,0 +1,33 @@
+---
+title: "Security Status"
+description: "The honest current state — read this before integrating or depositing real value"
+---
+
+<Warning>
+  **Testnet only.** `SECURITY.md` states plainly: "This protocol is currently deployed on testnet only. Treat all funds and deployments as experimental." Do not use with real funds.
+</Warning>
+
+## Status summary
+
+| Item | Status |
+| --- | --- |
+| Independent, licensed third-party audit | **Not performed.** `SECURITY_AUDIT.md` explicitly states it "was produced by AI-assisted code review, not a licensed security firm, and should not be treated as a substitute for one." |
+| Internal AI-assisted review | Performed; scope = 10 contracts, ~9,760 lines; dated 2026-08-07 against commit `881fc15` |
+| Critical/High findings | None identified, per both `SECURITY.md` and `SECURITY_AUDIT.md` |
+| Low/Informational findings (SEC-01–SEC-14) | 13 of 14 marked Fixed in `SECURITY.md`'s roadmap; SEC-10 (Blend trust assumption) marked Documented rather than code-fixable |
+| Mainnet deployment | Not verified as live — see [Mainnet](/deployment/mainnet) |
+| Real Blend pool integration tested | **Not verified** — all tests use `MockBlendPool`, never a real deployed Blend pool |
+| Bug bounty | Not active — `SECURITY.md`: "no funds are at mainnet risk today, so no bounty program is active yet" |
+| Security contact | Placeholder in `SECURITY.md` — not yet a monitored address |
+| Admin key model | Single key per contract, no multisig/timelock |
+
+## What this means in practice
+
+- The contracts have been reviewed for the specific classes of bugs listed in the [Threat Model](/security/threat-model), and every fund-moving call requires `require_auth()`.
+- The review that found and tracked SEC-01 through SEC-14 was **not** performed by a licensed, independent security firm.
+- The protocol's core exchange rate depends entirely on an external Blend Capital pool's honesty, bounded only by a rate-of-change limiter — this has never been tested against a live Blend pool, only `MockBlendPool`.
+- Admin keys are single-signature across every contract. A compromised admin key is a real, currently-unmitigated risk (pause, epoch misconfiguration, and — pre-SEC-06 — instant PT/YT authority reassignment, now two-step).
+
+## Before considering mainnet or real-value use
+
+`SECURITY_AUDIT.md`'s Mainnet Readiness section states the audit is "not blocked by any Critical/High finding — none was found," but recommends an independent third-party audit before mainnet use. This documentation does not claim mainnet-readiness; see [Deployment → Mainnet](/deployment/mainnet) for exactly what mainnet deployment status actually is.

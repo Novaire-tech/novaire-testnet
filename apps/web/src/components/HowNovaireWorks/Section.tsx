@@ -1,40 +1,7 @@
 'use client';
 
 import { motion, useReducedMotion } from 'framer-motion';
-import { WorkflowCard, type WorkflowCardProps } from './WorkflowCard';
-
-// Placeholder set — replace each entry's image/video/title/description later
-// without touching the layout.
-const cards: WorkflowCardProps[] = [
-  {
-    image: '/images/workflow-deposit.png',
-    title: 'Start With One Deposit',
-    description:
-      'Deposit a supported yield-bearing asset into Novaire to unlock a new layer of flexibility without changing how your assets work.',
-  },
-  {
-    image: '/images/workflow-split.png',
-    title: 'Separate Principal from Yield',
-    description:
-      'Novaire tokenizes your position into Principal and Yield tokens, allowing each side of the asset to be managed independently.',
-    imageLift: 2,
-    flowPaths: true,
-  },
-  {
-    video: '/videos/workflow-strategy.mp4',
-    title: 'Trade Your Yield.',
-    description:
-      "Buy and sell principal or future yield independently through Novaire's on-chain marketplace.",
-  },
-  {
-    image: '/images/workflow-settle.png',
-    title: 'Settle at Maturity',
-    description:
-      "When the epoch ends, redeem your position seamlessly and realize the value you've built throughout the lifecycle.",
-    centerImage: true,
-    centerImageOffsetY: 38,
-  },
-];
+import { BentoCard, BentoGrid } from '@/components/ui/bento-grid';
 
 export function HowNovaireWorks() {
   const prefersReducedMotion = useReducedMotion();
@@ -57,11 +24,12 @@ export function HowNovaireWorks() {
           </p>
         </motion.div>
 
-        <div className="mt-12 grid grid-cols-1 gap-8 sm:grid-cols-2 md:mt-14">
-          {cards.map((card, index) => (
-            <WorkflowCard key={index} index={index} {...card} />
-          ))}
-        </div>
+        <BentoGrid className="mt-12 md:mt-14">
+          <BentoCard className="sm:col-span-1" />
+          <BentoCard className="sm:col-span-2" />
+          <BentoCard className="sm:col-span-2" />
+          <BentoCard className="sm:col-span-1" />
+        </BentoGrid>
       </div>
     </section>
   );

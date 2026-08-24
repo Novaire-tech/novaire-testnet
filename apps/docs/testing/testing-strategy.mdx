@@ -1,0 +1,58 @@
+---
+title: "Testing Strategy"
+description: "What's actually tested, at a glance"
+---
+
+## Status board
+
+| Category | Status |
+| --- | --- |
+| Unit tests (per-contract) | ✓ Present for all 9 contracts + `pt_token`/`yt_token` |
+| Integration tests (`integration_tests` crate) | ✓ Present — e2e scenarios, regression suites M1–M5, fuzz, stress |
+| AMM regression tests | ✓ Extensive — bootstrap pricing, TWAP, YT derivation, liquidity fairness |
+| Property-based fuzzing | ✓ `marketplace` and `integration_tests` both carry `proptest` fuzzers |
+| Mock Blend pool tests | ✓ Extensive — including an adversarial `DishonestBlendPoolClient` |
+| Real Blend E2E tests | ⚠ **Not verified** — no test exercises a live, deployed Blend pool |
+| Mainnet E2E tests | ⚠ **Not verified** — no fork-testing infrastructure found |
+| CI enforcement | ⚠ **Not found** — no `.github/workflows` in this repository |
+
+## How tests are organized
+
+```text
+contracts/
+├── factory/src/test.rs
+├── sy_wrapper/src/test.rs, audit_tests.rs
+├── vault/src/lib.rs (inline #[cfg(test)])
+├── maturity_engine/src/lib.rs (inline)
+├── tokenizer/tokenizer/src/lib.rs (inline)
+├── tokenizer/pt_token/src/test.rs
+├── tokenizer/yt_token/src/test.rs
+├── marketplace/src/lib.rs (inline, incl. proptest)
+├── intent_engine/src/lib.rs (inline)
+├── rollover/src/test.rs, tests/e2e.rs
+└── integration_tests/src/
+    ├── e2e.rs, fuzz.rs, simulation.rs, stress.rs
+    ├── l1_regression.rs
+    ├── m1_production_bootstrap.rs, m1_regression.rs
+    ├── m2_regression.rs, m3_regression.rs, m5_regression.rs
+    ├── invariants.rs, mock_blend_pool.rs, framework.rs
+```
+
+## Running the suite
+
+```bash
+cd contracts && cargo test
+```
+
+Per-crate: `cargo test -p sy_wrapper`, `cargo test -p marketplace`, etc. There is no documented CI workflow in this repository — `cargo test` is run manually per `README.md`'s Contributing section. See [Testing → Setup](/developers/testing) for the developer workflow.
+
+## What the M1–M5 regression suites cover
+
+These names come directly from `contracts/integration_tests/src/` and correspond to historically-identified issues, now covered by regression tests:
+
+- **M1** — YT/PT pricing symmetry and exploit-reproduction scenarios (`test_m1_sell_yt_matches_complement_price`, `test_m1_exploit_reproduction_at_epoch_start`, `test_m1_repeat_attack`, `test_m1_large_capital_attack`).
+- **M2** — late-minter historical yield credit correctness (`test_m2_late_mint`, `test_m2_no_trapped_shares`, `test_m2_minimal_mint_rounding`).
+- **M3** — settlement correctness under adversarial timing (`test_m3_attacker_early_settlement`, `test_m3_h5_clamp_preserved`, `test_m3_original_attack_prevented`).
+- **M5** — liquidity/donation-attack invariants (`test_m5_donation_attack_impossible`, `test_m5_locked_liquidity_permanent`).
+
+See dedicated pages for [Unit Tests](/testing/unit-tests), [Integration Tests](/testing/integration-tests), [AMM Tests](/testing/amm-tests), and [Blend Testing](/testing/blend-testing).

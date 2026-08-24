@@ -1,0 +1,51 @@
+---
+title: "Contract Dependencies"
+description: "The full cross-contract call graph"
+---
+
+```mermaid
+graph TD
+    Factory[factory] -->|deploys & initializes all of| SyWrapper[sy_wrapper]
+    Factory --> Vault[vault]
+    Factory --> Tokenizer[tokenizer]
+    Factory --> PtToken[pt_token]
+    Factory --> YtToken[yt_token]
+    Factory --> Marketplace[marketplace]
+    Factory --> MaturityEngine[maturity_engine]
+    Factory --> IntentEngine[intent_engine]
+    Factory --> Rollover[rollover]
+
+    Vault -->|deposit, withdraw| SyWrapper
+    SyWrapper -->|submit, get_positions| BlendPool[(Blend Pool)]
+
+    Tokenizer -->|transfer_shares, withdraw_for, balance_of| Vault
+    Tokenizer -->|get_exchange_rate, refresh_rate| SyWrapper
+    Tokenizer -->|mint, burn, balance, total_supply| PtToken
+    Tokenizer -->|mint, checkpoint_user, claimable_yield, etc.| YtToken
+    Tokenizer -->|live_state, settle_epoch| MaturityEngine
+
+    Marketplace -->|live_state| MaturityEngine
+    Marketplace -->|claim_yield| Tokenizer
+    Marketplace -->|transfer| PtToken
+    Marketplace -->|transfer| YtToken
+
+    IntentEngine -->|deposit, balance_of| Vault
+    IntentEngine -->|mint_pt_yt| Tokenizer
+    IntentEngine -->|swap_*, get_reserves, get_twap_rate_checked| Marketplace
+    IntentEngine -->|transfer| PtToken
+    IntentEngine -->|transfer| YtToken
+
+    Rollover -->|redeem_pt| Tokenizer
+    Rollover -->|get_epoch_by_maturity, get_next_epoch| Factory
+    Rollover -->|execute_fixed_yield_intent, get_user_intent| IntentEngine
+    Rollover -->|balance, transfer| PtToken
+```
+
+## Reading the graph
+
+- **`factory`** is the only contract that touches all nine — every other edge is a runtime call between two already-deployed contracts.
+- **`maturity_engine`** has no outgoing edges to other Novaire contracts — it is a pure, dependency-free epoch clock that `tokenizer` and `marketplace` query, never the other way around.
+- **`sy_wrapper`** is the only contract with an edge leaving the protocol entirely, into the external Blend Capital pool. Every other yield-related computation elsewhere in the protocol is downstream of `sy_wrapper.get_exchange_rate()`.
+- **`intent_engine`** and **`rollover`** are the two "composing" contracts — they don't hold protocol state of their own beyond user-facing bookkeeping (`UserIntents`, `RolloverPositions`); they orchestrate calls into the others.
+
+A cycle worth noting: `rollover → intent_engine → marketplace/tokenizer → maturity_engine`, and separately `rollover → factory` to discover the next epoch. `rollover` never calls `marketplace` directly — swaps only happen inside `intent_engine`.

@@ -1,0 +1,43 @@
+---
+title: "Testing"
+description: "The developer workflow for running the contract test suite"
+---
+
+## Run everything
+
+```bash
+cd contracts && cargo test
+```
+
+## Run one contract
+
+```bash
+cargo test -p sy_wrapper
+cargo test -p marketplace
+cargo test -p tokenizer
+```
+
+`SECURITY.md` itself cites `cargo test -p intent_engine -p sy_wrapper` and `cargo test -p sy_wrapper` as the pattern used during its own review.
+
+## Run the integration/regression crate
+
+```bash
+cargo test -p integration_tests
+```
+
+Covers the M1–M5 regression suites, fuzzing, stress tests, and full-lifecycle scenarios — see [Integration Tests](/testing/integration-tests).
+
+## Run the rollover E2E test
+
+```bash
+cargo test -p rollover --test e2e
+```
+
+## What you won't get from `cargo test`
+
+- No real Blend Capital pool interaction is exercised — everything runs against `MockBlendPool`. See [Blend Testing](/testing/blend-testing).
+- No CI runs this automatically today — there's no `.github/workflows` in this repository. Run the suite manually before submitting changes, per `README.md`'s Contributing section.
+
+## Debugging a failing test
+
+Soroban tests print detailed panic/assertion output including the failing `assert_invariant()` condition when one fires. Start from the specific test name, find it in the file list in [Unit Tests](/testing/unit-tests) or [Integration Tests](/testing/integration-tests), and read the corresponding contract's `DataKey` storage layout and the function under test together — most invariant failures trace back to a state transition the test intentionally forces (e.g. a dishonest mock pool, a spam-repeated call, or an out-of-order settlement).

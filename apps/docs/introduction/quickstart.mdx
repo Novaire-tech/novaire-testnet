@@ -1,0 +1,54 @@
+---
+title: "Quick Start"
+description: "Get the Novaire monorepo running locally"
+---
+
+<Info>
+  These commands are taken directly from the repository's `README.md` and root `package.json`. They target Stellar **testnet** — never point `NETWORK=mainnet` at a funded key you can't afford to lose.
+</Info>
+
+<Steps>
+  <Step title="Prerequisites">
+    Node.js, the Rust toolchain with `wasm32` target, and the `stellar` CLI. See [Setup](/developers/setup) for exact versions and install commands.
+  </Step>
+  <Step title="Install dependencies">
+    ```bash
+    npm install
+    ```
+  </Step>
+  <Step title="Configure environment">
+    ```bash
+    cp .env.example .env
+    ```
+    Fill in `ADMIN_SECRET` and `KEEPER_SECRET` (testnet keys — see [Configuration](/reference/configuration)).
+  </Step>
+  <Step title="Run the frontend">
+    ```bash
+    npm run dev
+    ```
+    Runs the Next.js app (`apps/web`) against whatever contracts are already recorded in `scripts/deployments.testnet.json`.
+  </Step>
+  <Step title="(Optional) deploy your own epoch">
+    ```bash
+    npm run deploy
+    ```
+    Builds all 9 contracts, uploads and deploys them, wires them via `factory.deploy_epoch()`, generates SDK bindings into `packages/bindings/`, and bootstraps liquidity. See [Testnet Deployment](/deployment/testnet).
+  </Step>
+  <Step title="Run the contract test suite">
+    ```bash
+    cd contracts && cargo test
+    ```
+    See [Testing Strategy](/testing/testing-strategy) for what this actually covers.
+  </Step>
+</Steps>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Architecture" href="/architecture/system-architecture" icon="sitemap">
+    Understand how the 9 contracts fit together before writing integration code.
+  </Card>
+  <Card title="SDK" href="/developers/sdk" icon="cube">
+    Use the generated TypeScript bindings in `packages/bindings/`.
+  </Card>
+</CardGroup>

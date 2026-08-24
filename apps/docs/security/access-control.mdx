@@ -1,0 +1,39 @@
+---
+title: "Access Control"
+description: "require_auth() patterns and privileged operations"
+---
+
+## Verified pattern
+
+Per `SECURITY.md`: every fund-moving entry point in every contract was verified to require `require_auth()` from the relevant party (depositor, withdrawer, redeemer, or admin as appropriate).
+
+## Two-step admin transfer
+
+`transfer_admin` / `accept_admin` is used in `vault`, `sy_wrapper`, `pt_token`, and `yt_token` — prevents an admin from bricking a contract by transferring to an unreachable or mistyped address. The new admin must sign `accept_admin` themselves before the transfer takes effect.
+
+## Authority reassignment (`pt_token`/`yt_token`)
+
+`set_tokenizer` (both tokens) and `set_sy_wrapper` (`yt_token`) reassign which contract is allowed to mint/burn. As of **SEC-06 (fixed)**, these are staged two-step operations — `set_tokenizer`/`set_sy_wrapper` stage a pending address, and a separate `accept_tokenizer`/`accept_sy_wrapper` call from the new address confirms it. Prior to this fix, reassignment took effect immediately on a single admin signature — a real centralization risk if the admin key was compromised, which the roadmap fix addressed.
+
+## Intentionally permissionless functions
+
+These are permissionless **by design**, because the operation is either bounded/self-limiting or a pure "crank" that only reads/pushes real on-chain state:
+
+| Function | Contract | Why it's safe to leave open |
+| --- | --- | --- |
+| `settle_epoch` | `maturity_engine`, `tokenizer` | Only advances state once the maturity ledger has genuinely passed; a liveness guarantee |
+| `refresh_rate` | `sy_wrapper` | Rate-of-change limited (10%/call ratchet) |
+| `refresh_yield_index` | `tokenizer` | Monotonic-only |
+| `claim_amm_yield` | `marketplace` | Can only pull the marketplace's own legitimately-claimable yield |
+| `execute_rollover` | `rollover` | Only after the keeper's grace period expires — a liveness guarantee, not an open door |
+
+## Privileged operations register
+
+See [Security Model](/security/security-model) for the full admin-operation table by contract. The two centralization points worth calling out explicitly:
+
+1. **Single-key admin** across every contract — no multisig or timelock as of this documentation.
+2. **`blend_pool` address is unrotatable** in `sy_wrapper` — see [Trust Boundaries](/security/trust-boundaries).
+
+## Authorization tests
+
+`test_unauthorized_pause_fails` (marketplace), `test_execute_rollover_keeper_vs_permissionless_boundary` (rollover — verified via `env.auths()` inspection at, before, and after the exact grace-period boundary), `test_admin_transfer_two_step` / `test_new_admin_can_pause_after_acceptance` (pt_token/yt_token), `test_tokenizer_transfer_two_step` / `test_new_tokenizer_can_mint_after_acceptance` (pt_token/yt_token).

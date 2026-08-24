@@ -11,6 +11,8 @@
     "build": "npm run build -w web",
     "start": "npm run start -w web",
     "lint": "npm run lint -w web",
+    "dev:docs": "npm run dev -w docs",
+    "build:docs": "npm run build -w docs",
     "indexer:dev": "npm run dev -w indexer",
     "contracts:test": "cd contracts && cargo test --workspace",
     "contracts:build": "cd contracts && bash scripts/build-optimized-wasm.sh",

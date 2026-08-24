@@ -1,0 +1,48 @@
+---
+title: "Threat Model"
+description: "What's defended against, and what's explicitly accepted as trust — from SECURITY.md"
+---
+
+## In scope / defended against
+
+Quoted directly from `SECURITY.md`:
+
+- **Unauthorized fund movement** — every fund-moving call requires `require_auth()` from the fund owner.
+- **Integer overflow/underflow** — checked arithmetic + `overflow-checks = true` release builds.
+- **First-depositor share-inflation attacks** — permanently locked minimum liquidity on first deposit, in both `marketplace` (LP shares) and `sy_wrapper` (SY shares).
+- **TWAP/flash-loan price manipulation within a single transaction** — pre-trade price recorded before reserve mutation; dedicated regression tests (`test_6_flash_loan_twap_resistance`, `stress_flash_loan_twap_resistance`).
+- **Storage archival/rent expiry** — persistent storage TTL extended on every access, across all contracts (with one flagged exception — see below).
+
+## Explicitly out of scope / accepted trust
+
+- **The external yield source (Blend Capital pool)** — `sy_wrapper` fully trusts the pool's reported position value, bounded only by a 10%-per-call rate-increase ratchet. A compromised or buggy pool is a systemic risk to the whole protocol.
+- **The protocol admin key(s)** — single-key-gated, no on-chain multisig or timelock today.
+- **Off-chain infrastructure** (RPC providers, frontends, keeper bots) — not covered by the security policy.
+
+## Threats and how each is handled
+
+| Threat | Status | Mechanism |
+| --- | --- | --- |
+| Exchange-rate manipulation | Mitigated | 10%-per-call ratchet cap on `sy_wrapper`'s rate increases; decrease only via admin `mark_loss` |
+| AMM/donation-style manipulation | Mitigated | Permanently locked `MINIMUM_LIQUIDITY = 1000` on first `add_liquidity`; `assert_invariant()` post-conditions |
+| Flash-swap / same-block TWAP manipulation | Mitigated | Pre-trade spot price recorded before reserve mutation; `MAX_TWAP_AGE_LEDGERS` staleness guard |
+| Rounding / precision | Tested | Dedicated dust/tiny-amount and minimal-mint-rounding tests across `tokenizer`, `sy_wrapper`, `marketplace` |
+| Overflow/underflow | Defended | `checked_*` arithmetic + `overflow-checks = true`; no dedicated unit test asserts on overflow explicitly by name (see [Known Findings](/security/known-findings)) |
+| Reserve inconsistencies | Mitigated | `assert_invariant()` after every state-mutating call in `marketplace` and `rollover` |
+| Reentrancy | Mitigated by platform | Soroban's own cross-contract call restrictions prevent a contract calling back into itself further up the call stack; no dedicated reentrancy unit test by name |
+| Authorization failures | Tested | `test_unauthorized_pause_fails`, `test_execute_rollover_keeper_vs_permissionless_boundary`, two-step admin-transfer tests |
+| Denial of service | Partially addressed | Permissionless `settle_epoch`/`execute_rollover`-after-grace-period ensure liveness isn't keeper-dependent |
+| Insolvency | Mitigated | `tokenizer` asserts outstanding PT == outstanding YT while Open, and surplus is never negative |
+| Settlement issues | Mitigated | `SettlementExchangeRate` frozen at settlement so redemption value can't drift mid-epoch |
+| Stale state | Mitigated | `get_twap_rate_checked()` staleness guard; `maturity_engine.live_state()` dynamic evaluation |
+| Oracle/TWAP issues | Partially mitigated | On-chain TWAP exists with staleness checks; **not yet wired into every consumer** per SECURITY.md's Oracle Security section |
+| External protocol risk (Blend) | Accepted, bounded | Explicitly out of scope beyond the rate-ratchet; see [Blend Integration](/protocol/blend-integration) |
+
+## Trust assumptions table (verbatim from SECURITY.md)
+
+| Actor | Trusted for | Not trusted for |
+| --- | --- | --- |
+| Protocol admin | Pausing, opening/archiving epochs, config/fee parameters, deploying new epochs via `factory` | Moving user funds directly — no admin function transfers user-owned token balances |
+| Keeper (rollover) | Triggering `execute_rollover` on a user's behalf during a grace period | Anything beyond triggering the pre-authorized flow |
+| External yield source (Blend Capital) | Reporting accurate position/supply values | Full solvency/honesty — assumed, not verified on-chain beyond the rate-of-change limiter |
+| Any user | Only their own funds, gated by `require_auth()` | Anyone else's balances or positions |

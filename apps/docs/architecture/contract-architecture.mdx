@@ -1,0 +1,42 @@
+---
+title: "Contract Architecture"
+description: "Every contract, its responsibility, and why it exists as a separate contract"
+---
+
+## Why nine separate contracts
+
+Novaire splits custody (`vault`), yield-source integration (`sy_wrapper`), tokenization (`tokenizer`, `pt_token`, `yt_token`), pricing (`marketplace`), epoch lifecycle (`maturity_engine`), orchestration (`intent_engine`), automation (`rollover`), and deployment (`factory`) into distinct contracts rather than one monolith. This isolates blast radius (a bug in the AMM can't touch custody) and lets each piece be reasoned about, and tested, independently.
+
+<AccordionGroup>
+  <Accordion title="factory — deployment & wiring orchestrator">
+    Not part of the runtime economic flow. Deploys and cross-initializes a full epoch's contracts in one call (`deploy_epoch`), verifies the wiring, and records an `EpochRecord`. Admin-gated. Explicitly documents (SEC-10) that it cannot verify on-chain whether a configured `blend_pool` address is genuinely Blend's pool — that's an off-chain deployment responsibility.
+  </Accordion>
+  <Accordion title="sy_wrapper — yield-source wrapper">
+    Deposits underlying, supplies 100% of it into a Blend Capital pool via a real cross-contract call, mints SY shares at an internally tracked exchange rate (`EXCHANGE_RATE_SCALAR = 1e9`). Tracks the Blend integration directly — there is no separate "Blend Adapter" contract. See [Blend Integration](/protocol/blend-integration).
+  </Accordion>
+  <Accordion title="vault — share custody & accounting">
+    A thin pass-through: deposits/withdrawals proxy 1:1 into `sy_wrapper.deposit`/`withdraw` and track per-user share balances. No yield logic, no epoch-awareness of its own.
+  </Accordion>
+  <Accordion title="maturity_engine — the epoch clock">
+    Holds no funds. Its only job is the epoch state machine: `Active(0) → Matured(1, dynamically evaluated) → Settled(2) → Archived(3)`. `tokenizer`, `marketplace`, and `yt_token` all query `live_state()` cross-contract rather than deriving expiry locally — this is the single canonical clock.
+  </Accordion>
+  <Accordion title="tokenizer — the economic coordinator">
+    Mints PT+YT 1:1 against vault shares, tracks the epoch state locally (delegating Active/Matured detection to `maturity_engine`), freezes the settlement exchange rate at settlement, guarantees PT principal redemption, and runs a reward-per-YT-share accumulator for yield distribution.
+  </Accordion>
+  <Accordion title="pt_token / yt_token — standalone token contracts">
+    Not Stellar Asset Contracts, not modules inside `tokenizer` — independent, custom ERC20-like contracts deployed fresh per epoch, with `tokenizer` as the sole mint/burn authority. `pt_token` transfers bypass `pause` deliberately, to preserve secondary-market liquidity as an escape valve. `yt_token` additionally carries the yield-accrual accumulator (`YieldIndex`, `UserYieldIndex`).
+  </Accordion>
+  <Accordion title="marketplace — the AMM">
+    A YieldSpace-style time-decaying curve for PT/underlying, with YT priced off the same curve via a virtual-sale derivation rather than a second AMM. See [AMM](/protocol/amm) for the full math.
+  </Accordion>
+  <Accordion title="intent_engine — one-transaction strategies">
+    Composes `vault.deposit` → `tokenizer.mint_pt_yt` → `marketplace` swap into two user-facing strategies (fixed-yield, yield-speculation), gated on a non-stale implied rate from `marketplace.get_twap_rate_checked`.
+  </Accordion>
+  <Accordion title="rollover — automated re-investment">
+    Custodies a user's matured PT, redeems it via `tokenizer.redeem_pt`, discovers the linked next epoch via `factory`, and reinvests via `intent_engine.execute_fixed_yield_intent` at a user-set minimum rate. Keeper-gated during a grace period, permissionless afterward for liveness.
+  </Accordion>
+</AccordionGroup>
+
+## Contract dependency graph
+
+See [Contract Dependencies](/architecture/contract-dependencies) for the full cross-call graph, and [Reference → Contract Reference](/reference/contract-reference) for every public entry point.

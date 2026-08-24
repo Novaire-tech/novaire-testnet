@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { Menu, X } from "lucide-react";
 import { scrollToWaitlist } from "@/lib/scrollToWaitlist";
+import { DOCS_URL } from "@/lib/docsUrl";
 
 export default function NavHeader() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -17,7 +18,7 @@ export default function NavHeader() {
           {/* Left: Logo */}
           <Link
             href="/"
-            className="flex items-center z-50 transition-opacity hover:opacity-80"
+            className="flex items-center z-50 transition-opacity hover:opacity-80 -ml-3 md:-ml-4"
             onClick={() => setIsMobileMenuOpen(false)}
           >
             <span
@@ -33,7 +34,7 @@ export default function NavHeader() {
               <Tab href="https://stellar.org/" external>
                 Ecosystem
               </Tab>
-              <Tab href="/docs">
+              <Tab href={DOCS_URL} external={DOCS_URL.startsWith("http")}>
                 Docs
               </Tab>
               <Tab href="/app">
@@ -77,7 +78,7 @@ export default function NavHeader() {
             <div className="flex flex-col gap-6 items-start flex-1 overflow-y-auto">
               {[
                 { label: 'Ecosystem', href: 'https://stellar.org/', external: true },
-                { label: 'Docs', href: '/docs' },
+                { label: 'Docs', href: DOCS_URL, external: DOCS_URL.startsWith('http') },
                 { label: 'Product', href: '/app' }
               ].map((item, idx) => (
                 <motion.div

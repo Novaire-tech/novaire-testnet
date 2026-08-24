@@ -1,0 +1,76 @@
+---
+title: "Data Flow"
+description: "How value and state move through the protocol"
+---
+
+## Deposit → SY → PT/YT
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Vault
+    participant SyWrapper
+    participant BlendPool as Blend Pool
+    participant Tokenizer
+    participant PtToken as PT Token
+    participant YtToken as YT Token
+
+    User->>Vault: deposit(amount)
+    Vault->>SyWrapper: deposit(amount)
+    SyWrapper->>BlendPool: submit(SUPPLY request)
+    SyWrapper-->>Vault: SY shares minted
+    Vault-->>User: vault shares
+    User->>Tokenizer: mint_pt_yt(sy_shares)
+    Tokenizer->>Vault: transfer_shares
+    Tokenizer->>PtToken: mint(user, amount)
+    Tokenizer->>YtToken: mint(user, amount)
+```
+
+`sy_wrapper`'s exchange rate (`TotalUnderlying * 1e9 / TotalShares`) only ratchets upward, and only when `refresh_rate()` observes the Blend pool's reported value has genuinely grown — capped at 10% per call as a defense against a compromised or lying pool. See [SY](/protocol/sy).
+
+## PT/YT trading
+
+```mermaid
+sequenceDiagram
+    participant Trader
+    participant Marketplace
+    participant PtToken as PT Token
+    participant Underlying
+
+    Trader->>Marketplace: swap_underlying_for_pt(amount_in)
+    Marketplace->>Marketplace: compute_a_pool, compute_k, get_y
+    Marketplace->>Underlying: transfer_from(trader)
+    Marketplace->>PtToken: transfer(trader)
+    Marketplace-->>Trader: pt_out
+```
+
+YT trades are priced off the same PT/underlying curve via a virtual-sale simulation rather than against a separate reserve — see [AMM](/protocol/amm).
+
+## Settlement → redemption
+
+```mermaid
+sequenceDiagram
+    participant Anyone
+    participant MaturityEngine as Maturity Engine
+    participant Tokenizer
+    participant PtHolder as PT Holder
+
+    Anyone->>MaturityEngine: settle_epoch(epoch_id)
+    Note over Tokenizer: settle_epoch() freezes SettlementExchangeRate
+    PtHolder->>Tokenizer: redeem_pt(pt_amount)
+    Tokenizer->>Tokenizer: burn PT, release underlying via Vault/SyWrapper
+    Tokenizer-->>PtHolder: underlying
+```
+
+`settle_epoch()` on both `maturity_engine` and `tokenizer` is **permissionless** — anyone can trigger it once the maturity ledger has passed, so settlement doesn't depend on a keeper being online.
+
+## State that lives where
+
+| State | Owner contract | Notes |
+| --- | --- | --- |
+| SY exchange rate | `sy_wrapper` | 1e9-scaled, ratchets up only |
+| Vault share balances | `vault` | Per-user, 1:1 with deposited SY shares |
+| Epoch lifecycle state | `maturity_engine` | Canonical; other contracts query `live_state()` |
+| PT/YT total supply, settlement rate | `tokenizer` | `SettlementExchangeRate` frozen at settlement |
+| AMM reserves, TWAP | `marketplace` | `PtReserves`, `UnderlyingReserves`, `YtReserves`, `ImpliedRateTwap` |
+| Rollover positions | `rollover` | `RolloverPosition` per user, independent of `intent_engine`'s lifetime totals |

@@ -1,0 +1,40 @@
+---
+title: "Integration Tests"
+description: "The integration_tests crate — which contracts are exercised together"
+---
+
+`contracts/integration_tests/` is a dedicated workspace crate that wires together real instances of every contract (via a shared `framework.rs` harness and `mock_blend_pool.rs`) to test cross-contract behavior that no single contract's own unit tests can cover.
+
+## Scenario coverage (`src/e2e.rs`)
+
+| Scenario | What it exercises |
+| --- | --- |
+| `scenario_simple_deposit` | Vault → SyWrapper deposit path |
+| `scenario_mint_pt_yt` | Vault → Tokenizer → PT/YT mint path |
+| `scenario_full_lifecycle` | Deposit → mint → trade → mature → settle → redeem, end to end |
+| `scenario_rollover_custody` | Rollover → Tokenizer → Factory → IntentEngine chain |
+| `scenario_pt_converges_near_maturity` | PT price approaching 1:1 as maturity nears |
+| `scenario_pt_yt_conservation_multi_user` | PT/YT supply conservation across multiple users |
+| `scenario_intent_engine_zero_balance` | IntentEngine behavior with no prior balance |
+| `scenario_forced_rollover_slippage_protection` | Rollover respects `min_rate_bps` even under forced conditions |
+| `scenario_h4_*` (6 scenarios) | YT transfer/yield-credit correctness across sequential and partial transfers |
+
+## Regression suites by historical finding
+
+- **L1** (`l1_regression.rs`): `test_l1_checkpoint_user_error_propagation`
+- **M1** (`m1_regression.rs`, `m1_production_bootstrap.rs`): YT/PT price-symmetry and exploit-reproduction — `test_m1_sell_yt_matches_complement_price`, `test_m1_no_virtual_pt_movement`, `test_m1_round_trip_no_free_profit`, `test_m1_repeat_attack`, `test_m1_large_capital_attack`, `test_m1_production_exploit_matrix`
+- **M2** (`m2_regression.rs`): late-minter yield credit — `test_m2_mint_at_genesis`, `test_m2_late_mint`, `test_m2_multiple_late_minters`, `test_m2_no_trapped_shares`, `test_m2_minimal_mint_rounding`
+- **M3** (`m3_regression.rs`): settlement timing — `test_m3_normal_settlement`, `test_m3_attacker_early_settlement`, `test_m3_h5_clamp_preserved`, `test_m3_permissionless_settlement`
+- **M5** (`m5_regression.rs`): liquidity/donation-attack invariants — `test_m5_first_liquidity_mint`, `test_m5_locked_liquidity_permanent`, `test_m5_donation_attack_impossible`
+
+## Fuzzing and stress
+
+- `fuzz.rs`: `fuzz_protocol_state_machine` — a `proptest` property test randomizing operation sequences across the whole wired protocol.
+- `simulation.rs`: `simulation_7_phase_protocol_lifecycle`, `generate_simulation_report` — a scripted multi-phase lifecycle simulation.
+- `stress.rs`: `stress_test_heavy_load`, `stress_flash_loan_twap_resistance`, `stress_tiny_swaps`, `stress_large_liquidity_add_remove`, `stress_consecutive_multi_user_mints`.
+
+## Shared invariant helpers
+
+`invariants.rs` defines named invariant checks (referenced throughout `docs/PROTOCOL_INVARIANTS.md` as `INV-1` through `INV-9`) used across the scenario and regression files, so the same solvency/consistency checks run after many different operation sequences rather than being re-implemented per test.
+
+Run the full crate: `cargo test -p integration_tests`.

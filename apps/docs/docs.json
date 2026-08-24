@@ -1,0 +1,112 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "maple",
+  "name": "Novaire Docs",
+  "colors": {
+    "primary": "#112a46",
+    "light": "#2454a6",
+    "dark": "#0a1a2e"
+  },
+  "favicon": "/logo/logo.png",
+  "logo": {
+    "light": "/logo/logo.png",
+    "dark": "/logo/logo.png"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Introduction",
+            "pages": [
+              "index",
+              "introduction/overview",
+              "introduction/what-is-novaire",
+              "introduction/core-concepts",
+              "introduction/quickstart"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/system-architecture",
+              "architecture/contract-architecture",
+              "architecture/data-flow",
+              "architecture/contract-dependencies",
+              "architecture/transaction-lifecycle"
+            ]
+          },
+          {
+            "group": "Protocol",
+            "pages": [
+              "protocol/sy",
+              "protocol/blend-integration",
+              "protocol/pt",
+              "protocol/yt",
+              "protocol/amm",
+              "protocol/liquidity",
+              "protocol/pricing",
+              "protocol/settlement"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/security-model",
+              "security/threat-model",
+              "security/trust-boundaries",
+              "security/access-control",
+              "security/known-findings",
+              "security/security-status"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "testing/testing-strategy",
+              "testing/unit-tests",
+              "testing/integration-tests",
+              "testing/e2e-tests",
+              "testing/amm-tests",
+              "testing/blend-testing"
+            ]
+          },
+          {
+            "group": "Developers",
+            "pages": [
+              "developers/setup",
+              "developers/development",
+              "developers/contracts",
+              "developers/sdk",
+              "developers/testing",
+              "developers/debugging"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/testnet",
+              "deployment/mainnet",
+              "deployment/configuration",
+              "deployment/verification"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": [
+              "reference/contract-reference",
+              "reference/sdk-reference",
+              "reference/configuration",
+              "reference/glossary",
+              "reference/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footer": {
+    "socials": {}
+  }
+}
